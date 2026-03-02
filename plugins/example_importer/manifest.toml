@@ -1,0 +1,16 @@
+# Manifest für das Beispiel-Importer-Plugin
+# Spec §15: manifest-driven, manually installed, no marketplace
+
+[plugin]
+id          = "example_importer"
+name        = "Example CSV Importer"
+version     = "0.1.0"
+min_core    = "0.1.0"
+description = "Importiert Nutzer aus einer CSV-Datei (Beispiel-Plugin)"
+author      = "ArborPress Contributors"
+capabilities = ["importer"]
+
+[entry_points]
+importer = "plugins.example_importer.importer:CsvImporter"
+# Optionale CLI-Erweiterung:
+cli = "plugins.example_importer.cli:plugin_app"

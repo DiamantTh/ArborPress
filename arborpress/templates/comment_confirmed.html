@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}Kommentar bestätigt{% endblock %}
+
+{% block content %}
+<div style="max-width:520px;margin:3rem auto;padding:0 1.25rem;text-align:center">
+  {% if already_processed %}
+    <div style="font-size:3rem;margin-bottom:1rem">✅</div>
+    <h1 style="font-size:1.5rem;font-weight:800;margin-bottom:.75rem">
+      Kommentar bereits verarbeitet
+    </h1>
+    <p style="color:#6b7280">
+      Dieser Kommentar wurde bereits bestätigt oder bearbeitet.
+    </p>
+  {% else %}
+    <div style="font-size:3rem;margin-bottom:1rem">🎉</div>
+    <h1 style="font-size:1.5rem;font-weight:800;margin-bottom:.75rem">
+      Danke, {{ comment.author_name }}!
+    </h1>
+    <p style="color:#374151;margin-bottom:1.5rem">
+      Dein Kommentar zu
+      <strong>„{{ comment.post.title }}"</strong>
+      wurde bestätigt und wird jetzt von uns geprüft.<br>
+      Nach der Freischaltung erscheint er auf der Seite.
+    </p>
+    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:.5rem;
+                padding:1rem;margin-bottom:1.5rem;color:#166534;font-size:.9rem">
+      ✓ E-Mail erfolgreich bestätigt
+    </div>
+  {% endif %}
+
+  <a href="{{ url_for('public.post_detail', slug=comment.post.slug) }}"
+     style="display:inline-block;background:#2563eb;color:#fff;padding:.55rem 1.25rem;
+            border-radius:.5rem;text-decoration:none;font-weight:700;font-size:.9rem">
+    ← Zurück zum Artikel
+  </a>
+</div>
+{% endblock %}

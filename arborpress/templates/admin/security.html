@@ -1,0 +1,97 @@
+{% extends "admin/_base.html" %}
+{% block title %}Sicherheit – ArborPress Admin{% endblock %}
+{% block admin_content %}
+<h2>Sicherheitseinstellungen</h2>
+
+{% if not stepup_active %}
+<div class="alert alert-warning">
+  <strong>Step-up-Authentifizierung erforderlich.</strong>
+  Bitte bestätigen Sie Ihre Identität, bevor Sie Änderungen vornehmen.
+  <button id="stepup-btn" class="btn btn-sm btn-primary">Jetzt authentifizieren</button>
+</div>
+{% endif %}
+
+<form method="POST" action="{{ url_for('admin.security_update') }}" class="admin-form"
+      id="security-form" {% if not stepup_active %}inert{% endif %}>
+  <fieldset>
+    <legend>WebAuthn</legend>
+    <label>
+      Relying Party Name
+      <input type="text" name="rp_name" value="{{ cfg.auth.rp_name | default('ArborPress') }}">
+    </label>
+    <label>
+      RPID
+      <input type="text" name="rp_id" value="{{ cfg.auth.rp_id | default('') }}">
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Break-Glass</legend>
+    <label class="checkbox">
+      <input type="checkbox" name="breakglass_enabled"
+             {{ 'checked' if cfg.auth.breakglass_enabled else '' }}>
+      Break-Glass-Login aktivieren (nur für Notfälle)
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Mail</legend>
+    <label>
+      SMTP-Host
+      <input type="text" name="smtp_host" value="{{ cfg.mail.smtp_host | default('') }}">
+    </label>
+    <label>
+      SMTP-Port
+      <input type="number" name="smtp_port" value="{{ cfg.mail.smtp_port | default(587) }}">
+    </label>
+    <label>
+      Absender-Adresse
+      <input type="email" name="from_address" value="{{ cfg.mail.from_address | default('') }}">
+    </label>
+  </fieldset>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary"
+            {% if not stepup_active %}disabled{% endif %}>
+      Änderungen speichern
+    </button>
+  </div>
+</form>
+
+{% if not stepup_active %}
+<script>
+document.getElementById('stepup-btn').addEventListener('click', async () => {
+  const beginRes = await fetch('/auth/stepup/begin', { method: 'POST' });
+  if (!beginRes.ok) { alert('Step-up-Start fehlgeschlagen.'); return; }
+  const opts = await beginRes.json();
+  // WebAuthn-Challenge
+  opts.publicKey.challenge = Uint8Array.from(atob(opts.publicKey.challenge), c => c.charCodeAt(0));
+  opts.publicKey.allowCredentials?.forEach(c => {
+    c.id = Uint8Array.from(atob(c.id), x => x.charCodeAt(0));
+  });
+  const assertion = await navigator.credentials.get({ publicKey: opts.publicKey });
+  if (!assertion) return;
+  const payload = {
+    id: assertion.id,
+    rawId: btoa(String.fromCharCode(...new Uint8Array(assertion.rawId))),
+    response: {
+      authenticatorData: btoa(String.fromCharCode(...new Uint8Array(assertion.response.authenticatorData))),
+      clientDataJSON:    btoa(String.fromCharCode(...new Uint8Array(assertion.response.clientDataJSON))),
+      signature:         btoa(String.fromCharCode(...new Uint8Array(assertion.response.signature))),
+    },
+    type: assertion.type,
+  };
+  const completeRes = await fetch('/auth/stepup/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (completeRes.ok) {
+    window.location.reload();
+  } else {
+    alert('Step-up fehlgeschlagen.');
+  }
+});
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,66 @@
+# ArborPress – Infrastruktur-Konfiguration
+# Kopieren nach config.toml und anpassen.  Geheimnisse NIE committen!
+#
+# Alle weiteren Einstellungen (Mail, Captcha, Kommentare, Federation,
+# Suche, Theme) werden im Admin-Bereich unter /admin/settings verwaltet
+# und in der Datenbank gespeichert.
+
+# ---------------------------------------------------------------------------
+# Datenbank – PostgreSQL ≥16, MariaDB ≥11 oder SQLite (Entwicklung)
+# ---------------------------------------------------------------------------
+[db]
+# PostgreSQL (empfohlen für Produktion):
+url       = "postgresql+asyncpg://arborpress:passwort@localhost/arborpress"
+# MariaDB:
+# url     = "mysql+aiomysql://arborpress:passwort@localhost/arborpress"
+# SQLite (nur Entwicklung):
+# url     = "sqlite+aiosqlite:///./arborpress.db"
+pool_size = 10
+echo      = false
+
+# ---------------------------------------------------------------------------
+# Web & URL
+# ---------------------------------------------------------------------------
+[web]
+host            = "127.0.0.1"
+port            = 8080
+secret_key      = "AENDERN_IM_PRODUKTIVBETRIEB_langer_zufaelliger_string"
+base_url        = "https://blog.example.com"
+# Anzahl vertrauter Reverse-Proxy-Hops (0 = kein Proxy)
+trusted_proxies = 1
+# Pfad des Admin-Bereichs – konfigurierbar für Security-by-Obscurity
+admin_path      = "/admin"
+
+# ---------------------------------------------------------------------------
+# Authentifizierung
+# ---------------------------------------------------------------------------
+[auth]
+# Benutzerverifikation (UV) global erzwingen
+require_uv              = true
+# Break-Glass Passwort-Login aktivieren (standardmäßig aus)
+legacy_password_enabled = false
+# Step-up-Session TTL in Sekunden
+stepup_ttl              = 900
+# Admin-Session TTL in Sekunden
+admin_session_ttl       = 3600
+# Rate-Limit für Auth-Endpunkte
+auth_rate_limit         = "10/minute"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+[logging]
+level      = "INFO"
+# file     = "/var/log/arborpress/app.log"   # optional
+access_log = false
+audit_log  = true
+# audit_file = "/var/log/arborpress/audit.log"
+
+# ---------------------------------------------------------------------------
+# Plugins
+# ---------------------------------------------------------------------------
+[plugins]
+# Verzeichnisse mit manuell installierten Plugins
+dirs = [
+    # "/opt/arborpress/plugins",
+]

@@ -1,0 +1,67 @@
+/*
+ * Example Theme – ArborPress Custom Theme
+ *
+ * Dieses CSS wird automatisch als Haupt-Stylesheet eingebunden
+ * wenn das Theme aktiv ist.
+ *
+ * URL: /static/themes/example-theme/css/style.css
+ */
+
+/* === Basisvariablen ================================================= */
+:root {
+  --color-bg:       #ffffff;
+  --color-text:     #1a202c;
+  --color-primary:  #2563eb;
+  --color-muted:    #6b7280;
+  --color-border:   #e2e8f0;
+  --font-sans:      system-ui, -apple-system, sans-serif;
+  --font-mono:      "Fira Code", "Cascadia Code", monospace;
+  --max-width:      780px;
+  --radius:         6px;
+}
+
+/* === Basis-Reset ===================================================== */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-bg);
+  color: var(--color-text);
+  margin: 0;
+  padding: 0;
+  line-height: 1.7;
+}
+
+/* === Layout ========================================================= */
+.container {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0 1.25rem;
+}
+
+/* === Typografie ====================================================== */
+h1, h2, h3, h4, h5, h6 {
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+a { color: var(--color-primary); }
+a:hover { text-decoration: underline; }
+
+code, pre {
+  font-family: var(--font-mono);
+  font-size: .9em;
+  background: #f3f4f6;
+  border-radius: var(--radius);
+}
+
+pre { padding: 1rem; overflow-x: auto; }
+code { padding: .15em .35em; }
+
+/* === Navigation ====================================================== */
+.site-header {
+  border-bottom: 1px solid var(--color-border);
+  padding: .75rem 0;
+}
+
+/* === Anpassen ab hier =============================================== */

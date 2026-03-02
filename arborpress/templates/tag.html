@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}# {{ tag }} – {{ _('Beiträge') }}{% endblock %}
+
+{% block content %}
+<h1># {{ tag }}</h1>
+<div class="post-list">
+  {% for post in posts %}
+  <article class="post-card">
+    <h2><a href="{{ url_for('public.post_detail', slug=post.slug) }}">{{ post.title }}</a></h2>
+    <time datetime="{{ post.published_at.isoformat() }}">{{ post.published_at.strftime('%d.%m.%Y') }}</time>
+  </article>
+  {% else %}
+  <p>{{ _('Keine Beiträge mit diesem Tag.') }}</p>
+  {% endfor %}
+</div>
+{% endblock %}

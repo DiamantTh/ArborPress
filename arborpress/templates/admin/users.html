@@ -1,0 +1,34 @@
+{% extends "admin/_base.html" %}
+{% block title %}Benutzer – ArborPress Admin{% endblock %}
+{% block admin_content %}
+<div class="admin-page-header">
+  <h2>Benutzer</h2>
+</div>
+
+<table class="admin-table">
+  <thead>
+    <tr>
+      <th>Handle</th>
+      <th>Anzeigename</th>
+      <th>E-Mail</th>
+      <th>Konto-Typ</th>
+      <th>Letzte Anmeldung</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for user in users %}
+    <tr>
+      <td><code>@{{ user.handle }}</code></td>
+      <td>{{ user.display_name | default('–') | e }}</td>
+      <td>{{ user.email | default('–') | e }}</td>
+      <td>
+        <span class="badge badge-{{ user.account_type.value }}">{{ user.account_type.value }}</span>
+      </td>
+      <td>{{ user.last_login_at.strftime('%d.%m.%Y %H:%M') if user.last_login_at else '–' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="empty-state">Keine Benutzer gefunden.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

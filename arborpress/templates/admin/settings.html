@@ -1,0 +1,334 @@
+{% extends "admin/_base.html" %}
+{% block title %}Einstellungen – ArborPress Admin{% endblock %}
+{% block admin_content %}
+<h2>Website-Einstellungen</h2>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for cat, msg in messages %}
+    <div class="alert alert--{{ cat }}">{{ msg }}</div>
+  {% endfor %}
+{% endwith %}
+
+<p class="hint" style="margin-bottom:1.5rem">
+  Diese Einstellungen werden in der Datenbank gespeichert und können ohne Neustart geändert werden.
+  Infrastruktur-Einstellungen (Datenbankverbindung, Web-Port, Authentifizierung) befinden sich weiterhin in <code>config.toml</code>.
+</p>
+
+<!-- Tab-Navigation -->
+<div class="admin-tabs" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.5rem">
+  <a href="#sec-general"    class="btn btn--small">Allgemein</a>
+  <a href="#sec-mail"       class="btn btn--small">E-Mail</a>
+  <a href="#sec-comments"   class="btn btn--small">Kommentare</a>
+  <a href="#sec-federation" class="btn btn--small">Federation</a>
+  <a href="#sec-search"     class="btn btn--small">Suche</a>
+  <a href="#sec-theme"      class="btn btn--small">Theme</a>
+</div>
+
+
+<!-- ================================================================== -->
+<!-- ALLGEMEIN                                                           -->
+<!-- ================================================================== -->
+<section class="admin-card" id="sec-general" style="margin-bottom:2rem">
+  <h3>Allgemein</h3>
+  <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    <input type="hidden" name="section" value="general">
+
+    <label>
+      Website-Titel
+      <input type="text" name="site_title"
+             value="{{ sections.general.get('site_title', 'ArborPress') }}" required>
+    </label>
+
+    <label>
+      Tagline / Slogan
+      <input type="text" name="tagline"
+             value="{{ sections.general.get('tagline', '') }}">
+    </label>
+
+    <label>
+      Sprache (BCP-47, z.&nbsp;B. <code>de</code>, <code>en</code>)
+      <input type="text" name="language"
+             value="{{ sections.general.get('language', 'de') }}" maxlength="10">
+    </label>
+
+    <label>
+      Zeitzone (z.&nbsp;B. <code>Europe/Berlin</code>)
+      <input type="text" name="timezone"
+             value="{{ sections.general.get('timezone', 'UTC') }}">
+    </label>
+
+    <label>
+      Beiträge pro Seite
+      <input type="number" name="posts_per_page" min="1" max="100"
+             value="{{ sections.general.get('posts_per_page', 10) }}">
+    </label>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn--primary">Allgemein speichern</button>
+    </div>
+  </form>
+</section>
+
+
+<!-- ================================================================== -->
+<!-- E-MAIL                                                              -->
+<!-- ================================================================== -->
+<section class="admin-card" id="sec-mail" style="margin-bottom:2rem">
+  <h3>E-Mail</h3>
+  <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    <input type="hidden" name="section" value="mail">
+
+    <label>
+      Backend
+      <select name="backend">
+        <option value="none"  {{ 'selected' if sections.mail.get('backend','none') == 'none' }}>Keines (nur Logging)</option>
+        <option value="smtp"  {{ 'selected' if sections.mail.get('backend','none') == 'smtp' }}>SMTP</option>
+        <option value="queue" {{ 'selected' if sections.mail.get('backend','none') == 'queue' }}>SMTP (mit Queue)</option>
+      </select>
+    </label>
+
+    <fieldset>
+      <legend>SMTP-Verbindung</legend>
+
+      <label>
+        SMTP-Host
+        <input type="text" name="smtp_host"
+               value="{{ sections.mail.get('smtp_host', 'localhost') }}">
+      </label>
+
+      <label>
+        SMTP-Port
+        <input type="number" name="smtp_port" min="1" max="65535"
+               value="{{ sections.mail.get('smtp_port', 587) }}">
+      </label>
+
+      <label class="checkbox">
+        <input type="checkbox" name="smtp_starttls" value="1"
+               {{ 'checked' if sections.mail.get('smtp_starttls', true) }}>
+        STARTTLS aktivieren (empfohlen, Port 587)
+      </label>
+
+      <label class="checkbox">
+        <input type="checkbox" name="smtp_tls" value="1"
+               {{ 'checked' if sections.mail.get('smtp_tls', false) }}>
+        Implizites TLS (Port 465)
+      </label>
+
+      <label>
+        SMTP-Benutzername
+        <input type="text" name="smtp_user"
+               value="{{ sections.mail.get('smtp_user', '') }}" autocomplete="off">
+      </label>
+
+      <label>
+        SMTP-Passwort
+        <input type="password" name="smtp_password" placeholder="(unverändert lassen = leer)"
+               autocomplete="new-password">
+        <span class="hint">Nur ausfüllen wenn Passwort geändert werden soll.</span>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Absender</legend>
+
+      <label>
+        Absender-E-Mail
+        <input type="email" name="from_address"
+               value="{{ sections.mail.get('from_address', '') }}">
+      </label>
+
+      <label>
+        Absender-Name
+        <input type="text" name="from_name"
+               value="{{ sections.mail.get('from_name', 'ArborPress') }}">
+      </label>
+    </fieldset>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn--primary">E-Mail speichern</button>
+    </div>
+  </form>
+</section>
+
+
+<!-- ================================================================== -->
+<!-- KOMMENTARE                                                          -->
+<!-- ================================================================== -->
+<section class="admin-card" id="sec-comments" style="margin-bottom:2rem">
+  <h3>Kommentare</h3>
+  <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    <input type="hidden" name="section" value="comments">
+
+    <label class="checkbox">
+      <input type="checkbox" name="require_email_confirmation" value="1"
+             {{ 'checked' if sections.comments.get('require_email_confirmation', true) }}>
+      E-Mail-Bestätigung durch Autor erforderlich
+    </label>
+
+    <label class="checkbox">
+      <input type="checkbox" name="require_admin_approval" value="1"
+             {{ 'checked' if sections.comments.get('require_admin_approval', true) }}>
+      Admin-Freischaltung erforderlich
+    </label>
+
+    <label class="checkbox">
+      <input type="checkbox" name="allow_anonymous" value="1"
+             {{ 'checked' if sections.comments.get('allow_anonymous', true) }}>
+      Anonyme Kommentare erlauben
+    </label>
+
+    <label>
+      Rate-Limit (Kommentare pro Stunde / IP)
+      <input type="number" name="rate_limit_per_hour" min="0"
+             value="{{ sections.comments.get('rate_limit_per_hour', 10) }}">
+      <span class="hint">0 = kein Limit</span>
+    </label>
+
+    <label>
+      Admin-Benachrichtigungs-E-Mail
+      <input type="email" name="notify_admin_email"
+             value="{{ sections.comments.get('notify_admin_email', '') }}"
+             placeholder="(leer = keine Benachrichtigung)">
+    </label>
+
+    <label>
+      Maximale Verschachtelungstiefe
+      <input type="number" name="max_depth" min="0" max="10"
+             value="{{ sections.comments.get('max_depth', 3) }}">
+    </label>
+
+    <div style="display:flex;gap:1rem">
+      <label>
+        Mindestlänge (Zeichen)
+        <input type="number" name="min_comment_length" min="1"
+               value="{{ sections.comments.get('min_comment_length', 1) }}">
+      </label>
+      <label>
+        Maximallänge (Zeichen)
+        <input type="number" name="max_comment_length" min="10"
+               value="{{ sections.comments.get('max_comment_length', 5000) }}">
+      </label>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn--primary">Kommentare speichern</button>
+    </div>
+  </form>
+</section>
+
+
+<!-- ================================================================== -->
+<!-- FEDERATION (ActivityPub)                                            -->
+<!-- ================================================================== -->
+<section class="admin-card" id="sec-federation" style="margin-bottom:2rem">
+  <h3>Federation <span class="badge">ActivityPub</span></h3>
+  <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    <input type="hidden" name="section" value="federation">
+
+    <label>
+      Modus
+      <select name="mode">
+        <option value="disabled"      {{ 'selected' if sections.federation.get('mode','disabled') == 'disabled' }}>
+          Deaktiviert
+        </option>
+        <option value="outgoing_only" {{ 'selected' if sections.federation.get('mode') == 'outgoing_only' }}>
+          Nur ausgehend (Outbox)
+        </option>
+        <option value="inbox_only"    {{ 'selected' if sections.federation.get('mode') == 'inbox_only' }}>
+          Nur eingehend (Inbox)
+        </option>
+        <option value="full"          {{ 'selected' if sections.federation.get('mode') == 'full' }}>
+          Vollständig (Inbox + Outbox)
+        </option>
+      </select>
+    </label>
+
+    <label>
+      Instanzname
+      <input type="text" name="instance_name"
+             value="{{ sections.federation.get('instance_name', '') }}">
+    </label>
+
+    <label>
+      Instanzbeschreibung
+      <textarea name="instance_description" rows="3">{{ sections.federation.get('instance_description', '') }}</textarea>
+    </label>
+
+    <label>
+      Kontakt-E-Mail
+      <input type="email" name="contact_email"
+             value="{{ sections.federation.get('contact_email', '') }}">
+    </label>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn--primary">Federation speichern</button>
+    </div>
+  </form>
+</section>
+
+
+<!-- ================================================================== -->
+<!-- SUCHE                                                               -->
+<!-- ================================================================== -->
+<section class="admin-card" id="sec-search" style="margin-bottom:2rem">
+  <h3>Suche</h3>
+  <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    <input type="hidden" name="section" value="search">
+
+    <label>
+      Suchanbieter
+      <select name="provider">
+        <option value="fallback"          {{ 'selected' if sections.search.get('provider','fallback') == 'fallback' }}>
+          Einfach (SQLite LIKE, kein FTS)
+        </option>
+        <option value="pg_fts"            {{ 'selected' if sections.search.get('provider') == 'pg_fts' }}>
+          PostgreSQL Full-Text Search
+        </option>
+        <option value="mariadb_fulltext"  {{ 'selected' if sections.search.get('provider') == 'mariadb_fulltext' }}>
+          MariaDB / MySQL Fulltext
+        </option>
+      </select>
+    </label>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn--primary">Suche speichern</button>
+    </div>
+  </form>
+</section>
+
+
+<!-- ================================================================== -->
+<!-- THEME                                                               -->
+<!-- ================================================================== -->
+<section class="admin-card" id="sec-theme" style="margin-bottom:2rem">
+  <h3>Theme</h3>
+  <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    <input type="hidden" name="section" value="theme">
+
+    <label>
+      Aktives Theme
+      <select name="active">
+        {% for theme in available_themes %}
+          <option value="{{ theme.id }}"
+                  {{ 'selected' if sections.theme.get('active','default') == theme.id }}>
+            {{ theme.name }} ({{ theme.id }})
+          </option>
+        {% else %}
+          <option value="default" selected>Standard (default)</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <p class="hint">
+      Eigene Themes können im Verzeichnis <code>themes/</code> im Projekt-Stammordner abgelegt werden.<br>
+      Jedes Theme benötigt einen Unterordner mit einer <code>theme.toml</code> und optionalen Ordnern
+      <code>static/</code> und <code>templates/</code>.
+    </p>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn--primary">Theme speichern</button>
+    </div>
+  </form>
+</section>
+
+{% endblock %}

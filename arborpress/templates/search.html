@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ _('Suche') }}: {{ q }}{% endblock %}
+{% set noindex = true %}
+
+{% block content %}
+<h1>{{ _('Suchergebnisse für') }} <em>{{ q | e }}</em></h1>
+
+<form class="search-form" method="get" action="{{ url_for('public.search') }}">
+  <input type="search" name="q" value="{{ q | e }}" placeholder="{{ _('Suchen…') }}" autofocus>
+  <button type="submit">{{ _('Suchen') }}</button>
+</form>
+
+{% if results %}
+<p class="search-count">{{ results | length }} {{ _('Treffer') }}</p>
+<ul class="search-results">
+  {% for item in results %}
+  <li>
+    <a href="{{ item.url }}">{{ item.title }}</a>
+    {% if item.excerpt %}<p>{{ item.excerpt }}</p>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% elif q %}
+<p>{{ _('Keine Treffer gefunden.') }}</p>
+{% endif %}
+{% endblock %}

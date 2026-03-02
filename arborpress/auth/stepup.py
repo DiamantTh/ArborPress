@@ -1,0 +1,78 @@
+"""Step-up / Sudo-Mode (§2 – step-up mechanism).
+
+Schützt high-risk Operationen durch kurzzeitige Re-Authentifizierung.
+Verwendet WebAuthn mit UV (preferred) oder Backup-Code.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any
+
+from arborpress.core.config import get_settings
+from arborpress.logging.config import get_audit_logger
+
+log = logging.getLogger("arborpress.auth.stepup")
+audit = get_audit_logger()
+
+# Session-Key für Step-up-Zeitstempel
+_STEPUP_KEY = "_arborpress_stepup_at"
+_STEPUP_USER_KEY = "_arborpress_stepup_uid"
+
+# §2 – Operationen die Step-up erfordern
+STEPUP_REQUIRED_OPERATIONS = frozenset(
+    {
+        "change_roles",
+        "modify_auth_policy",
+        "toggle_federation",
+        "install_plugin",
+        "enable_plugin",
+        "generate_export",
+        "rotate_key",
+        "change_security_settings",
+    }
+)
+
+
+def require_stepup(operation: str) -> bool:
+    """Gibt True zurück wenn die Operation Step-up erfordert."""
+    return operation in STEPUP_REQUIRED_OPERATIONS
+
+
+def is_stepup_active(session: dict[str, Any], user_id: str) -> bool:
+    """Prüft ob die Step-up-Session noch gültig ist (§2 TTL)."""
+    cfg = get_settings()
+    stepup_at = session.get(_STEPUP_KEY)
+    stepup_uid = session.get(_STEPUP_USER_KEY)
+
+    if not stepup_at or stepup_uid != user_id:
+        return False
+
+    age = time.time() - stepup_at
+    return age < cfg.auth.stepup_ttl
+
+
+def grant_stepup(session: dict[str, Any], user_id: str) -> None:
+    """Gewährt Step-up und schreibt Audit-Log."""
+    session[_STEPUP_KEY] = time.time()
+    session[_STEPUP_USER_KEY] = user_id
+    audit.info("STEP-UP granted | user=%s", user_id)
+
+
+def revoke_stepup(session: dict[str, Any], user_id: str) -> None:
+    """Widerruft aktiven Step-up."""
+    session.pop(_STEPUP_KEY, None)
+    session.pop(_STEPUP_USER_KEY, None)
+    audit.info("STEP-UP revoked | user=%s", user_id)
+
+
+def assert_stepup(session: dict[str, Any], user_id: str, operation: str) -> None:
+    """Wirft PermissionError wenn Step-up nicht aktiv (helper für Views)."""
+    if not is_stepup_active(session, user_id):
+        audit.warning(
+            "STEP-UP required but not active | user=%s op=%s", user_id, operation
+        )
+        raise PermissionError(
+            f"Step-up authentication required for operation: {operation}"
+        )

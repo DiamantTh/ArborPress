@@ -1,0 +1,13 @@
+[theme]
+id          = "minimal"
+name        = "ArborPress Minimal"
+version     = "1.0.0"
+author      = "ArborPress"
+description = "Zeitungsartiger Stil – maximale Lesbarkeit, Serif-Schrift, kein Ablenkungsschnickschnack."
+preview     = "preview.png"
+
+[theme.features]
+dark_mode_toggle  = false
+code_highlight    = false
+reading_time      = true
+table_of_contents = false

@@ -1,0 +1,82 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "arborpress"
+version = "0.1.0"
+description = "Arbor Press – small, security-focused blogging platform / mini CMS"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "AGPL-3.0-or-later" }
+authors = [
+    { name = "ArborPress Contributors" }
+]
+dependencies = [
+    # Web (ASGI)
+    "quart>=0.19",
+    "hypercorn>=0.16",
+    # CLI
+    "typer[all]>=0.12",
+    # Database (async)
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",              # PostgreSQL §12
+    "aiomysql>=0.2",              # MariaDB §12
+    # Auth / WebAuthn / Crypto
+    "webauthn>=2.0",              # §2
+    "argon2-cffi>=23.1",          # §2 break-glass
+    "pyotp>=2.9",                 # TOTP/HOTP §3
+    "cryptography>=42.0",         # OpenPGP key ops §13
+    # Content & Sanitization
+    "bleach>=6.1",                # §10 federated/user-content sanitization
+    "python-slugify>=8.0",        # §6 slug canonicalization
+    "markdown-it-py>=3.0",        # Markdown rendering §1
+    # Media
+    "pillow>=10.3",               # image handling §1
+    "aiofiles>=23.2",             # async file I/O
+    # Mail §13
+    "aiosmtplib>=3.0",
+    # Rate-limiting §10
+    "limits>=3.12",
+    # HTTP client (federation §5, OAuth2/OIDC §11)
+    "httpx>=0.27",
+    # Config & version parsing
+    "tomllib>=1.0; python_version < '3.11'",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "packaging>=24.0",
+    # DB-Migrationen (§12)
+    "alembic>=1.13",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "aiosqlite>=0.20",   # In-Memory-DB für Tests
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+arborpress = "arborpress.cli.main:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["arborpress"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S"]
+ignore = ["S101"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

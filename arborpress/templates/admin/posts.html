@@ -1,0 +1,37 @@
+{% extends "admin/_base.html" %}
+{% block title %}Beiträge – ArborPress Admin{% endblock %}
+{% block admin_content %}
+<div class="admin-page-header">
+  <h2>Beiträge</h2>
+  <a href="{{ url_for('admin.post_new') }}" class="btn btn-primary">+ Neu</a>
+</div>
+
+<table class="admin-table">
+  <thead>
+    <tr>
+      <th>Titel</th>
+      <th>Slug</th>
+      <th>Autor</th>
+      <th>Veröffentlicht</th>
+      <th>Status</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for post in posts %}
+    <tr>
+      <td><a href="{{ url_for('admin.post_edit', slug=post.slug) }}">{{ post.title | e }}</a></td>
+      <td><code>{{ post.slug }}</code></td>
+      <td>{{ post.author_handle | default('–') }}</td>
+      <td>{{ post.published_at.strftime('%d.%m.%Y') if post.published_at else '–' }}</td>
+      <td><span class="badge badge-{{ post.status.value }}">{{ post.status.value }}</span></td>
+      <td>
+        <a href="{{ url_for('public.post', slug=post.slug) }}" target="_blank" class="btn btn-sm">Ansehen</a>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="empty-state">Keine Beiträge vorhanden.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

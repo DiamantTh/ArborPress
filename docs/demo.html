@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
+  <title>ArborPress – Demo-Vorschau</title>
+  <style>
+    /* ============================================================
+       ArborPress – Theme "Default" (eingebettet für Demo-Zwecke)
+       ============================================================ */
+    :root {
+      --color-bg:          #ffffff;
+      --color-bg-alt:      #f8f9fa;
+      --color-surface:     #ffffff;
+      --color-border:      #e2e8f0;
+      --color-text:        #1a202c;
+      --color-text-muted:  #6b7280;
+      --color-accent:      #2563eb;
+      --color-accent-hover:#1d4ed8;
+      --color-danger:      #dc2626;
+      --color-success:     #16a34a;
+
+      --font-sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      --font-serif: Georgia, "Times New Roman", serif;
+      --font-mono:  "JetBrains Mono", "Fira Code", Consolas, monospace;
+      --radius:    0.5rem;
+      --radius-sm: 0.25rem;
+      --shadow:    0 1px 3px rgba(0,0,0,.1);
+      --shadow-md: 0 4px 6px rgba(0,0,0,.07);
+      --max-w:     720px;
+      --gutter:    1.25rem;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font-sans);
+      font-size: 1rem;
+      line-height: 1.75;
+      background: var(--color-bg);
+      color: var(--color-text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    img { max-width: 100%; height: auto; display: block; }
+    a { color: var(--color-accent); text-decoration: underline; text-underline-offset: 3px; }
+    a:hover { color: var(--color-accent-hover); }
+
+    .container { width: 100%; max-width: var(--max-w); margin: 0 auto; padding: 0 var(--gutter); }
+    main { flex: 1; padding: 2.5rem 0; }
+
+    /* ---- Demo-Nav (Seitenauswahl) ---- */
+    .demo-bar {
+      background: #1e293b; color: #e2e8f0;
+      font-family: var(--font-sans); font-size: .8rem;
+      padding: .4rem var(--gutter); display: flex; gap: 1rem; align-items: center;
+      flex-wrap: wrap;
+    }
+    .demo-bar strong { color: #818cf8; margin-right: .5rem; }
+    .demo-bar a { color: #94a3b8; text-decoration: none; padding: .2rem .6rem; border-radius: 4px; }
+    .demo-bar a:hover, .demo-bar a.active { background: #334155; color: #e2e8f0; }
+
+    /* ---- Views ---- */
+    .view { display: none; }
+    .view.active { display: block; }
+
+    /* ---- Header ---- */
+    .site-header {
+      background: var(--color-surface);
+      border-bottom: 1px solid var(--color-border);
+      box-shadow: var(--shadow);
+    }
+    .site-header__inner {
+      display: flex; align-items: center; justify-content: space-between;
+      height: 3.5rem; gap: 1.5rem;
+      max-width: var(--max-w); margin: 0 auto; padding: 0 var(--gutter);
+    }
+    .site-header__brand { font-weight: 700; font-size: 1.2rem; text-decoration: none; color: var(--color-text); }
+    .site-header__nav { display: flex; align-items: center; gap: 1.25rem; }
+    .site-header__nav a {
+      color: var(--color-text-muted); text-decoration: none;
+      font-size: .9rem; font-weight: 500;
+      border-bottom: 2px solid transparent; padding-bottom: 2px; transition: all .15s;
+    }
+    .site-header__nav a:hover { color: var(--color-accent); border-bottom-color: var(--color-accent); }
+    .site-header__search input {
+      padding: .3rem .7rem; border: 1px solid var(--color-border);
+      border-radius: 999px; font-size: .82rem; background: var(--color-bg-alt);
+      width: 160px;
+    }
+
+    /* ---- Post Cards ---- */
+    .post-list { display: flex; flex-direction: column; gap: 2rem; }
+    .post-card {
+      background: var(--color-surface); border: 1px solid var(--color-border);
+      border-radius: var(--radius); padding: 1.5rem; box-shadow: var(--shadow);
+      transition: box-shadow .2s, transform .2s;
+    }
+    .post-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+    .post-card__tags { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: .6rem; }
+    .post-card__tag {
+      background: var(--color-bg-alt); color: var(--color-accent);
+      font-size: .75rem; font-weight: 600; padding: .15rem .6rem;
+      border-radius: 999px; text-decoration: none;
+    }
+    .post-card__title { font-size: 1.3rem; font-weight: 700; margin-bottom: .35rem; }
+    .post-card__title a { color: var(--color-text); text-decoration: none; }
+    .post-card__title a:hover { color: var(--color-accent); }
+    .post-card__meta { font-size: .82rem; color: var(--color-text-muted); margin-bottom: .7rem; }
+    .post-card__excerpt { color: var(--color-text-muted); font-size: .95rem; }
+    .post-card__more { display: inline-block; margin-top: .7rem; font-size: .85rem; font-weight: 600; text-decoration: none; color: var(--color-accent); }
+
+    /* ---- Single Post ---- */
+    .post-header { margin-bottom: 2rem; border-bottom: 1px solid var(--color-border); padding-bottom: 1.25rem; }
+    .post-header__tags { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: .6rem; }
+    .post-header__tag { background: var(--color-bg-alt); color: var(--color-accent); font-size: .75rem; font-weight: 600; padding: .15rem .6rem; border-radius: 999px; text-decoration: none; }
+    .post-header__title { font-size: 2rem; font-weight: 800; line-height: 1.25; margin-bottom: .5rem; }
+    .post-header__meta { font-size: .85rem; color: var(--color-text-muted); }
+    .post-header__meta a { color: inherit; }
+    .reading-time { display: inline-block; margin-left: .75rem; }
+
+    .post-body {
+      font-family: var(--font-serif); font-size: 1.08rem; line-height: 1.85;
+    }
+    .post-body h2 { font-family: var(--font-sans); font-size: 1.45rem; font-weight: 700; margin: 2rem 0 .65rem; }
+    .post-body h3 { font-family: var(--font-sans); font-size: 1.15rem; font-weight: 700; margin: 1.5rem 0 .5rem; }
+    .post-body p  { margin-bottom: 1.25rem; }
+    .post-body ul, .post-body ol { margin: 0 0 1.25rem 1.5rem; }
+    .post-body li { margin-bottom: .35rem; }
+    .post-body blockquote {
+      border-left: 4px solid var(--color-accent);
+      padding: .75rem 1.25rem; margin: 1.25rem 0;
+      background: var(--color-bg-alt); border-radius: 0 var(--radius) var(--radius) 0;
+      font-style: italic; color: var(--color-text-muted);
+    }
+    .post-body pre {
+      background: #1e293b; color: #e2e8f0; padding: 1.25rem;
+      border-radius: var(--radius); overflow-x: auto;
+      font-family: var(--font-mono); font-size: .88rem; margin-bottom: 1.25rem;
+    }
+    .post-body code { font-family: var(--font-mono); font-size: .88em; background: var(--color-bg-alt); padding: .15em .35em; border-radius: var(--radius-sm); }
+    .post-body pre code { background: none; padding: 0; color: #e2e8f0; }
+    .post-body table { width: 100%; border-collapse: collapse; margin-bottom: 1.25rem; font-family: var(--font-sans); font-size: .9rem; }
+    .post-body th, .post-body td { border: 1px solid var(--color-border); padding: .5rem .75rem; }
+    .post-body th { background: var(--color-bg-alt); font-weight: 600; }
+    .post-body img { border-radius: var(--radius); margin: 1.25rem auto; box-shadow: var(--shadow-md); }
+
+    .post-footer { margin-top: 2.5rem; padding-top: 1.25rem; border-top: 1px solid var(--color-border); display: flex; gap: .5rem; flex-wrap: wrap; }
+
+    /* ---- Page (Impressum etc.) ---- */
+    .page-header { margin-bottom: 1.75rem; border-bottom: 1px solid var(--color-border); padding-bottom: 1rem; }
+    .page-header__title { font-size: 1.8rem; font-weight: 800; }
+    .page-body { font-size: 1rem; line-height: 1.8; }
+    .page-body h2 { font-size: 1.25rem; font-weight: 700; margin: 1.75rem 0 .5rem; }
+    .page-body h3 { font-size: 1.05rem; font-weight: 700; margin: 1.25rem 0 .4rem; }
+    .page-body p  { margin-bottom: 1rem; }
+    .page-body ul, .page-body ol { margin: 0 0 1rem 1.5rem; }
+    .page-body li { margin-bottom: .3rem; }
+    .page-body blockquote {
+      border-left: 3px solid var(--color-border); padding: .5rem 1rem;
+      margin: 1rem 0; color: var(--color-text-muted); font-style: italic;
+    }
+    .page-body hr { border: none; border-top: 1px solid var(--color-border); margin: 1.5rem 0; }
+    .page-body .notice {
+      background: #fffbeb; border: 1px solid #fde68a; border-radius: var(--radius-sm);
+      padding: .75rem 1rem; font-size: .9rem; color: #92400e; margin-top: 1.5rem;
+    }
+
+    /* ---- Buttons ---- */
+    .btn {
+      display: inline-flex; align-items: center; gap: .4rem;
+      padding: .45rem 1rem; border-radius: var(--radius-sm);
+      font-size: .88rem; font-weight: 600; cursor: pointer;
+      border: 1px solid var(--color-border);
+      background: var(--color-bg-alt); color: var(--color-text);
+      text-decoration: none; transition: all .15s; font-family: var(--font-sans);
+    }
+    .btn:hover { background: var(--color-border); }
+    .btn-primary { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
+    .btn-primary:hover { background: var(--color-accent-hover); border-color: var(--color-accent-hover); color: #fff; }
+
+    /* ---- Pagination ---- */
+    .pagination { display: flex; align-items: center; gap: .5rem; justify-content: center; margin-top: 2.5rem; }
+    .pagination a, .pagination span {
+      padding: .4rem .85rem; border-radius: var(--radius-sm);
+      border: 1px solid var(--color-border); text-decoration: none;
+      font-size: .9rem; color: var(--color-text); background: var(--color-surface);
+    }
+    .pagination a:hover { background: var(--color-bg-alt); color: var(--color-accent); }
+    .pagination .current { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
+
+    /* ---- Footer ---- */
+    .site-footer {
+      border-top: 1px solid var(--color-border);
+      padding: 1.25rem 0; margin-top: auto;
+      font-size: .85rem; color: var(--color-text-muted);
+      background: var(--color-bg-alt);
+    }
+    .site-footer__inner {
+      display: flex; justify-content: space-between; align-items: center;
+      flex-wrap: wrap; gap: .75rem;
+      max-width: var(--max-w); margin: 0 auto; padding: 0 var(--gutter);
+    }
+    .site-footer__nav { display: flex; gap: 1rem; }
+    .site-footer__nav a { color: var(--color-text-muted); text-decoration: none; }
+    .site-footer__nav a:hover { color: var(--color-accent); }
+
+    /* ---- Kommentare ---- */
+    .comments-section { margin-top: 3rem; padding-top: 2rem; border-top: 2px solid var(--color-border); }
+    .comments-section > h2 { font-size: 1.2rem; font-weight: 700; margin-bottom: 1.5rem; }
+    .comment-list { display: flex; flex-direction: column; gap: 1.1rem; margin-bottom: 2rem; }
+    .comment { background: var(--color-bg-alt); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1rem 1.25rem; }
+    .comment__header { display: flex; justify-content: space-between; align-items: center; margin-bottom: .55rem; flex-wrap: wrap; gap: .35rem; }
+    .comment__author { font-weight: 700; font-size: .92rem; }
+    .comment__date { font-size: .78rem; color: var(--color-text-muted); }
+    .comment__body { font-size: .95rem; line-height: 1.7; color: #374151; }
+
+    /* ---- Kommentar-Formular ---- */
+    .comment-form { background: var(--color-bg-alt); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1.5rem; }
+    .comment-form > h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: 1rem; }
+    .mod-notice { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: var(--radius-sm);
+      padding: .75rem 1rem; font-size: .84rem; color: #1e40af; margin-bottom: 1.25rem;
+      display: flex; align-items: flex-start; gap: .5rem; line-height: 1.55; }
+    .mod-notice strong { display: block; font-size: .88rem; margin-bottom: .2rem; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin-bottom: .75rem; }
+    .fg { display: flex; flex-direction: column; gap: .3rem; margin-bottom: .75rem; }
+    .fg label { font-size: .84rem; font-weight: 600; color: var(--color-text); }
+    .fg input, .fg textarea { padding: .5rem .75rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+      font-size: .9rem; font-family: var(--font-sans); background: var(--color-surface); width: 100%; transition: border-color .15s; }
+    .fg input:focus, .fg textarea:focus { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+    .fg textarea { resize: vertical; min-height: 100px; }
+    .fg .hint { font-size: .77rem; color: var(--color-text-muted); }
+    .captcha-box { background: #f1f5f9; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+      padding: .65rem 1rem; margin-bottom: .75rem; }
+    .captcha-box__header { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; }
+    .captcha-box label { font-size: .86rem; font-weight: 600; }
+    .captcha-provider-badge { font-size: .72rem; font-weight: 700; padding: .18rem .55rem;
+      border-radius: 20px; letter-spacing: .03em; }
+    .captcha-provider-badge--custom  { background: #dcfce7; color: #166534; }
+    .captcha-provider-badge--math    { background: #dbeafe; color: #1e40af; }
+    .captcha-provider-badge--hcaptcha { background: #fef9c3; color: #713f12; }
+    .captcha-provider-badge--friendly { background: #f0fdf4; color: #14532d; }
+    .captcha-provider-badge--altcha  { background: #f5f3ff; color: #4c1d95; }
+    .captcha-q-text { font-size: .97rem; font-weight: 700; color: var(--color-accent); display: block; margin-bottom: .4rem; }
+    .captcha-q { font-size: 1.1rem; font-weight: 700; color: var(--color-accent); }
+    .captcha-input { width: 180px; padding: .38rem .5rem; border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm); font-size: .95rem; }
+    .captcha-input--number { width: 72px; text-align: center; }
+    .privacy-row { display: flex; align-items: flex-start; gap: .5rem; margin-bottom: .9rem; }
+    .privacy-row input[type=checkbox] { margin-top: .3rem; flex-shrink: 0; }
+    .privacy-row label { font-size: .83rem; }
+    .btn-submit { background: var(--color-accent); color: #fff; border: none; padding: .55rem 1.5rem;
+      border-radius: var(--radius-sm); font-size: .92rem; font-weight: 700; cursor: pointer;
+      font-family: var(--font-sans); transition: background .15s; }
+    .btn-submit:hover { background: var(--color-accent-hover); }
+    .confirm-msg { background: #fefce8; border: 1px solid #fde047; border-radius: var(--radius);
+      padding: .9rem 1.1rem; font-size: .88rem; color: #713f12; margin-top: 1rem; display: none; }
+    @media(max-width:620px){ .form-row { grid-template-columns: 1fr; } }
+
+    /* ---- AP / Federation Badge ---- */
+    .federation-badge {
+      display: inline-flex; align-items: center; gap: .4rem;
+      background: #f0fdf4; border: 1px solid #86efac;
+      color: #166534; font-size: .75rem; font-weight: 600;
+      padding: .2rem .65rem; border-radius: 999px; font-family: var(--font-sans);
+    }
+
+    @media (max-width: 620px) {
+      :root { --gutter: 1rem; }
+      .site-header__nav { gap: .75rem; }
+      .post-header__title { font-size: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ============================================================
+     Demo-Navigationsleiste (nur für diese Demo-Datei)
+     ============================================================ -->
+<div class="demo-bar">
+  <strong>🌳 ArborPress Demo</strong>
+  <a href="#" class="active" onclick="showView('index', this)">Blog-Index</a>
+  <a href="#" onclick="showView('post-welcome', this)">Artikel: Willkommen</a>
+  <a href="#" onclick="showView('post-lorem', this)">Artikel: Lorem Ipsum</a>
+  <a href="#" onclick="showView('imprint', this)">Impressum</a>
+  <a href="#" onclick="showView('privacy', this)">Datenschutzerklärung</a>
+</div>
+
+<!-- ============================================================
+     Gemeinsamer Header (alle Views)
+     ============================================================ -->
+<header class="site-header">
+  <div class="site-header__inner">
+    <a href="#" class="site-header__brand">Mein Blog</a>
+    <nav class="site-header__nav">
+      <a href="#" onclick="showView('index',this);return false">Beiträge</a>
+      <a href="#" onclick="showView('imprint',this);return false">Impressum</a>
+    </nav>
+    <div class="site-header__search">
+      <input type="search" placeholder="Suchen …" aria-label="Suche">
+    </div>
+  </div>
+</header>
+
+<!-- ============================================================
+     VIEW 1: Blog-Index
+     ============================================================ -->
+<div id="view-index" class="view active">
+  <main>
+    <div class="container">
+      <div class="post-list">
+
+        <!-- Post-Karte 1 -->
+        <article class="post-card">
+          <div class="post-card__tags">
+            <a href="#" class="post-card__tag">Neuigkeiten</a>
+            <a href="#" class="post-card__tag">Meta</a>
+          </div>
+          <h2 class="post-card__title">
+            <a href="#" onclick="showView('post-welcome');return false">
+              Willkommen bei ArborPress
+            </a>
+          </h2>
+          <p class="post-card__meta">
+            Von <a href="#">admin</a> · 2. März 2026
+            <span class="reading-time">· 2 Min.</span>
+          </p>
+          <p class="post-card__excerpt">
+            Entdecke ArborPress – eine selbstgehostete Blogging-Plattform mit
+            WebAuthn-Login, ActivityPub-Federation und voller Kontrolle über deine Daten.
+            Keine Tracker, keine fremden Server.
+          </p>
+          <a href="#" class="post-card__more" onclick="showView('post-welcome');return false">
+            Weiterlesen →
+          </a>
+        </article>
+
+        <!-- Post-Karte 2 -->
+        <article class="post-card">
+          <div class="post-card__tags">
+            <a href="#" class="post-card__tag">Tutorial</a>
+            <a href="#" class="post-card__tag">Meta</a>
+          </div>
+          <h2 class="post-card__title">
+            <a href="#" onclick="showView('post-lorem');return false">
+              Gedanken über das Schreiben im Netz
+            </a>
+          </h2>
+          <p class="post-card__meta">
+            Von <a href="#">admin</a> · 1. März 2026
+            <span class="reading-time">· 4 Min.</span>
+          </p>
+          <p class="post-card__excerpt">
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod
+            tempor incididunt ut labore et dolore magna aliqua. Ein Beispielartikel,
+            der die typische Darstellung von Fließtext, Überschriften und Zitaten zeigt.
+          </p>
+          <a href="#" class="post-card__more" onclick="showView('post-lorem');return false">
+            Weiterlesen →
+          </a>
+        </article>
+
+        <!-- Post-Karte 3 (Entwurf – nur für Layout-Demo) -->
+        <article class="post-card" style="opacity:.55">
+          <div class="post-card__tags">
+            <a href="#" class="post-card__tag">Entwurf</a>
+          </div>
+          <h2 class="post-card__title">
+            <a href="#">Dieser Beitrag ist noch ein Entwurf</a>
+          </h2>
+          <p class="post-card__meta">Von admin · noch nicht veröffentlicht</p>
+          <p class="post-card__excerpt">
+            Dieser Beitrag ist noch nicht veröffentlicht und wird nur im Admin-Bereich angezeigt.
+          </p>
+        </article>
+
+      </div><!-- /.post-list -->
+
+      <nav class="pagination" aria-label="Seiten-Navigation">
+        <span class="current">1</span>
+        <a href="#">2</a>
+        <a href="#">3</a>
+        <span>…</span>
+        <a href="#">7</a>
+        <a href="#">Nächste →</a>
+      </nav>
+    </div>
+  </main>
+</div>
+
+<!-- ============================================================
+     VIEW 2: Artikel – Willkommen bei ArborPress
+     ============================================================ -->
+<div id="view-post-welcome" class="view">
+  <main>
+    <div class="container">
+      <article>
+        <header class="post-header">
+          <div class="post-header__tags">
+            <a href="#" class="post-header__tag">Neuigkeiten</a>
+            <a href="#" class="post-header__tag">Meta</a>
+          </div>
+          <h1 class="post-header__title">Willkommen bei ArborPress</h1>
+          <p class="post-header__meta">
+            Von <a href="#">admin</a> ·
+            <time datetime="2026-03-02">2. März 2026</time>
+            <span class="reading-time">· ca. 2 Min. Lesezeit</span>
+            &nbsp;
+            <span class="federation-badge" title="Dieser Beitrag ist im Fediverse verfügbar">
+              ✦ Fediverse
+            </span>
+          </p>
+        </header>
+
+        <div class="post-body">
+          <p>
+            Schön, dass du dabei bist! <strong>ArborPress</strong> ist eine
+            selbstgehostete Blogging-Plattform, die du vollständig kontrollierst –
+            ohne Tracking, ohne fremde Server, ohne Kompromisse.
+          </p>
+
+          <h2>Was kann ArborPress?</h2>
+          <ul>
+            <li><strong>WebAuthn-Login</strong> – passwortlose Anmeldung mit Hardwaretoken oder Gerätesensor</li>
+            <li><strong>ActivityPub-Federation</strong> – deine Beiträge erscheinen im Fediverse (Mastodon, Misskey …)</li>
+            <li><strong>Mehrsprachigkeit</strong> – Beiträge in verschiedenen Sprachen veröffentlichen</li>
+            <li><strong>Volltextsuche</strong> – dank PostgreSQL <code>pg_fts</code> oder MariaDB FULLTEXT</li>
+            <li><strong>Plugins</strong> – das System lässt sich einfach erweitern</li>
+          </ul>
+
+          <h2>Erste Schritte</h2>
+          <p>
+            Nach der Installation landet ihr direkt auf dieser Startseite.
+            Der Admin-Bereich ist unter <code>/admin/</code> erreichbar, sobald
+            ihr mit <code>arborpress user add</code> euren ersten Benutzer angelegt habt.
+          </p>
+
+          <blockquote>
+            „Das Web gehört allen." – Tim Berners-Lee
+          </blockquote>
+
+          <h2>Themes wechseln</h2>
+          <p>
+            Drei eingebaute Themes stehen zur Auswahl: <em>Default</em> (hell),
+            <em>Dark</em> (dunkel, Code-optimiert) und <em>Minimal</em> (Zeitungsstil).
+            Umschalten in der <code>config.toml</code>:
+          </p>
+          <pre><code>[theme]
+active = "dark"   # oder "minimal"</code></pre>
+
+          <p>Viel Spaß beim Schreiben!</p>
+        </div>
+
+        <footer class="post-footer">
+          <a href="#" class="btn" onclick="showView('index');return false">← Zurück zur Übersicht</a>
+        </footer>
+
+        <!-- Kommentar-Abschnitt -->
+        <section class="comments-section">
+          <h2>3 Kommentare</h2>
+          <div class="comment-list">
+            <div class="comment">
+              <div class="comment__header">
+                <span class="comment__author">Marie K.</span>
+                <span class="comment__date">2. März 2026, 14:32</span>
+              </div>
+              <p class="comment__body">Endlich eine Blogging-Plattform ohne JavaScript-Bloat! Habe ArborPress heute aufgesetzt – funktioniert sofort. Der WebAuthn-Login ist besonders neat. 👏</p>
+            </div>
+            <div class="comment">
+              <div class="comment__header">
+                <span class="comment__author">Stefan W.</span>
+                <span class="comment__date">2. März 2026, 16:05</span>
+              </div>
+              <p class="comment__body">Das Fediverse-Feature hat mich überzeugt. Habt ihr schon Pläne für Webmentions?</p>
+            </div>
+            <div class="comment">
+              <div class="comment__header">
+                <span class="comment__author">admin</span>
+                <span class="comment__date">2. März 2026, 17:30</span>
+              </div>
+              <p class="comment__body">@Stefan – Webmentions sind auf der Roadmap für v0.5. Bleibt dran! 🌳</p>
+            </div>
+          </div>
+
+          <div class="comment-form">
+            <h3>Kommentar schreiben</h3>
+            <div class="mod-notice">
+              <span style="font-size:1.1rem;flex-shrink:0">✉️</span>
+              <div>
+                <strong>Zweistufige Moderation</strong>
+                Dein Kommentar wird erst nach <strong>E-Mail-Bestätigung</strong> durch dich und
+                anschließender <strong>Freischaltung durch den Betreiber</strong> veröffentlicht.
+                Deine E-Mail-Adresse ist nicht öffentlich sichtbar.
+              </div>
+            </div>
+            <form onsubmit="return demoSubmit(event,'c1')">
+              <div class="form-row">
+                <div class="fg">
+                  <label>Name <span style="color:var(--color-danger)">*</span></label>
+                  <input type="text" placeholder="Dein Name" required>
+                </div>
+                <div class="fg">
+                  <label>E-Mail <span style="color:var(--color-danger)">*</span></label>
+                  <input type="email" placeholder="du@beispiel.de" required>
+                  <span class="hint">Nicht öffentlich – nur für die Bestätigungs-Mail.</span>
+                </div>
+              </div>
+              <div class="fg">
+                <label>Website <span style="color:var(--color-text-muted);font-weight:400">(optional)</span></label>
+                <input type="url" placeholder="https://…">
+              </div>
+              <div class="fg">
+                <label>Kommentar <span style="color:var(--color-danger)">*</span></label>
+                <textarea placeholder="Dein Kommentar …" required></textarea>
+              </div>
+              <!-- Captcha-Typ: custom (Eigene Fragen) – per Beitrag einstellbar -->
+              <div class="captcha-box">
+                <div class="captcha-box__header">
+                  <label>Anti-Spam-Prüfung</label>
+                  <span class="captcha-provider-badge captcha-provider-badge--custom">Eigene Fragen</span>
+                </div>
+                <span class="captcha-q-text" id="cq1">Lädt …</span>
+                <input type="hidden" id="cqi1" name="captcha_qi">
+                <input class="captcha-input" type="text" id="ca1" placeholder="Deine Antwort" required autocomplete="off">
+              </div>
+              <div class="privacy-row">
+                <input type="checkbox" id="priv1" required>
+                <label for="priv1">Ich habe die <a href="#" onclick="showView('privacy');return false">Datenschutzerklärung</a> gelesen und stimme der Verarbeitung meiner Daten zu.</label>
+              </div>
+              <button type="submit" class="btn-submit">Kommentar einreichen</button>
+            </form>
+            <div class="confirm-msg" id="cm1">
+              ✉️ <strong>Fast fertig!</strong> Wir haben dir eine Bestätigungs-E-Mail gesendet.
+              Bitte klicke auf den Link darin – danach wird dein Kommentar vom Betreiber geprüft und freigeschaltet.
+            </div>
+          </div>
+        </section>
+
+      </article>
+    </div>
+  </main>
+</div>
+
+<!-- ============================================================
+     VIEW 3: Artikel – Lorem Ipsum
+     ============================================================ -->
+<div id="view-post-lorem" class="view">
+  <main>
+    <div class="container">
+      <article>
+        <header class="post-header">
+          <div class="post-header__tags">
+            <a href="#" class="post-header__tag">Tutorial</a>
+          </div>
+          <h1 class="post-header__title">Gedanken über das Schreiben im Netz</h1>
+          <p class="post-header__meta">
+            Von <a href="#">admin</a> ·
+            <time datetime="2026-03-01">1. März 2026</time>
+            <span class="reading-time">· ca. 4 Min. Lesezeit</span>
+          </p>
+        </header>
+
+        <div class="post-body">
+          <p>
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod
+            tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim
+            veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea
+            commodo consequat.
+          </p>
+
+          <h2>Warum selbst hosten?</h2>
+          <p>
+            Duis aute irure dolor in reprehenderit in voluptate velit esse cillum
+            dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non
+            proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+          </p>
+          <p>
+            Sed ut perspiciatis, unde omnis iste natus error sit voluptatem
+            accusantium doloremque laudantium, totam rem aperiam eaque ipsa, quae ab
+            illo inventore veritatis et quasi architecto beatae vitae dicta sunt,
+            explicabo.
+          </p>
+
+          <blockquote>
+            Nemo enim ipsam voluptatem, quia voluptas sit, aspernatur aut odit aut
+            fugit, sed quia consequuntur magni dolores eos, qui ratione voluptatem
+            sequi nesciunt.
+          </blockquote>
+
+          <h2>Markdown und Formatierung</h2>
+          <p>
+            Neque porro quisquam est, qui dolorem ipsum, quia dolor sit, amet,
+            consectetur, adipisci velit. At vero eos et accusamus et iusto odio
+            dignissimos ducimus, qui blanditiis praesentium voluptatum deleniti
+            atque corrupti.
+          </p>
+
+          <h3>Listen-Beispiel</h3>
+          <ul>
+            <li>Erstes Element mit etwas <strong>fettem Text</strong></li>
+            <li>Zweites Element mit einem <a href="#">Link</a></li>
+            <li>Drittes Element mit <code>Inline-Code</code></li>
+            <li>Viertes Element ganz normal</li>
+          </ul>
+
+          <h3>Code-Block</h3>
+          <pre><code>def greet(name: str) -> str:
+    """Gibt eine Begrüßung zurück."""
+    return f"Hallo, {name}! Willkommen bei ArborPress."
+
+if __name__ == "__main__":
+    print(greet("Welt"))</code></pre>
+
+          <h3>Tabelle</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Feature</th>
+                <th>ArborPress</th>
+                <th>Alternativen</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>WebAuthn-Login</td><td>✓ eingebaut</td><td>Plugin/Addon</td></tr>
+              <tr><td>ActivityPub</td><td>✓ eingebaut</td><td>Plugin/Addon</td></tr>
+              <tr><td>Selbstgehostet</td><td>✓ immer</td><td>optional</td></tr>
+              <tr><td>Open Source</td><td>✓</td><td>je nach Produkt</td></tr>
+            </tbody>
+          </table>
+
+          <p>
+            Nam libero tempore, cum soluta nobis est eligendi optio, cumque nihil
+            impedit, quo minus id, quod maxime placeat, facere possimus, omnis
+            voluptas assumenda est, omnis dolor repellendus.
+          </p>
+          <p>
+            Temporibus autem quibusdam et aut officiis debitis aut rerum
+            necessitatibus saepe eveniet, ut et voluptates repudiandae sint et
+            molestiae non recusandae. Itaque earum rerum hic tenetur a sapiente
+            delectus, ut aut reiciendis voluptatibus maiores.
+          </p>
+
+          <img src="https://picsum.photos/seed/arborpress/720/340"
+               alt="Platzhalterbild" loading="lazy">
+
+        </div>
+
+        <footer class="post-footer">
+          <a href="#" class="btn" onclick="showView('index');return false">← Zurück zur Übersicht</a>
+        </footer>
+
+        <!-- Kommentar-Abschnitt -->
+        <section class="comments-section">
+          <h2>1 Kommentar</h2>
+          <div class="comment-list">
+            <div class="comment">
+              <div class="comment__header">
+                <span class="comment__author">Tobias R.</span>
+                <span class="comment__date">1. März 2026, 20:14</span>
+              </div>
+              <p class="comment__body">Sehr schöner Artikel. Das Thema Datensouveränität treibt mich um – gut zu sehen, dass ArborPress hier den richtigen Ansatz wählt.</p>
+            </div>
+          </div>
+
+          <div class="comment-form">
+            <h3>Kommentar schreiben</h3>
+            <div class="mod-notice">
+              <span style="font-size:1.1rem;flex-shrink:0">✉️</span>
+              <div>
+                <strong>Zweistufige Moderation</strong>
+                Nach <strong>E-Mail-Bestätigung</strong> und <strong>Admin-Freischaltung</strong>
+                wird dein Kommentar veröffentlicht. Deine E-Mail bleibt privat.
+              </div>
+            </div>
+            <form onsubmit="return demoSubmit(event,'c2')">
+              <div class="form-row">
+                <div class="fg">
+                  <label>Name <span style="color:var(--color-danger)">*</span></label>
+                  <input type="text" placeholder="Dein Name" required>
+                </div>
+                <div class="fg">
+                  <label>E-Mail <span style="color:var(--color-danger)">*</span></label>
+                  <input type="email" placeholder="du@beispiel.de" required>
+                  <span class="hint">Nicht öffentlich – nur für die Bestätigungs-Mail.</span>
+                </div>
+              </div>
+              <div class="fg">
+                <label>Kommentar <span style="color:var(--color-danger)">*</span></label>
+                <textarea placeholder="Dein Kommentar …" required></textarea>
+              </div>
+              <!-- Captcha-Typ: math (Rechenaufgabe) – per Beitrag abweichend vom Standard -->
+              <div class="captcha-box">
+                <div class="captcha-box__header">
+                  <label>Anti-Spam-Prüfung</label>
+                  <span class="captcha-provider-badge captcha-provider-badge--math">Mathe</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:.65rem;flex-wrap:wrap">
+                  <span class="captcha-q" id="cq2"></span>
+                  <input class="captcha-input captcha-input--number" type="number" id="ca2" placeholder="?" min="0" max="99" required>
+                </div>
+              </div>
+              <div class="privacy-row">
+                <input type="checkbox" id="priv2" required>
+                <label for="priv2">Ich stimme der <a href="#" onclick="showView('privacy');return false">Datenschutzerklärung</a> zu.</label>
+              </div>
+              <button type="submit" class="btn-submit">Kommentar einreichen</button>
+            </form>
+            <div class="confirm-msg" id="cm2">
+              ✉️ <strong>Fast fertig!</strong> Bitte bestätige deinen Kommentar über den Link in der
+              Bestätigungs-E-Mail.
+            </div>
+          </div>
+        </section>
+
+      </article>
+    </div>
+  </main>
+</div>
+
+<!-- ============================================================
+     VIEW 4: Impressum (/page/imprint)
+     ============================================================ -->
+<div id="view-imprint" class="view">
+  <main>
+    <div class="container">
+      <header class="page-header">
+        <h1 class="page-header__title">Impressum</h1>
+      </header>
+      <div class="page-body">
+        <p>
+          <strong>Angaben gemäß § 5 TMG</strong><br>
+          Muster Max<br>
+          Musterstraße 1<br>
+          12345 Musterstadt<br>
+          Deutschland
+        </p>
+        <p>
+          <strong>Kontakt:</strong><br>
+          E-Mail: <a href="mailto:kontakt@beispiel.de">kontakt@beispiel.de</a><br>
+          Telefon: +49 (0)123 456789
+        </p>
+        <p>
+          <strong>Verantwortlich für den Inhalt nach § 55 Abs. 2 RStV:</strong><br>
+          Muster Max, Musterstraße 1, 12345 Musterstadt
+        </p>
+
+        <hr>
+
+        <h2>Haftungsausschluss</h2>
+
+        <h3>Haftung für Inhalte</h3>
+        <p>
+          Die Inhalte dieser Seite wurden mit größter Sorgfalt erstellt. Für die
+          Richtigkeit, Vollständigkeit und Aktualität der Inhalte übernehmen wir keine
+          Gewähr. Als Diensteanbieter sind wir gemäß § 7 Abs. 1 TMG für eigene Inhalte
+          auf diesen Seiten nach den allgemeinen Gesetzen verantwortlich.
+        </p>
+
+        <h3>Haftung für Links</h3>
+        <p>
+          Unser Angebot enthält Links zu externen Websites Dritter, auf deren Inhalte
+          wir keinen Einfluss haben. Deshalb können wir für diese fremden Inhalte auch
+          keine Gewähr übernehmen.
+        </p>
+
+        <h3>Urheberrecht</h3>
+        <p>
+          Die durch die Seitenbetreiber erstellten Inhalte und Werke auf diesen Seiten
+          unterliegen dem deutschen Urheberrecht. Die Vervielfältigung, Bearbeitung,
+          Verbreitung und jede Art der Verwertung außerhalb der Grenzen des
+          Urheberrechtes bedürfen der schriftlichen Zustimmung des jeweiligen Autors.
+        </p>
+
+        <div class="notice">
+          <strong>Hinweis:</strong> Diese Angaben dienen nur als Vorlage.
+          Bitte ersetze alle Beispieldaten durch deine tatsächlichen Angaben,
+          bevor du die Seite veröffentlichst.
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ============================================================
+     VIEW 5: Datenschutzerklärung (/page/privacy)
+     ============================================================ -->
+<div id="view-privacy" class="view">
+  <main>
+    <div class="container">
+      <header class="page-header">
+        <h1 class="page-header__title">Datenschutzerklärung</h1>
+      </header>
+      <div class="page-body">
+
+        <h2>1. Verantwortlicher</h2>
+        <p>
+          Muster Max<br>Musterstraße 1 · 12345 Musterstadt<br>
+          E-Mail: <a href="mailto:datenschutz@beispiel.de">datenschutz@beispiel.de</a>
+        </p>
+
+        <h2>2. Erhobene Daten</h2>
+
+        <h3>Server-Logfiles</h3>
+        <p>
+          Beim Besuch unserer Website werden automatisch Informationen in sogenannten
+          Server-Logfiles gespeichert, die Ihr Browser übermittelt: Browsertyp und
+          -version, Betriebssystem, Referrer-URL, IP-Adresse (anonymisiert) und
+          Uhrzeit der Serveranfrage. Grundlage ist Art. 6 Abs. 1 lit. f DSGVO.
+        </p>
+
+        <h3>Cookies</h3>
+        <p>
+          Diese Website verwendet ausschließlich technisch notwendige Cookies
+          (Session-Cookie für eingeloggte Benutzer). Es werden keine Tracking-
+          oder Werbe-Cookies eingesetzt.
+        </p>
+
+        <h2>3. Benutzerkonten (WebAuthn)</h2>
+        <p>
+          Bei der Registrierung wird ein kryptographischer öffentlicher Schlüssel
+          (WebAuthn Credential) gespeichert. Es werden <strong>keine Passwörter</strong>
+          gespeichert. Biometrische Daten werden ausschließlich lokal auf Ihrem Gerät
+          verarbeitet und verlassen es nicht.
+        </p>
+        <p>
+          Gespeicherte Daten: Benutzername, öffentlicher Schlüssel, Zeitpunkt der
+          Registrierung und letzten Anmeldung. Grundlage: Art. 6 Abs. 1 lit. b DSGVO.
+        </p>
+
+        <h2>4. Federation (ActivityPub)</h2>
+        <p>
+          Falls aktiviert, werden veröffentlichte Beiträge an Follower in anderen
+          Fediverse-Instanzen übermittelt. Dies umfasst Beitragstitel, Inhalt,
+          Veröffentlichungszeitpunkt und Autorenname. Grundlage: Art. 6 Abs. 1
+          lit. b DSGVO.
+        </p>
+
+        <h2>5. Ihre Rechte</h2>
+        <ul>
+          <li>Recht auf Auskunft (Art. 15 DSGVO)</li>
+          <li>Recht auf Berichtigung (Art. 16 DSGVO)</li>
+          <li>Recht auf Löschung (Art. 17 DSGVO)</li>
+          <li>Recht auf Einschränkung der Verarbeitung (Art. 18 DSGVO)</li>
+          <li>Recht auf Datenübertragbarkeit (Art. 20 DSGVO)</li>
+          <li>Widerspruchsrecht (Art. 21 DSGVO)</li>
+        </ul>
+        <p>
+          Anfragen richten Sie an:
+          <a href="mailto:datenschutz@beispiel.de">datenschutz@beispiel.de</a>
+        </p>
+
+        <h2>6. Keine Weitergabe an Dritte</h2>
+        <p>
+          Personenbezogene Daten werden nicht an Dritte weitergegeben, sofern keine
+          gesetzliche Verpflichtung besteht.
+        </p>
+
+        <div class="notice">
+          <strong>Hinweis:</strong> Diese Datenschutzerklärung ist eine Vorlage
+          und ersetzt keine Rechtsberatung. Bitte passe den Text an deine
+          tatsächlichen Verarbeitungsaktivitäten an.
+          <br><em>Stand: März 2026</em>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ============================================================
+     Gemeinsamer Footer
+     ============================================================ -->
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <span>© 2026 Mein Blog · Powered by <strong>ArborPress</strong></span>
+    <nav class="site-footer__nav">
+      <a href="#" onclick="showView('imprint');return false">Impressum</a>
+      <a href="#" onclick="showView('privacy');return false">Datenschutz</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+  function showView(id, linkEl) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-' + id)?.classList.add('active');
+    document.querySelectorAll('.demo-bar a').forEach(a => a.classList.remove('active'));
+    if (linkEl) {
+      linkEl.classList.add('active');
+    } else {
+      document.querySelectorAll('.demo-bar a').forEach(a => {
+        if (a.getAttribute('onclick')?.includes("'" + id + "'")) a.classList.add('active');
+      });
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return false;
+  }
+
+  // ---------- Captcha-Fragenkatalog (Custom Questions) --------------------
+  const CUSTOM_QUESTIONS = [
+    { q: 'Wie heißt dieses CMS?',              a: 'arborpress' },
+    { q: 'Welche Farbe hat ein reifer Apfel?',  a: 'rot' },
+    { q: 'Wie viele Beine hat eine Katze?',     a: '4' },
+    { q: 'Was ist das Gegenteil von schwarz?',  a: 'weiß' },
+    { q: 'Wie viele Tage hat eine Woche?',      a: '7' },
+  ];
+
+  // Custom-Question-Captcha (Formular 1)
+  let _cqi1 = 0;
+  function makeCustomCaptcha() {
+    const idx = Math.floor(Math.random() * CUSTOM_QUESTIONS.length);
+    _cqi1 = idx;
+    const el = document.getElementById('cq1');
+    const qi = document.getElementById('cqi1');
+    const inp = document.getElementById('ca1');
+    if (el)  el.textContent = CUSTOM_QUESTIONS[idx].q;
+    if (qi)  qi.value = idx;
+    if (inp) inp.value = '';
+  }
+  makeCustomCaptcha();
+
+  // Mathe-Captcha (Formular 2)
+  function makeCaptcha(qId, ansId) {
+    const a = Math.floor(Math.random() * 9) + 1;
+    const b = Math.floor(Math.random() * 9) + 1;
+    const el = document.getElementById(qId);
+    if (el) { el.textContent = a + ' + ' + b + ' = ?'; el.dataset.a = a; el.dataset.b = b; }
+    const inp = document.getElementById(ansId);
+    if (inp) inp.value = '';
+  }
+  makeCaptcha('cq2', 'ca2');
+
+  function demoSubmit(e, key) {
+    e.preventDefault();
+    let ok = false;
+    if (key === 'c1') {
+      // Custom-Question-Prüfung
+      const given = (document.getElementById('ca1').value || '').trim().toLowerCase();
+      const expected = CUSTOM_QUESTIONS[_cqi1].a.toLowerCase();
+      if (!given || given !== expected) {
+        alert('Die Antwort auf die Sicherheitsfrage ist leider falsch. Bitte noch einmal versuchen.');
+        makeCustomCaptcha();
+        return false;
+      }
+      ok = true;
+    } else {
+      // Mathe-Prüfung
+      const q = document.getElementById('cq2');
+      const ans = parseInt(document.getElementById('ca2').value);
+      const correct = parseInt(q.dataset.a) + parseInt(q.dataset.b);
+      if (isNaN(ans) || ans !== correct) {
+        alert('Die Antwort auf die Rechenaufgabe ist leider falsch. Bitte noch einmal versuchen.');
+        makeCaptcha('cq2', 'ca2');
+        return false;
+      }
+      ok = true;
+    }
+    const suffix = key === 'c1' ? '1' : '2';
+    if (ok) {
+      const msg = document.getElementById('cm' + suffix);
+      if (msg) { msg.style.display = 'block'; msg.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+      e.target.reset();
+      if (key === 'c1') makeCustomCaptcha(); else makeCaptcha('cq2', 'ca2');
+    }
+    return false;
+  }
+</script>
+
+</body>
+</html>

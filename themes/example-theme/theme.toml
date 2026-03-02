@@ -1,0 +1,24 @@
+[theme]
+id          = "example-theme"
+name        = "Example Theme"
+version     = "1.0.0"
+author      = "Dein Name"
+description = "Ein Beispiel-Custom-Theme – als Startpunkt für eigene Themes."
+license     = "MIT"
+preview     = "preview.png"
+
+[theme.features]
+dark_mode_toggle  = false
+code_highlight    = true
+reading_time      = true
+table_of_contents = false
+
+[assets]
+css   = []
+js    = []
+fonts = []
+
+[overrides]
+# Öffentliche Templates überschreiben (NIE Admin/Login-Templates!)
+# templates = ["post.html", "index.html"]
+templates = []

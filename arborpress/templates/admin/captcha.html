@@ -1,0 +1,166 @@
+{% extends "admin/_base.html" %}
+{% block title %}Captcha-Konfiguration – ArborPress Admin{% endblock %}
+{% block admin_content %}
+<h2>Captcha-Konfiguration</h2>
+<p class="hint">
+  Der globale Standard-Typ gilt für alle Beiträge, sofern kein abweichender Typ
+  direkt am Beitrag gesetzt wurde. Eigene Fragen werden als Fragenkatalog verwaltet
+  und nach dem Zufallsprinzip ausgewählt.
+</p>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for cat, msg in messages %}
+  <div class="flash flash--{{ cat }}">{{ msg }}</div>
+  {% endfor %}
+{% endwith %}
+
+<!-- ------------------------------------------------------------------ -->
+<!-- Globaler Standard-Typ                                                -->
+<!-- ------------------------------------------------------------------ -->
+<section class="admin-card" style="margin-bottom:2rem">
+  <h3>Globaler Standard-Captcha</h3>
+  <p>
+    Aktuell: <strong>{{ captcha_section.get('default_type', 'custom') }}</strong><br>
+    <span class="hint">Änderung über <em>Admin → Einstellungen → Captcha</em>.</span>
+  </p>
+
+  <table class="admin-table" style="margin-top:1rem">
+    <thead><tr><th>Typ</th><th>Beschreibung</th><th>Hosting</th><th>Open Source</th></tr></thead>
+    <tbody>
+      <tr><td><code>none</code></td>            <td>Kein Captcha</td>                              <td>–</td>          <td>–</td></tr>
+      <tr><td><code>math</code></td>            <td>Einfache Rechenaufgabe (eingebaut)</td>        <td>self</td>       <td>✓</td></tr>
+      <tr><td><code>custom</code></td>          <td>Eigene Fragen aus Admin ↓ (Empfehlung)</td>   <td>self</td>       <td>✓</td></tr>
+      <tr><td><code>hcaptcha</code></td>        <td>hCaptcha – privacy-first</td>                 <td>US/CDN</td>     <td>–</td></tr>
+      <tr><td><code>friendly_captcha</code></td><td>Friendly Captcha – PoW, keine Interaktion</td><td>DE 🇩🇪 EU</td>  <td>–</td></tr>
+      <tr><td><code>altcha</code></td>          <td>ALTCHA – PoW, HMAC-signiert, MIT</td>         <td>self</td>       <td>✓</td></tr>
+      <tr><td><code>mcaptcha</code></td>        <td>mCaptcha – PoW, AGPL</td>                     <td>self</td>       <td>✓</td></tr>
+      <tr><td><code>mosparo</code></td>         <td>mosparo – CH 🇨🇭 EFTA, MIT</td>               <td>self</td>       <td>✓</td></tr>
+      <tr><td><code>turnstile</code></td>       <td>Cloudflare Turnstile</td>                     <td>US/CDN</td>     <td>–</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ------------------------------------------------------------------ -->
+<!-- Eigene Fragen verwalten                                              -->
+<!-- ------------------------------------------------------------------ -->
+<section class="admin-card">
+  <h3>Eigener Fragenkatalog <code>(custom)</code></h3>
+  <p class="hint">
+    Mindestens 3 Fragen empfohlen – es wird eine zufällig ausgewählt.<br>
+    Antworten werden <strong>case-insensitiv</strong> und nach Leerzeichen-Trimmen verglichen.<br>
+    Bei leerem Katalog fällt das System automatisch auf <code>math</code> zurück.
+  </p>
+
+  <form method="POST" action="{{ url_for('admin.captcha_settings_save') }}" id="qform" class="admin-form">
+    <div id="questions-list">
+      {% for entry in questions %}
+      <div class="q-row" data-idx="{{ loop.index0 }}">
+        <div class="q-row__inputs">
+          <input type="text" name="q_{{ loop.index0 }}" value="{{ entry.q }}"
+                 placeholder="Frage …" required class="q-input q-input--q">
+          <input type="text" name="a_{{ loop.index0 }}" value="{{ entry.a }}"
+                 placeholder="Antwort (case-insensitiv)" required class="q-input q-input--a">
+        </div>
+        <button type="button" class="btn btn-danger btn--small q-remove" title="Entfernen">×</button>
+      </div>
+      {% endfor %}
+      {% if not questions %}
+      <div class="q-row" data-idx="0">
+        <div class="q-row__inputs">
+          <input type="text" name="q_0" placeholder="Frage …" required class="q-input q-input--q">
+          <input type="text" name="a_0" placeholder="Antwort (case-insensitiv)" required class="q-input q-input--a">
+        </div>
+        <button type="button" class="btn btn-danger btn--small q-remove" title="Entfernen">×</button>
+      </div>
+      {% endif %}
+    </div>
+
+    <button type="button" id="add-q" class="btn" style="margin:0.75rem 0;">
+      + Frage hinzufügen
+    </button>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Speichern</button>
+      <a href="{{ url_for('admin.dashboard') }}" class="btn">Abbrechen</a>
+    </div>
+  </form>
+</section>
+
+<!-- ------------------------------------------------------------------ -->
+<!-- Provider-spezifische Einstellungen (Übersicht / Hinweise)           -->
+<!-- ------------------------------------------------------------------ -->
+<section class="admin-card" style="margin-top:2rem">
+  <h3>Externe Anbieter – Konfigurationshinweise</h3>
+  <p class="hint">
+    API-Keys und Secrets werden <strong>nicht</strong> im Browser gespeichert – nur in
+    <code>config.toml</code> oder Umgebungsvariablen.
+  </p>
+  <table class="admin-table">
+    <thead><tr><th>Anbieter</th><th>config.toml-Keys</th><th>Env-Variable (Prefix: ARBORPRESS_CAPTCHA__)</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>hCaptcha</td>
+        <td><code>hcaptcha_site_key</code><br><code>hcaptcha_secret</code></td>
+        <td><code>HCAPTCHA_SITE_KEY</code><br><code>HCAPTCHA_SECRET</code></td>
+      </tr>
+      <tr>
+        <td>Friendly Captcha</td>
+        <td><code>friendly_sitekey</code><br><code>friendly_api_key</code></td>
+        <td><code>FRIENDLY_SITEKEY</code><br><code>FRIENDLY_API_KEY</code></td>
+      </tr>
+      <tr>
+        <td>ALTCHA</td>
+        <td><code>altcha_hmac_key</code><br><code>altcha_max_number</code></td>
+        <td><code>ALTCHA_HMAC_KEY</code><br><code>ALTCHA_MAX_NUMBER</code></td>
+      </tr>
+      <tr>
+        <td>mCaptcha</td>
+        <td><code>mcaptcha_site_key</code><br><code>mcaptcha_secret</code><br><code>mcaptcha_url</code></td>
+        <td><code>MCAPTCHA_SITE_KEY</code><br><code>MCAPTCHA_SECRET</code><br><code>MCAPTCHA_URL</code></td>
+      </tr>
+      <tr>
+        <td>mosparo</td>
+        <td><code>mosparo_url</code><br><code>mosparo_public_key</code><br><code>mosparo_private_key</code></td>
+        <td><code>MOSPARO_URL</code><br><code>MOSPARO_PUBLIC_KEY</code><br><code>MOSPARO_PRIVATE_KEY</code></td>
+      </tr>
+      <tr>
+        <td>Turnstile</td>
+        <td><code>turnstile_site_key</code><br><code>turnstile_secret</code></td>
+        <td><code>TURNSTILE_SITE_KEY</code><br><code>TURNSTILE_SECRET</code></td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<style>
+  .q-row { display: flex; align-items: center; gap: .5rem; margin-bottom: .6rem; }
+  .q-row__inputs { display: grid; grid-template-columns: 2fr 1fr; gap: .5rem; flex: 1; }
+  .q-input { padding: .45rem .7rem; border: 1px solid var(--admin-border); border-radius: 4px;
+              font-size: .9rem; width: 100%; }
+  @media(max-width:640px){ .q-row__inputs { grid-template-columns: 1fr; } }
+</style>
+
+<script>
+  let nextIdx = {{ questions | length if questions else 1 }};
+
+  document.getElementById('add-q').addEventListener('click', () => {
+    const list = document.getElementById('questions-list');
+    const row = document.createElement('div');
+    row.className = 'q-row';
+    row.dataset.idx = nextIdx;
+    row.innerHTML = `
+      <div class="q-row__inputs">
+        <input type="text" name="q_${nextIdx}" placeholder="Frage …" required class="q-input q-input--q">
+        <input type="text" name="a_${nextIdx}" placeholder="Antwort (case-insensitiv)" required class="q-input q-input--a">
+      </div>
+      <button type="button" class="btn btn-danger btn--small q-remove" title="Entfernen">×</button>`;
+    list.appendChild(row);
+    row.querySelector('.q-remove').addEventListener('click', () => row.remove());
+    nextIdx++;
+  });
+
+  document.querySelectorAll('.q-remove').forEach(btn =>
+    btn.addEventListener('click', () => btn.closest('.q-row').remove())
+  );
+</script>
+{% endblock %}

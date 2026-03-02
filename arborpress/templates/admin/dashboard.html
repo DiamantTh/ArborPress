@@ -1,0 +1,51 @@
+{% extends "admin/_base.html" %}
+{% block title %}{{ _('Admin-Dashboard') }}{% endblock %}
+
+{% block admin_content %}
+<h1>{{ _('Dashboard') }}</h1>
+
+<div class="dashboard-grid">
+  <div class="dashboard-card">
+    <h2>{{ _('Beiträge') }}</h2>
+    <p class="dashboard-card__count">{{ stats.posts_total or 0 }}</p>
+    <a href="{{ url_for('admin.posts') }}" class="btn btn--small">{{ _('Verwalten') }}</a>
+    <a href="{{ url_for('admin.post_new') }}" class="btn btn--small btn--primary">{{ _('Neu') }}</a>
+  </div>
+
+  <div class="dashboard-card">
+    <h2>{{ _('Seiten') }}</h2>
+    <p class="dashboard-card__count">{{ stats.pages_total or 0 }}</p>
+    <a href="{{ url_for('admin.pages_list') }}" class="btn btn--small">{{ _('Verwalten') }}</a>
+  </div>
+
+  <div class="dashboard-card">
+    <h2>{{ _('Benutzer') }}</h2>
+    <p class="dashboard-card__count">{{ stats.users_total or 0 }}</p>
+    <a href="{{ url_for('admin.users') }}" class="btn btn--small">{{ _('Verwalten') }}</a>
+  </div>
+
+  <div class="dashboard-card">
+    <h2>{{ _('Medien') }}</h2>
+    <p class="dashboard-card__count">{{ stats.media_total or 0 }}</p>
+    <a href="{{ url_for('admin.media_list') }}" class="btn btn--small">{{ _('Verwalten') }}</a>
+  </div>
+
+  <div class="dashboard-card">
+    <h2>{{ _('Mail-Queue') }}</h2>
+    <p class="dashboard-card__count">{{ stats.mail_queue or 0 }}</p>
+  </div>
+
+  <div class="dashboard-card">
+    <h2>{{ _('Plugins') }}</h2>
+    <p class="dashboard-card__count">{{ stats.plugins_active or 0 }}</p>
+    <a href="{{ url_for('admin.plugins_list') }}" class="btn btn--small">{{ _('Verwalten') }}</a>
+  </div>
+
+  {% if config.federation.mode != 'disabled' %}
+  <div class="dashboard-card">
+    <h2>{{ _('Federation') }}</h2>
+    <p class="dashboard-card__meta">{{ config.federation.mode }}</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

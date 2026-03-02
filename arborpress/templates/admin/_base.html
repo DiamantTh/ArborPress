@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% set noindex = true %}
+{% block body_class %}admin-page{% endblock %}
+
+{% block nav %}
+<a href="{{ url_for('admin.dashboard') }}">{{ _('Dashboard') }}</a>
+<a href="{{ url_for('admin.posts') }}">{{ _('Beiträge') }}</a>
+<a href="{{ url_for('admin.pages_list') }}">{{ _('Seiten') }}</a>
+<a href="{{ url_for('admin.media_list') }}">{{ _('Medien') }}</a>
+<a href="{{ url_for('admin.users') }}">{{ _('Benutzer') }}</a>
+<a href="{{ url_for('admin.comments_list') }}">{{ _('Kommentare') }}</a>
+<a href="{{ url_for('admin.captcha_settings') }}">{{ _('Captcha') }}</a>
+<a href="{{ url_for('admin.site_settings_page') }}">{{ _('Einstellungen') }}</a>
+<a href="{{ url_for('admin.plugins_list') }}">{{ _('Plugins') }}</a>
+<a href="{{ url_for('admin.security') }}">{{ _('Sicherheit') }}</a>
+<form method="post" action="{{ url_for('auth.logout') }}" style="display:inline">
+  <button type="submit" class="btn btn--small">{{ _('Abmelden') }}</button>
+</form>
+{% endblock %}
+
+{% block content %}
+<div class="admin-container">
+  {% block admin_content %}{% endblock %}
+</div>
+{% endblock %}

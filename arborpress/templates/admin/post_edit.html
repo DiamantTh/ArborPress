@@ -1,0 +1,74 @@
+{% extends "admin/_base.html" %}
+{% block title %}{{ 'Beitrag bearbeiten' if post else 'Neuer Beitrag' }} – ArborPress Admin{% endblock %}
+{% block admin_content %}
+<h2>{{ 'Beitrag bearbeiten' if post else 'Neuer Beitrag' }}</h2>
+
+<form method="POST"
+      action="{{ url_for('admin.post_edit', slug=post.slug) if post else url_for('admin.post_new') }}"
+      class="admin-form">
+  <label>
+    Titel
+    <input type="text" name="title" value="{{ post.title if post else '' }}" required>
+  </label>
+  <label>
+    Slug
+    <input type="text" name="slug" value="{{ post.slug if post else '' }}"
+           placeholder="Wird aus Titel erzeugt" pattern="[a-z0-9\-]+">
+  </label>
+  <label>
+    Inhalt (Markdown)
+    <textarea name="body" rows="20" class="code-editor">{{ post.body if post else '' }}</textarea>
+  </label>
+  <label>
+    Tags (kommagetrennt)
+    <input type="text" name="tags"
+           value="{{ post.tags | join(', ') if post and post.tags else '' }}">
+  </label>
+  <label>
+    Status
+    <select name="status">
+      {% for s in ['draft', 'published', 'unlisted', 'deleted'] %}
+      <option value="{{ s }}"
+        {% if post and post.status.value == s %}selected{% endif %}>
+        {{ s | capitalize }}
+      </option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>
+    Captcha-Typ für Kommentarformular
+    <select name="captcha_type">
+      <option value=""
+        {% if not post or not post.captcha_type %}selected{% endif %}>
+        Standard (aus globaler Konfiguration)
+      </option>
+      {% for ct in captcha_types %}
+      <option value="{{ ct.value }}"
+        {% if post and post.captcha_type == ct.value %}selected{% endif %}>
+        {{ ct.value }}
+        {% if ct.value == 'none' %} – kein Captcha
+        {% elif ct.value == 'math' %} – Rechenaufgabe (eingebaut)
+        {% elif ct.value == 'custom' %} – eigene Fragen (Admin-Interface)
+        {% elif ct.value == 'hcaptcha' %} – hCaptcha
+        {% elif ct.value == 'friendly_captcha' %} – Friendly Captcha (DE, EU)
+        {% elif ct.value == 'altcha' %} – ALTCHA (selbstgehostet, Open Source)
+        {% elif ct.value == 'mcaptcha' %} – mCaptcha (selbstgehostet)
+        {% elif ct.value == 'mosparo' %} – mosparo (CH, Open Source)
+        {% elif ct.value == 'turnstile' %} – Cloudflare Turnstile
+        {% endif %}
+      </option>
+      {% endfor %}
+    </select>
+    <small style="color:var(--admin-muted)">Leer = globaler Standard aus <em>Admin → Captcha</em></small>
+  </label>
+  <div class="form-actions">
+    <button type="submit" name="action" value="save" class="btn btn-primary">Speichern</button>
+    {% if post %}
+    <button type="submit" name="action" value="delete"
+            class="btn btn-danger"
+            onclick="return confirm('Wirklich löschen?')">Löschen</button>
+    {% endif %}
+    <a href="{{ url_for('admin.posts') }}" class="btn">Abbrechen</a>
+  </div>
+</form>
+{% endblock %}

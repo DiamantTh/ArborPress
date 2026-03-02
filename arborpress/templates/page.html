@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }}{% endblock %}
+{% if page.noindex %}{% set noindex = true %}{% endif %}
+
+{% block content %}
+<article class="page">
+  <h1 class="page__title">{{ page.title }}</h1>
+  <div class="page__body">
+    {{ page.rendered_html | safe }}
+  </div>
+</article>
+{% endblock %}

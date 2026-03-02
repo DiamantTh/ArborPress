@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Konfiguration (enthält Geheimnisse)
+config.toml
+*.local.toml
+
+# Umgebungsvariablen
+.env
+.env.*
+
+# Datenbank-Dumps
+*.sql
+*.dump
+
+# Logs (lokal erzeugte Dateien)
+*.log
+logs/
+
+# Frontend Build-Output
+frontend/.svelte-kit/
+frontend/build/
+frontend/node_modules/
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Pytest / Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mypy
+.mypy_cache/
+
+# OS
+.DS_Store
+Thumbs.db

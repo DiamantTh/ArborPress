@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ _('Sicherheitsschlüssel registrieren') }}{% endblock %}
+{% set noindex = true %}
+{% block body_class %}auth-page{% endblock %}
+
+{% block content %}
+<div class="auth-box">
+  <h1>{{ _('Sicherheitsschlüssel registrieren') }}</h1>
+
+  <p class="auth-box__hint">
+    {{ _('Registriere einen Hardware-Token, Passkey oder biometrischen Schlüssel.') }}
+  </p>
+
+  <form id="register-form" class="auth-form">
+    <div class="form-group">
+      <label for="user_name">{{ _('Benutzername') }}</label>
+      <input type="text" id="user_name" name="user_name" autocomplete="username"
+             autofocus required maxlength="64" pattern="[a-z0-9._-]+"
+             title="{{ _('Nur Kleinbuchstaben, Ziffern, . _ -') }}">
+    </div>
+    <div class="form-group">
+      <label for="display_name">{{ _('Anzeigename') }}</label>
+      <input type="text" id="display_name" name="display_name"
+             autocomplete="name" maxlength="128">
+    </div>
+    <div class="form-group">
+      <label for="key_label">{{ _('Schlüssel-Bezeichnung') }}</label>
+      <input type="text" id="key_label" name="key_label"
+             placeholder="{{ _('z. B. YubiKey 5 Nano') }}" maxlength="64">
+      <small>{{ _('Hilft dir, mehrere Schlüssel zu unterscheiden (§2).') }}</small>
+    </div>
+    <button type="submit" class="btn btn--primary" id="register-btn">
+      {{ _('Schlüssel registrieren') }}
+    </button>
+  </form>
+
+  <p class="auth-box__alt">
+    <a href="{{ url_for('auth.login_page') }}">{{ _('Zurück zum Login') }}</a>
+  </p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='js/webauthn-register.js') }}"></script>
+{% endblock %}

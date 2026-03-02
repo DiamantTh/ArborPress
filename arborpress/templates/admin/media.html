@@ -1,0 +1,42 @@
+{% extends "admin/_base.html" %}
+{% block title %}Medienbibliothek – ArborPress Admin{% endblock %}
+{% block admin_content %}
+<div class="admin-page-header">
+  <h2>Medienbibliothek</h2>
+  <form method="POST" enctype="multipart/form-data" action="{{ url_for('api.media_upload') }}" class="upload-form">
+    <input type="file" name="file" accept="image/*,application/pdf,video/*">
+    <button type="submit" class="btn btn-primary">Hochladen</button>
+  </form>
+</div>
+
+<div class="media-grid">
+  {% for item in media %}
+  <div class="media-card">
+    {% if item.mime_type and item.mime_type.startswith('image/') %}
+    <img src="{{ url_for('public.media', yyyy=item.uploaded_at.strftime('%Y'), mm=item.uploaded_at.strftime('%m'), filename=item.filename) }}"
+         alt="{{ item.alt_text | default(item.filename) | e }}" loading="lazy">
+    {% else %}
+    <div class="media-file-icon">{{ item.mime_type | default('file') }}</div>
+    {% endif %}
+    <p class="media-name">{{ item.filename | e }}</p>
+    <p class="media-size">{{ (item.size_bytes / 1024) | int }} KB</p>
+    <button class="btn btn-sm copy-url"
+            data-url="{{ url_for('public.media', yyyy=item.uploaded_at.strftime('%Y'), mm=item.uploaded_at.strftime('%m'), filename=item.filename) }}">
+      URL kopieren
+    </button>
+  </div>
+  {% else %}
+  <p class="empty-state">Keine Medien vorhanden.</p>
+  {% endfor %}
+</div>
+
+<script>
+document.querySelectorAll('.copy-url').forEach(btn => {
+  btn.addEventListener('click', () => {
+    navigator.clipboard.writeText(btn.dataset.url);
+    btn.textContent = 'Kopiert!';
+    setTimeout(() => btn.textContent = 'URL kopieren', 1500);
+  });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,148 @@
+{% extends "admin/_base.html" %}
+
+{% block title %}Kommentare – Admin{% endblock %}
+
+{% block admin_content %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem">
+  <h1 style="font-size:1.5rem;font-weight:800">Kommentar-Moderation</h1>
+  <span style="background:#fef3c7;color:#92400e;padding:.3rem .8rem;border-radius:999px;font-size:.82rem;font-weight:600">
+    {{ pending|length }} zur Freischaltung
+  </span>
+</div>
+
+{# ---- Freizuschaltende Kommentare ---------------------------------------- #}
+{% if pending %}
+<section style="margin-bottom:2.5rem">
+  <h2 style="font-size:1.1rem;font-weight:700;margin-bottom:1rem;
+             border-bottom:2px solid #fde68a;padding-bottom:.4rem;color:#92400e">
+    ⏳ Warten auf Freischaltung ({{ pending|length }})
+  </h2>
+  {% for comment in pending %}
+  <div style="background:#fff;border:1px solid #e2e8f0;border-radius:.5rem;
+              padding:1.25rem;margin-bottom:1rem;box-shadow:0 1px 3px rgba(0,0,0,.07)">
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem">
+      <div>
+        <strong>{{ comment.author_name }}</strong>
+        <span style="color:#6b7280;font-size:.85rem">&lt;{{ comment.author_email }}&gt;</span>
+        {% if comment.author_url %}
+          <a href="{{ comment.author_url }}" target="_blank" rel="noopener"
+             style="font-size:.8rem;margin-left:.5rem">🔗</a>
+        {% endif %}
+      </div>
+      <div style="font-size:.8rem;color:#6b7280">
+        Artikel: <a href="{{ url_for('public.post_detail', slug=comment.post.slug) }}"
+                    target="_blank"><strong>{{ comment.post.title }}</strong></a>
+        &nbsp;·&nbsp;
+        Bestätigt: {{ comment.confirmed_at.strftime('%d.%m.%Y %H:%M') if comment.confirmed_at }}
+      </div>
+    </div>
+
+    <blockquote style="border-left:3px solid #2563eb;padding:.5rem 1rem;
+                       background:#f8f9fa;border-radius:0 .35rem .35rem 0;
+                       font-size:.95rem;margin-bottom:1rem;white-space:pre-wrap">{{ comment.body }}</blockquote>
+
+    <div style="display:flex;gap:.75rem;flex-wrap:wrap">
+      <form method="post"
+            action="{{ url_for('admin.comment_approve', comment_id=comment.id) }}">
+        <button type="submit"
+                style="background:#16a34a;color:#fff;border:none;padding:.4rem 1rem;
+                       border-radius:.35rem;font-weight:600;cursor:pointer;font-size:.88rem">
+          ✓ Freischalten
+        </button>
+      </form>
+      <form method="post"
+            action="{{ url_for('admin.comment_reject', comment_id=comment.id) }}">
+        <button type="submit"
+                style="background:#dc2626;color:#fff;border:none;padding:.4rem 1rem;
+                       border-radius:.35rem;font-weight:600;cursor:pointer;font-size:.88rem">
+          ✗ Ablehnen
+        </button>
+      </form>
+      <form method="post"
+            action="{{ url_for('admin.comment_spam', comment_id=comment.id) }}">
+        <button type="submit"
+                style="background:#6b7280;color:#fff;border:none;padding:.4rem 1rem;
+                       border-radius:.35rem;font-weight:600;cursor:pointer;font-size:.88rem">
+          🚫 Spam
+        </button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</section>
+{% else %}
+<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:.5rem;
+            padding:1.25rem;margin-bottom:2rem;color:#166534">
+  ✓ Keine Kommentare zur Freischaltung. Super!
+</div>
+{% endif %}
+
+{# ---- Alle Kommentare (Übersicht) ---------------------------------------- #}
+<section>
+  <h2 style="font-size:1.1rem;font-weight:700;margin-bottom:1rem;
+             border-bottom:1px solid #e2e8f0;padding-bottom:.4rem">
+    Alle Kommentare (letzte 200)
+  </h2>
+  {% if all_comments %}
+  <table style="width:100%;border-collapse:collapse;font-size:.88rem">
+    <thead>
+      <tr style="background:#f8f9fa">
+        <th style="text-align:left;padding:.5rem .75rem;border-bottom:2px solid #e2e8f0">Autor</th>
+        <th style="text-align:left;padding:.5rem .75rem;border-bottom:2px solid #e2e8f0">Artikel</th>
+        <th style="text-align:left;padding:.5rem .75rem;border-bottom:2px solid #e2e8f0">Status</th>
+        <th style="text-align:left;padding:.5rem .75rem;border-bottom:2px solid #e2e8f0">Erstellt</th>
+        <th style="padding:.5rem .75rem;border-bottom:2px solid #e2e8f0"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for c in all_comments %}
+    {% set status_colors = {
+      'pending':   '#fef3c7,#92400e',
+      'confirmed': '#eff6ff,#1d4ed8',
+      'approved':  '#f0fdf4,#166534',
+      'rejected':  '#fef2f2,#991b1b',
+      'spam':      '#f3f4f6,#4b5563',
+    } %}
+    <tr style="border-bottom:1px solid #f1f5f9">
+      <td style="padding:.5rem .75rem">
+        <strong>{{ c.author_name }}</strong><br>
+        <span style="color:#6b7280;font-size:.8rem">{{ c.author_email }}</span>
+      </td>
+      <td style="padding:.5rem .75rem">{{ c.post.title }}</td>
+      <td style="padding:.5rem .75rem">
+        <span style="padding:.15rem .6rem;border-radius:999px;font-size:.78rem;font-weight:600;
+                     background:{{ status_colors.get(c.status.value, '#e2e8f0,#374151').split(',')[0] }};
+                     color:{{ status_colors.get(c.status.value, '#e2e8f0,#374151').split(',')[1] }}">
+          {{ c.status.value }}
+        </span>
+      </td>
+      <td style="padding:.5rem .75rem;color:#6b7280;font-size:.8rem">
+        {{ c.created_at.strftime('%d.%m.%Y') }}
+      </td>
+      <td style="padding:.5rem .75rem">
+        {% if c.status.value == 'confirmed' %}
+        <form method="post"
+              action="{{ url_for('admin.comment_approve', comment_id=c.id) }}"
+              style="display:inline">
+          <button type="submit"
+                  style="background:#16a34a;color:#fff;border:none;padding:.25rem .65rem;
+                         border-radius:.25rem;font-size:.8rem;cursor:pointer">✓</button>
+        </form>
+        <form method="post"
+              action="{{ url_for('admin.comment_reject', comment_id=c.id) }}"
+              style="display:inline">
+          <button type="submit"
+                  style="background:#dc2626;color:#fff;border:none;padding:.25rem .65rem;
+                         border-radius:.25rem;font-size:.8rem;cursor:pointer">✗</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color:#6b7280">Noch keine Kommentare vorhanden.</p>
+  {% endif %}
+</section>
+{% endblock %}

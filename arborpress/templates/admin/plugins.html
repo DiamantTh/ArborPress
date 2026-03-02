@@ -1,0 +1,61 @@
+{% extends "admin/_base.html" %}
+{% block title %}Plugins – ArborPress Admin{% endblock %}
+{% block admin_content %}
+<div class="admin-page-header">
+  <h2>Plugins</h2>
+</div>
+
+<table class="admin-table">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>ID</th>
+      <th>Version</th>
+      <th>Status</th>
+      <th>Aktion</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for plugin in plugins %}
+    <tr>
+      <td>{{ plugin.manifest.name | e }}</td>
+      <td><code>{{ plugin.manifest.id }}</code></td>
+      <td>{{ plugin.manifest.version | default('–') }}</td>
+      <td>
+        <span class="badge badge-{{ 'enabled' if plugin.enabled else 'disabled' }}">
+          {{ 'Aktiv' if plugin.enabled else 'Inaktiv' }}
+        </span>
+      </td>
+      <td>
+        {% if plugin.enabled %}
+        <button class="btn btn-sm btn-danger plugin-toggle"
+                data-id="{{ plugin.manifest.id }}"
+                data-action="disable">Deaktivieren</button>
+        {% else %}
+        <button class="btn btn-sm btn-primary plugin-toggle"
+                data-id="{{ plugin.manifest.id }}"
+                data-action="enable">Aktivieren</button>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="empty-state">Keine Plugins registriert.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<script>
+document.querySelectorAll('.plugin-toggle').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const id = btn.dataset.id;
+    const action = btn.dataset.action;
+    const res = await fetch(`/admin/plugins/${id}/${action}`, { method: 'POST' });
+    if (res.status === 403) {
+      window.location.href = '/auth/stepup';
+    } else if (res.ok) {
+      window.location.reload();
+    }
+  });
+});
+</script>
+{% endblock %}
