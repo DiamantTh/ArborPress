@@ -3,8 +3,6 @@
    Zeitungsstil, Serif-Schrift, maximale Lesbarkeit
    ===================================================================== */
 
-@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Source+Sans+3:wght@400;600;700&display=swap');
-
 :root {
   --color-bg:          #faf9f7;
   --color-bg-alt:      #f3f1ec;
@@ -18,8 +16,8 @@
   --color-success:     #27ae60;
   --color-warning:     #e67e22;
 
-  --font-sans:  "Source Sans 3", "Helvetica Neue", Arial, sans-serif;
-  --font-serif: "Lora", Georgia, "Times New Roman", serif;
+  --font-sans:  Verdana, "Trebuchet MS", "Noto Sans", "Liberation Sans", Arial, sans-serif;
+  --font-serif: Georgia, "Palatino Linotype", "Book Antiqua", "Times New Roman", serif;
   --font-mono:  Consolas, "Courier New", monospace;
   --font-size-base: 1.05rem;
   --line-height: 1.8;

@@ -1,0 +1,13 @@
+[theme]
+id = "spring-blossom"
+name = "Spring Blossom"
+version = "1.0.0"
+author = "ArborPress"
+description = "Frühlingspalette mit Blütenrosa und warmen Neutraltönen."
+preview = "preview.png"
+
+[theme.features]
+dark_mode_toggle = false
+code_highlight = true
+reading_time = true
+table_of_contents = true

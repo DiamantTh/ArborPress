@@ -1,0 +1,13 @@
+@import url('/static/themes/default/style.css');
+
+:root {
+  --color-bg: #f4fbff;
+  --color-bg-alt: #e8f4fb;
+  --color-surface: #ffffff;
+  --color-border: #c9e1ef;
+  --color-text: #1b2a33;
+  --color-text-muted: #5b7280;
+  --color-accent: #0e7490;
+  --color-accent-hover: #0b6178;
+  --font-sans: Verdana, "Trebuchet MS", "Noto Sans", "Liberation Sans", Arial, sans-serif;
+}
