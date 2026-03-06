@@ -36,6 +36,26 @@
     </select>
   </label>
   <label>
+    Sichtbarkeit
+    <select name="visibility">
+      {% for v in visibility_options %}
+      <option value="{{ v.value }}"
+        {% if post and post.visibility.value == v.value %}selected
+        {% elif not post and v.value == 'public' %}selected{% endif %}>
+        {% if v.value == 'public' %}Öffentlich – in Listen &amp; Suche sichtbar
+        {% elif v.value == 'hidden' %}Versteckt – erreichbar, aber nicht verlinkt
+        {% elif v.value == 'private' %}Privat – komplett gesperrt (404)
+        {% else %}{{ v.value }}{% endif %}
+      </option>
+      {% endfor %}
+    </select>
+    <small style="color:var(--admin-muted)">
+      <strong>Öffentlich</strong>: erscheint in Startseite, Suche, Tags &middot;
+      <strong>Versteckt</strong>: nur über direkte URL erreichbar &middot;
+      <strong>Privat</strong>: vollständig gesperrt (HTTP 404)
+    </small>
+  </label>
+  <label>
     Captcha-Typ für Kommentarformular
     <select name="captcha_type">
       <option value=""

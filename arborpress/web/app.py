@@ -40,11 +40,56 @@ def create_app() -> Quart:
 
     # Konfiguration + Session als Jinja2-Globals (für Templates)
     app.jinja_env.globals["config"] = cfg
+    app.jinja_env.globals["demo_mode"] = False  # Überschrieben per Context-Processor je Request
 
     # Aktives Theme laden und als Jinja2-Global bereitstellen
-    from arborpress.themes.manifest import get_active_theme
+    from arborpress.themes.manifest import get_active_theme, get_theme_registry
+    from arborpress.core.site_settings import get_cached, get_defaults
     active_theme = get_active_theme()
     app.jinja_env.globals["theme"] = active_theme
+
+    # Dark-Companion laden (falls konfiguriert) für clientseitigen Toggle
+    _theme_settings = get_cached("theme") or get_defaults("theme")
+    _dark_id = active_theme.theme.dark_companion
+    _theme_dark = get_theme_registry().get(_dark_id) if _dark_id else None
+    app.jinja_env.globals["theme_dark"] = _theme_dark
+    app.jinja_env.globals["theme_auto_dark"] = bool(_theme_settings.get("auto_dark", False))
+    app.jinja_env.globals["theme_auto_dark_start"] = int(_theme_settings.get("auto_dark_start", 19))
+    app.jinja_env.globals["theme_auto_dark_end"] = int(_theme_settings.get("auto_dark_end", 6))
+
+    # Demo-Modus – Per-Request-Context-Processor liest Cache dynamisch
+    # (wirkt sofort nach Admin-Änderung ohne Neustart)
+    @app.context_processor
+    async def _demo_context() -> dict:
+        _demo_cfg = get_cached("demo") or get_defaults("demo")
+        demo_enabled = bool(_demo_cfg.get("enabled", False))
+        if not demo_enabled:
+            return {"demo_mode": False}
+
+        reg = get_theme_registry()
+        all_t = reg.all()
+        # Haupt-Themes (kein light_companion → keine reinen Dark-Only-Companions)
+        allow_all = bool(_demo_cfg.get("allow_all_themes", True))
+        demo_light = [t for t in all_t if t.theme.light_companion is None]
+        demo_map   = {t.theme.id: t for t in all_t}
+
+        ctx: dict = {
+            "demo_mode":         True,
+            "demo_show_banner":  bool(_demo_cfg.get("show_banner", True)),
+            "demo_light_themes": demo_light,
+            "demo_theme_map":    demo_map,
+        }
+
+        # Theme-Override per Cookie (für SSR-Konsistenz)
+        from quart import request as _req
+        cookie_id = _req.cookies.get("ap-theme")
+        if cookie_id:
+            t_override = demo_map.get(cookie_id)
+            if t_override:
+                dark_id = t_override.theme.dark_companion
+                ctx["theme"]      = t_override
+                ctx["theme_dark"] = demo_map.get(dark_id) if dark_id else None
+        return ctx
     # Theme-Templates (überschreiben Kern-Templates; §9)
     if active_theme.template_dir:
         from jinja2 import FileSystemLoader, ChoiceLoader

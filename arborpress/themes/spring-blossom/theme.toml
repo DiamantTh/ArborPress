@@ -5,6 +5,7 @@ version = "1.0.0"
 author = "ArborPress"
 description = "Frühlingspalette mit Blütenrosa und warmen Neutraltönen."
 preview = "preview.png"
+dark_companion = "spring-blossom-dark"
 
 [theme.features]
 dark_mode_toggle = false

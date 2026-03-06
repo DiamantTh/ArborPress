@@ -1,0 +1,14 @@
+[theme]
+id          = "autumn-harvest-dark"
+name        = "Autumn Harvest Dark"
+version     = "1.0.0"
+author      = "ArborPress"
+description = "Dunkle Variante von Autumn Harvest – glühende Herbstfarben auf tiefem Nachtbraun."
+preview     = "preview.png"
+light_companion = "autumn-harvest"
+
+[theme.features]
+dark_mode_toggle = false
+code_highlight   = true
+reading_time     = true
+table_of_contents = true

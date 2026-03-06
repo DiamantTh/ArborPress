@@ -42,8 +42,11 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "posts_per_page":   10,
     },
     "theme": {
-        "active":     "default",
-        "themes_dir": "themes",   # relativ zum Arbeitsverzeichnis
+        "active":          "default",
+        "themes_dir":      "themes",      # relativ zum Arbeitsverzeichnis
+        "auto_dark":       False,          # automatisch Dark-Companion ab/bis Uhrzeit aktivieren
+        "auto_dark_start": 19,             # Stunde (0–23), ab der das Dark-Theme gilt
+        "auto_dark_end":   6,              # Stunde (0–23), bis zu der das Dark-Theme gilt
     },
     "mail": {
         "backend":          "none",   # smtp | console | none
@@ -66,6 +69,7 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "require_admin_approval":     True,
         "notify_admin_email":         "",
         "rate_limit_per_hour":        10,
+        "blocklist":                  "",   # Zeilengetrennte Schlüsselwörter / E-Mails / IPs
     },
     "captcha": {
         "default_type": "custom",   # none|math|custom|hcaptcha|friendly_captcha|…
@@ -110,6 +114,11 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "search": {
         "provider": "auto",   # auto|pg_fts|mariadb_fulltext|fallback
+    },
+    "demo": {
+        "enabled":        False,   # Demo-Modus: Besucher können Theme wechseln
+        "show_banner":    True,    # Hinweis-Banner oben anzeigen
+        "allow_all_themes": True,  # Alle Themes zeigen (auch Dark-Only)
     },
 }
 

@@ -42,4 +42,169 @@
     </small>
   </footer>
 </article>
+
+{# ------------------------------------------------------------------ #}
+{# Verwandte Artikel (Tag-Überlappung)                                  #}
+{# ------------------------------------------------------------------ #}
+{% if related_posts %}
+<section class="related-posts">
+  <h2 class="related-posts__heading">{{ _('Verwandte Artikel') }}</h2>
+  <ul class="related-posts__list">
+    {% for rp in related_posts %}
+    <li class="related-posts__item">
+      <a href="{{ url_for('public.post_detail', slug=rp.slug) }}" class="related-posts__link">
+        {{ rp.title }}
+      </a>
+      {% if rp.tags %}
+      <span class="related-posts__tags">
+        {% for t in rp.tags %}<a href="{{ url_for('public.tag_archive', tag=t.slug) }}" class="tag">{{ t.label }}</a>{% endfor %}
+      </span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{# ------------------------------------------------------------------ #}
+{# Kommentar-Sektion                                                    #}
+{# ------------------------------------------------------------------ #}
+<section class="comments" id="comments">
+  <h2 class="comments__heading">
+    Kommentare
+    {% if post.comments %}
+      <span class="comments__count">{{ post.comments | length }}</span>
+    {% endif %}
+  </h2>
+
+  {% if post.comments %}
+  <ol class="comment-list">
+    {% for comment in post.comments %}
+    <li class="comment" id="comment-{{ comment.id }}">
+
+      {# Zitat-Block: wird angezeigt, wenn dieser Kommentar auf einen anderen antwortet #}
+      {% if comment.quoted %}
+      <blockquote class="comment__quote">
+        <cite>
+          <a href="#comment-{{ comment.quoted.id }}">{{ comment.quoted.author_name | e }}</a>
+          schrieb:
+        </cite>
+        {# Nur Max. 3 Zeilen des zitierten Kommentars anzeigen #}
+        <p>{{ comment.quoted.body | e | truncate(300) }}</p>
+      </blockquote>
+      {% endif %}
+
+      <header class="comment__header">
+        <strong class="comment__author">
+          {% if comment.author_url %}
+            <a href="{{ comment.author_url | e }}" rel="nofollow noopener" target="_blank">
+              {{ comment.author_name | e }}
+            </a>
+          {% else %}
+            {{ comment.author_name | e }}
+          {% endif %}
+        </strong>
+        <time class="comment__date" datetime="{{ comment.created_at.isoformat() }}">
+          {{ comment.created_at.strftime('%d.%m.%Y, %H:%M') }} Uhr
+        </time>
+        {# Zitieren-Button: trägt Kommentar-ID in das Formular ein #}
+        <button type="button"
+                class="comment__cite-btn"
+                onclick="quoteComment('{{ comment.id }}', {{ comment.author_name | tojson }}, {{ comment.body | truncate(200) | tojson }})">
+          ↩ Zitieren
+        </button>
+      </header>
+
+      <div class="comment__body">
+        {{ comment.body | e | nl2br }}
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="comments__empty">Noch keine Kommentare. Sei der Erste!</p>
+  {% endif %}
+
+  {# ---- Kommentar-Formular ---- #}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="flash flash--{{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <div id="comment-form" class="comment-form-wrapper">
+    {# Zitat-Vorschau (wird per JS befüllt) #}
+    <div id="quote-preview" class="comment-form__quote-preview" style="display:none">
+      <div class="comment-form__quote-header">
+        <span id="quote-label"></span>
+        <button type="button" onclick="clearQuote()" aria-label="Zitat entfernen">✕</button>
+      </div>
+      <blockquote id="quote-text"></blockquote>
+    </div>
+
+    <form method="POST"
+          action="{{ url_for('public.post_comment_submit', slug=post.slug) }}"
+          class="comment-form"
+          id="comment-form-element">
+      {# Verstecktes Feld für die Zitat-Referenz #}
+      <input type="hidden" name="quote_of_id" id="quote_of_id" value="">
+
+      <div class="comment-form__row">
+        <label>
+          Name <span aria-hidden="true">*</span>
+          <input type="text" name="author_name" required maxlength="128" autocomplete="name">
+        </label>
+        <label>
+          E-Mail <span aria-hidden="true">*</span>
+          <small>(wird nicht veröffentlicht)</small>
+          <input type="email" name="author_email" required maxlength="256" autocomplete="email">
+        </label>
+        <label>
+          Website
+          <input type="url" name="author_url" maxlength="512" autocomplete="url">
+        </label>
+      </div>
+
+      <label>
+        Kommentar <span aria-hidden="true">*</span>
+        <textarea name="body" id="comment-body" rows="6" required maxlength="10000"></textarea>
+      </label>
+
+      {# Captcha #}
+      {% if captcha and captcha.type != 'none' %}
+      <div class="captcha-wrapper">
+        {{ captcha.html | safe }}
+      </div>
+      {% endif %}
+
+      <div class="comment-form__actions">
+        <button type="submit" class="btn btn-primary">Kommentar senden</button>
+        <small>Dein Kommentar wird nach E-Mail-Bestätigung und redaktioneller Prüfung veröffentlicht.</small>
+      </div>
+    </form>
+  </div>
+</section>
+
+<script>
+/**
+ * Zitieren-Funktion: befüllt das versteckte Feld und zeigt eine Vorschau.
+ * @param {string} id   - UUID des zitierten Kommentars
+ * @param {string} name - Autorenname
+ * @param {string} body - Kommentartext (gekürzt)
+ */
+function quoteComment(id, name, body) {
+  document.getElementById('quote_of_id').value = id;
+  document.getElementById('quote-label').textContent = 'Antwort auf ' + name;
+  document.getElementById('quote-text').textContent = body;
+  document.getElementById('quote-preview').style.display = '';
+  // Zum Formular scrollen
+  document.getElementById('comment-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById('comment-body').focus();
+}
+
+function clearQuote() {
+  document.getElementById('quote_of_id').value = '';
+  document.getElementById('quote-preview').style.display = 'none';
+}
+</script>
 {% endblock %}

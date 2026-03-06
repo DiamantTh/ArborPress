@@ -94,9 +94,11 @@ async def posts():
 async def post_new():
     _require_session()
     from arborpress.core.captcha import CaptchaType
+    from arborpress.models.content import PostVisibility
     return await render_template(
         "admin/post_edit.html", post=None, noindex=True,
         captcha_types=list(CaptchaType),
+        visibility_options=list(PostVisibility),
     )
 
 
@@ -104,12 +106,13 @@ async def post_new():
 async def post_new_save():
     _require_session()
     import uuid as _uuid
-    from arborpress.models.content import Post, PostStatus, Tag
+    from arborpress.models.content import Post, PostRevision, PostStatus, PostVisibility, Tag
     form = await request.form
-    title       = (form.get("title") or "").strip()
-    slug        = (form.get("slug") or "").strip() or None
-    body_md     = (form.get("body") or "").strip()
-    status_val  = form.get("status", "draft")
+    title        = (form.get("title") or "").strip()
+    slug         = (form.get("slug") or "").strip() or None
+    body_md      = (form.get("body") or "").strip()
+    status_val   = form.get("status", "draft")
+    visibility_val = form.get("visibility", "public")
     captcha_type = (form.get("captcha_type") or "").strip() or None
 
     if not title:
@@ -132,12 +135,28 @@ async def post_new_save():
             body_md=body_md,
             body_html=body_md,    # TODO: Markdown → HTML
             status=PostStatus(status_val) if status_val in PostStatus.__members__ else PostStatus.DRAFT,
+            visibility=PostVisibility(visibility_val) if visibility_val in PostVisibility.__members__ else PostVisibility.PUBLIC,
             captcha_type=captcha_type,
+            reading_time_min=Post.calc_reading_time(body_md),
         )
         db.add(post)
+        await db.flush()   # ID vergeben, aber Transaktion offen halten
+
+        # Erste Revision anlegen
+        rev = PostRevision(
+            id=str(_uuid.uuid4()),
+            post_id=post.id,
+            rev_number=1,
+            title=post.title,
+            body_md=body_md,
+            diff_to_prev=None,
+            changed_by_id=session.get("user_id"),
+            change_summary="Initial",
+        )
+        db.add(rev)
         await db.commit()
 
-    audit.info("POST created | slug=%s user=%s", slug, session.get("user_id", ""))
+    audit.info("POST created | slug=%s visibility=%s user=%s", slug, visibility_val, session.get("user_id", ""))
     return redirect(url_for("admin.posts"))
 
 
@@ -145,7 +164,7 @@ async def post_new_save():
 async def post_edit(slug: str):
     _require_session()
     from arborpress.core.captcha import CaptchaType
-    from arborpress.models.content import Post
+    from arborpress.models.content import Post, PostVisibility
     async for db in get_db_session():
         result = await db.execute(select(Post).where(Post.slug == slug))
         post = result.scalar_one_or_none()
@@ -154,14 +173,16 @@ async def post_edit(slug: str):
     return await render_template(
         "admin/post_edit.html", post=post, noindex=True,
         captcha_types=list(CaptchaType),
+        visibility_options=list(PostVisibility),
     )
 
 
 @admin_bp.post("/posts/<slug>/edit")
 async def post_edit_save(slug: str):
     _require_session()
+    import uuid as _uuid
     from arborpress.core.captcha import CaptchaType
-    from arborpress.models.content import Post, PostStatus
+    from arborpress.models.content import Post, PostRevision, PostStatus, PostVisibility
     form = await request.form
     action = form.get("action", "save")
 
@@ -177,27 +198,63 @@ async def post_edit_save(slug: str):
             audit.info("POST deleted | slug=%s user=%s", slug, session.get("user_id", ""))
             return redirect(url_for("admin.posts"))
 
-        title        = (form.get("title") or "").strip()
-        new_slug     = (form.get("slug") or "").strip() or slug
-        body_md      = (form.get("body") or "").strip()
-        status_val   = form.get("status", post.status.value)
-        captcha_type = (form.get("captcha_type") or "").strip() or None
+        title          = (form.get("title") or "").strip()
+        new_slug       = (form.get("slug") or "").strip() or slug
+        body_md        = (form.get("body") or "").strip()
+        status_val     = form.get("status", post.status.value)
+        visibility_val = form.get("visibility", post.visibility.value)
+        captcha_type   = (form.get("captcha_type") or "").strip() or None
+        change_summary = (form.get("change_summary") or "").strip() or None
+
+        # Snapshot vor Änderung für Diff
+        old_body_md = post.body_md or ""
+        old_title   = post.title
 
         if title:
             post.title = title
         if new_slug != slug:
             post.slug_old = slug
             post.slug = new_slug
-        post.body_md     = body_md
-        post.body_html   = body_md  # TODO: Markdown → HTML
-        post.captcha_type = captcha_type
+        post.body_md          = body_md
+        post.body_html        = body_md  # TODO: Markdown → HTML
+        post.captcha_type     = captcha_type
+        post.reading_time_min = Post.calc_reading_time(body_md)
         try:
             post.status = PostStatus(status_val)
         except ValueError:
             pass
+        try:
+            post.visibility = PostVisibility(visibility_val)
+        except ValueError:
+            pass
+
+        # Nächste Revisionsnummer ermitteln
+        from sqlalchemy import func as _func
+        rev_max_result = await db.execute(
+            select(_func.max(PostRevision.rev_number)).where(
+                PostRevision.post_id == post.id
+            )
+        )
+        last_rev = rev_max_result.scalar() or 0
+        next_rev = last_rev + 1
+
+        diff = PostRevision.make_diff(old_body_md, body_md) if body_md != old_body_md else None
+
+        rev = PostRevision(
+            id=str(_uuid.uuid4()),
+            post_id=post.id,
+            rev_number=next_rev,
+            title=post.title,
+            body_md=body_md,
+            diff_to_prev=diff,
+            changed_by_id=session.get("user_id"),
+            change_summary=change_summary,
+        )
+        db.add(rev)
 
         await db.commit()
-        audit.info("POST updated | slug=%s user=%s", post.slug, session.get("user_id", ""))
+        audit.info("POST updated | slug=%s visibility=%s user=%s",
+                   post.slug, post.visibility.value, session.get("user_id", ""))
 
     return redirect(url_for("admin.post_edit", slug=post.slug))
 
@@ -210,11 +267,25 @@ async def post_edit_save(slug: str):
 @admin_bp.get("/pages")
 async def pages_list():
     _require_session()
-    from arborpress.models.content import Page
+    from arborpress.models.content import Page, PageType, PostVisibility
     async for db in get_db_session():
         result = await db.execute(select(Page).order_by(Page.title))
         page_list = result.scalars().all()
-    return await render_template("admin/pages.html", pages=page_list, noindex=True)
+
+    # Warnung: Systemseiten, die nicht öffentlich sichtbar sind
+    system_page_types = {PageType.IMPRESSUM, PageType.PRIVACY, PageType.RULES}
+    hidden_system_pages = [
+        p for p in page_list
+        if p.page_type in system_page_types
+        and (not p.is_published or p.visibility != PostVisibility.PUBLIC)
+    ]
+    return await render_template(
+        "admin/pages.html",
+        pages=page_list,
+        hidden_system_pages=hidden_system_pages,
+        visibility_options=list(PostVisibility),
+        noindex=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -469,7 +540,7 @@ async def captcha_settings_save():
 # Website-Einstellungen (DB-basiert via SiteSettings)
 # ---------------------------------------------------------------------------
 
-_SETTINGS_SECTIONS = ("general", "mail", "comments", "federation", "search", "theme")
+_SETTINGS_SECTIONS = ("general", "mail", "comments", "federation", "search", "theme", "demo")
 
 
 @admin_bp.get("/settings")
@@ -567,7 +638,17 @@ async def site_settings_save():
 
         elif section == "theme":
             current.update({
-                "active": (form.get("active") or "default").strip(),
+                "active":          (form.get("active") or "default").strip(),
+                "auto_dark":       form.get("auto_dark") == "1",
+                "auto_dark_start": int(form.get("auto_dark_start") or 19),
+                "auto_dark_end":   int(form.get("auto_dark_end") or 6),
+            })
+
+        elif section == "demo":
+            current.update({
+                "enabled":          form.get("enabled") == "1",
+                "show_banner":      form.get("show_banner") == "1",
+                "allow_all_themes": form.get("allow_all_themes") == "1",
             })
 
         await save_section(section, current, db, updated_by=user_id)

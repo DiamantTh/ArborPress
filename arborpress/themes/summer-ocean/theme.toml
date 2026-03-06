@@ -5,6 +5,7 @@ version = "1.0.0"
 author = "ArborPress"
 description = "Sommerpalette in Aqua- und Ozeanblau."
 preview = "preview.png"
+dark_companion = "summer-ocean-dark"
 
 [theme.features]
 dark_mode_toggle = false

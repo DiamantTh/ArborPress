@@ -1,8 +1,10 @@
-"""Content-Modelle: Post, Page, Tag, Media (§1, §6, §7)."""
+"""Content-Modelle: Post, Page, Tag, Category, Media (§1, §6, §7)."""
 
 from __future__ import annotations
 
+import difflib
 import enum
+import re
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -55,6 +57,18 @@ class PostStatus(str, enum.Enum):
     ARCHIVED = "archived"
 
 
+class PostVisibility(str, enum.Enum):
+    """Sichtbarkeitsstufe eines Beitrags oder einer Seite.
+
+    public  – in Listen/Suche/Tags sichtbar (Standard)
+    hidden  – per direkter URL erreichbar, jedoch NICHT in Listen/Suche/Tags
+    private – komplett gesperrt (HTTP 404 für anonyme Besucher)
+    """
+    PUBLIC  = "public"
+    HIDDEN  = "hidden"
+    PRIVATE = "private"
+
+
 class Post(Base):
     """Blog-Post (§1, URL §6 /p/{slug} or /@{handle}/p/{slug}).
 
@@ -81,6 +95,10 @@ class Post(Base):
     status: Mapped[PostStatus] = mapped_column(
         Enum(PostStatus), nullable=False, default=PostStatus.DRAFT
     )
+    # Sichtbarkeit: public | hidden | private
+    visibility: Mapped[PostVisibility] = mapped_column(
+        Enum(PostVisibility), nullable=False, default=PostVisibility.PUBLIC
+    )
     # §7 language
     lang: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     # §5 ActivityPub object ID (set when federated)
@@ -90,6 +108,19 @@ class Post(Base):
     # Erlaubte Werte: none|math|custom|hcaptcha|friendly_captcha|altcha|mcaptcha|mosparo|turnstile
     captcha_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
+    # Sichtbarkeit in Listen
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    """Immer oben in der Post-Liste, unabhängig von published_at."""
+
+    is_featured: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    """Visuell hervorgehoben im Theme (z. B. Hero-Kachel auf der Startseite)."""
+
+    noindex: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    """robots: noindex – erreichbar, aber nicht in Suchmaschinen indexiert."""
+
+    # Lesedauer: beim Speichern berechnet (Markdown-Wörter / 200 wpm; min. 1)
+    reading_time_min: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -97,6 +128,28 @@ class Post(Base):
     )
 
     tags: Mapped[list[Tag]] = relationship(secondary=post_tags, lazy="selectin")
+
+    @staticmethod
+    def calc_reading_time(body_md: str) -> int:
+        """Lesedauer in Minuten schätzen.
+
+        Formel:
+          - Prose-Wörter / 200  (Erw.-Durchschnitt ~200 wpm)
+          - Code-Blöcke zählen je 0,5 Minuten extra
+          - Minimum: 1 Minute
+
+        Probe-Code-Blöcke werden nicht als Wörter mitgezählt, weil man
+        Code deutlich langsamer überfliegt als Fließtext.
+        """
+        # Code-Blöcke extrahieren und entfernen
+        code_blocks = re.findall(r"```[\s\S]*?```", body_md)
+        prose = re.sub(r"```[\s\S]*?```", " ", body_md)
+        # Inline-Code und Markdown-Syntax entfernen
+        prose = re.sub(r"`[^`]+`", " ", prose)
+        prose = re.sub(r"[#*_~\[\]()>|-]", " ", prose)
+        words = len(prose.split())
+        minutes = words / 200 + len(code_blocks) * 0.5
+        return max(1, round(minutes))
 
 
 class PageType(str, enum.Enum):
@@ -127,6 +180,12 @@ class Page(Base):
     )
     lang: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     is_published: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Sichtbarkeit: public | hidden | private
+    # Bei Systemseiten (IMPRESSUM/PRIVACY/RULES) löst private/hidden eine
+    # Admin-CP-Warnung aus.
+    visibility: Mapped[PostVisibility] = mapped_column(
+        Enum(PostVisibility), nullable=False, default=PostVisibility.PUBLIC
+    )
     # §10 noindex for admin-only pages
     noindex: Mapped[bool] = mapped_column(Boolean, default=False)
     # Soll die Seite im Footer-Menü erscheinen?
@@ -180,6 +239,12 @@ class Comment(Base):
     confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     approved_at:  Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
+    # Zitat-Referenz: flache Kommentarstruktur statt tiefem Nesting
+    # Zeigt auf den kommentierten Kommentar (derselbe Post).
+    quote_of_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("comments.id", ondelete="SET NULL"), nullable=True
+    )
+
     # Moderationsnotiz des Admins (intern)
     mod_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -189,6 +254,15 @@ class Comment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     post: Mapped["Post"] = relationship("Post", back_populates="comments", lazy="selectin")
+
+    # Zitierter Kommentar (flache Struktur statt tiefem Nesting)
+    # foreign() markiert die FK-Seite; rechts steht die remote (Parent-) Seite.
+    quoted: Mapped[Optional["Comment"]] = relationship(
+        "Comment",
+        primaryjoin="foreign(Comment.quote_of_id) == Comment.id",
+        uselist=False,
+        lazy="selectin",
+    )
 
 
 # Kommentare-Rückbeziehung auf Post registrieren
@@ -225,3 +299,171 @@ class Media(Base):
     height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Kategorien (§1 – hierarchische Taxonomie, parallel zu Tags)
+#
+# Tags  = flache Stichworte, frei vergeben, viele pro Post
+# Kategorien = hierarchisch (Eltern/Kind), redaktionell gepflegt,
+#              typisch 1-2 pro Post (z. B. "Technik → Python → Tutorial")
+# ---------------------------------------------------------------------------
+
+post_categories = Table(
+    "post_categories",
+    Base.metadata,
+    Column("post_id", String(36), ForeignKey("posts.id", ondelete="CASCADE"), primary_key=True),
+    Column("category_id", Integer, ForeignKey("categories.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class Category(Base):
+    """Hierarchische Kategorie (Baum-Struktur via parent_id).
+
+    Beispiel:
+      Technik (parent=None)
+        └─ Python (parent=Technik)
+             └─ Tutorial (parent=Python)
+    """
+
+    __tablename__ = "categories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    slug: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Hierarchie: NULL = Root-Kategorie
+    parent_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lang: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+
+    # Eltern-Kategorie
+    parent: Mapped[Optional["Category"]] = relationship(
+        "Category",
+        foreign_keys=[parent_id],
+        back_populates="children",
+        remote_side="Category.id",
+    )
+    # Kind-Kategorien
+    children: Mapped[list["Category"]] = relationship(
+        "Category",
+        foreign_keys=[parent_id],
+        back_populates="parent",
+        order_by="Category.sort_order",
+    )
+
+
+# Kategorien-Rückbeziehung auf Post registrieren
+Post.categories = relationship(
+    "Category",
+    secondary=post_categories,
+    lazy="selectin",
+)
+
+
+# ---------------------------------------------------------------------------
+# Post-Revisionen (Versionsverlauf mit Diff)
+# ---------------------------------------------------------------------------
+
+class PostRevision(Base):
+    """Versionsverlauf eines Blog-Posts.
+
+    Wird beim Speichern automatisch angelegt.
+    Enthält den vollständigen Markdown-Text sowie einen
+    unified-diff zum vorherigen Stand für die Diff-Ansicht im Admin.
+
+    Aufräum-Strategie: Admin kann ältere Revisionen ab rev_number < N purgen;
+    empfohlener Schwellenwert: 50 Revisionen pro Post behalten.
+    """
+
+    __tablename__ = "post_revisions"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    post_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("posts.id", ondelete="CASCADE"), nullable=False
+    )
+    # Fortlaufende Revisionsnummer pro Post (1, 2, 3, …)
+    rev_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Snapshot
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    body_md: Mapped[str] = mapped_column(Text, nullable=False)
+    # Unified diff zum vorherigen Stand (NULL bei Revision 1)
+    diff_to_prev: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Wer hat die Änderung gespeichert (NULL = System/Import)
+    changed_by_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # Optionale Zusammenfassung der Änderung ("Tippfehler bereinigt")
+    change_summary: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    @staticmethod
+    def make_diff(old_md: str, new_md: str) -> str:
+        """Erzeuge einen unified diff (als Text) zwischen zwei Markdown-Ständen.
+
+        Gibt einen leeren String zurück wenn es keine Änderungen gibt.
+        Zeilenweise Darstellung, kompatibel mit standard ``diff``-Tools.
+        """
+        old_lines = old_md.splitlines(keepends=True)
+        new_lines = new_md.splitlines(keepends=True)
+        diff = list(difflib.unified_diff(
+            old_lines, new_lines,
+            fromfile="revision-prev",
+            tofile="revision-new",
+            lineterm="",
+        ))
+        return "".join(diff)
+
+
+# ---------------------------------------------------------------------------
+# Passwortschutz für Posts (mehrere Zugangstokens pro Post)
+# ---------------------------------------------------------------------------
+
+class PostAccessToken(Base):
+    """Zugangstoken für passwortgeschützte Posts.
+
+    Ein Post kann mehrere Tokens haben, z. B.:
+      - "Frühe Leser"   (max. 100 Nutzungen, läuft in 30 Tagen ab)
+      - "Pressezugang"  (unlimitiert, kein Ablauf)
+      - "Freunde"       (5 Nutzungen)
+
+    Beispiel-Ablauf:
+      1. Besucher ruft /p/<slug> auf → Formular "Bitte Passwort eingeben"
+      2. Besucher gibt Token ein → Backend vergleicht gegen alle Hashes
+      3. Treffer + gültig → kurzlebiges Cookie gesetzt (z. B. 24h) → Inhalt sichtbar
+      4. use_count wird erhöht; max_uses wird geprüft
+    """
+
+    __tablename__ = "post_access_tokens"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    post_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("posts.id", ondelete="CASCADE"), nullable=False
+    )
+    # Anzeigename im Admin (z. B. "Pressezugang", "Frühe Leser")
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Argon2/bcrypt-Hash des Klartext-Tokens
+    token_hash: Mapped[str] = mapped_column(String(256), nullable=False)
+    # Nutzungslimit: NULL = unlimitiert
+    max_uses: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Ablaufdatum: NULL = kein Ablauf
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    @property
+    def is_valid(self) -> bool:
+        """Prüft ob der Token noch verwendbar ist (Limit + Ablauf)."""
+        if self.expires_at and self.expires_at < datetime.utcnow():
+            return False
+        if self.max_uses is not None and self.use_count >= self.max_uses:
+            return False
+        return True

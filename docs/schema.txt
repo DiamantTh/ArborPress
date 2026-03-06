@@ -1,0 +1,398 @@
+ArborPress – Datenbankschema
+Stand: 2026-03-06  (aktualisiert: Migration 0002)
+===============================================================================
+
+TABELLEN-ÜBERSICHT
+──────────────────
+  users                 Benutzerkonten (PUBLIC / OPERATIONAL)
+  webauthn_credentials  FIDO2/WebAuthn-Schlüssel pro Nutzer
+  mfa_devices           TOTP / HOTP / sonstige MFA-Geräte
+  backup_codes          Einmal-Backup-Codes für MFA-Recovery
+  user_pgp_keys         OpenPGP-Schlüssel pro Nutzer (mehrere möglich)  [NEU]
+  tags                  Flache Stichworte für Posts
+  post_tags             Many-to-many Verbindung Posts ↔ Tags
+  categories            Hierarchische Kategorien (Baum-Struktur)        [NEU]
+  post_categories       Many-to-many Verbindung Posts ↔ Kategorien     [NEU]
+  posts                 Blog-Beiträge
+  post_revisions        Versionsverlauf pro Post (mit Unified-Diff)     [NEU]
+  post_access_tokens    Zugangstokens für passwortgeschützte Posts      [NEU]
+  pages                 Statische Seiten (inkl. Systemseiten)
+  comments              Kommentare zu Posts (flaches Zitat-Modell)
+  media                 Hochgeladene Mediendateien
+  settings              Schlüssel/Wert-Konfiguration (DB-seitig)
+  mail_queue            Ausgehende Mails (async Outbox)
+
+
+TAGS vs. KATEGORIEN
+───────────────────
+  Tags        = flache Stichworte, frei vergeben, viele pro Post
+                Beispiel: "python", "tutorial", "2026", "release-notes"
+  Kategorien  = hierarchische Taxonomie, redaktionell gepflegt, 1–2 pro Post
+                Beispiel: Technik → Python → Tutorial (Baum via parent_id)
+  Beide Systeme existieren parallel und ergänzen sich.
+
+
+PGP MULTI-SCHLÜSSEL
+────────────────────
+  Ein Nutzer kann mehrere OpenPGP-Schlüssel hinterlegen (user_pgp_keys).
+  Jeder Schlüssel hat unabhängige Rollen:
+    use_for_signing    → ausgehende Mails DIESES Nutzers werden damit signiert
+    use_for_encryption → eingehende Mails AN diesen Nutzer werden damit verschlüsselt
+  Primär-Signierschlüssel: is_primary_signing=TRUE; nur einer pro Nutzer.
+  Fingerprint als eindeutiger Identifikator (unique per Nutzer).
+
+
+
+===============================================================================
+TABLE: users
+===============================================================================
+  id                    VARCHAR(36)   PK   UUID
+  username              VARCHAR(64)   UK   einzigartiger Anmeldename
+  display_name          VARCHAR(128)       Anzeigename
+  email                 VARCHAR(254)  UK   optional
+  account_type          ENUM               PUBLIC | OPERATIONAL
+  role                  ENUM               admin | editor | author |
+                                           moderator | viewer
+  is_active             BOOL
+  legacy_password_hash  TEXT          NULL  Break-glass Passwort-Hash
+  legacy_password_enabled BOOL             default FALSE
+  require_uv            BOOL               UV/PIN/Biometrie erzwingen
+  require_stepup        BOOL               Step-up für Operationen
+  sso_disabled          BOOL               SSO für diesen Account sperren
+  bio                   TEXT          NULL  Öffentliche Biografie           [NEU]
+  website               VARCHAR(512)  NULL  Persönliche Website-URL         [NEU]
+  created_at            DATETIME
+  updated_at            DATETIME
+
+  Hinweis: OpenPGP-Schlüssel sind in user_pgp_keys ausgelagert (1:n).
+           pgp_public_key + pgp_encrypt_mail wurden in Migration 0002 entfernt.
+
+
+===============================================================================
+TABLE: webauthn_credentials
+===============================================================================
+  id                    VARCHAR(64)   PK   Base64URL der Credential-ID
+  user_id               VARCHAR(36)   FK → users.id  ON DELETE CASCADE
+  credential_id         VARCHAR(256)
+  public_key            BLOB               CBOR-codierter Public Key
+  sign_count            INT
+  uv_capable            BOOL               User Verification möglich
+  aaguid                VARCHAR(64)   NULL  Authentikator-ID
+  label                 VARCHAR(128)       Nutzer-definierter Name
+  created_at            DATETIME
+  last_used_at          DATETIME      NULL
+
+
+===============================================================================
+TABLE: mfa_devices
+===============================================================================
+  id                    VARCHAR(36)   PK   UUID
+  user_id               VARCHAR(36)   FK → users.id  ON DELETE CASCADE
+  device_type           ENUM               totp | backup
+  secret                TEXT               verschlüsselt gespeichert
+  confirmed             BOOL               Enrollment abgeschlossen?
+  created_at            DATETIME
+
+
+===============================================================================
+TABLE: backup_codes
+===============================================================================
+  id                    VARCHAR(36)   PK   UUID
+  user_id               VARCHAR(36)   FK → users.id  ON DELETE CASCADE
+  code_hash             VARCHAR(128)       bcrypt/argon2-Hash
+  used                  BOOL               einmalig einlösbar
+  used_at               DATETIME      NULL
+  created_at            DATETIME
+
+
+===============================================================================
+TABLE: user_pgp_keys                                                    [NEU]
+===============================================================================
+  id                    VARCHAR(36)   PK   UUID
+  user_id               VARCHAR(36)   FK → users.id  ON DELETE CASCADE
+  label                 VARCHAR(128)       z. B. "Privat", "Presse", "Arbeit"
+  public_key_armored    TEXT               ASCII-armored PGP Public Key Block
+  fingerprint           VARCHAR(64)        40-stelliger HEX-Fingerprint
+  use_for_signing       BOOL               ausgehende Mail signieren
+  use_for_encryption    BOOL               eingehende Mail verschlüsseln
+  is_primary_signing    BOOL               primärer Signierschlüssel (max 1/Nutzer)
+  expires_at            DATETIME      NULL  aus dem Schlüssel gelesen
+  created_at            DATETIME
+  last_used_at          DATETIME      NULL
+
+  UK: (user_id, fingerprint) → uq_user_pgp_fingerprint
+
+
+===============================================================================
+TABLE: tags
+===============================================================================
+  id                    INT           PK   autoincrement
+  slug                  VARCHAR(128)  UK   URL-sicherer Bezeichner
+  label                 VARCHAR(128)       Anzeigename
+  lang                  VARCHAR(8)    NULL  Sprachkürzel (§7)
+
+
+===============================================================================
+TABLE: post_tags   [Many-to-many: posts ↔ tags]
+===============================================================================
+  post_id               VARCHAR(36)   PK + FK → posts.id   ON DELETE CASCADE
+  tag_id                INT           PK + FK → tags.id    ON DELETE CASCADE
+
+
+===============================================================================
+TABLE: categories   [Hierarchisch via parent_id]                        [NEU]
+===============================================================================
+  id                    INT           PK   autoincrement
+  slug                  VARCHAR(128)  UK   URL-sicherer Bezeichner
+  label                 VARCHAR(128)       Anzeigename
+  description           TEXT          NULL  Kurzbeschreibung
+  parent_id             INT           NULL FK → categories.id  ON DELETE SET NULL
+                                           NULL = Root-Kategorie
+  sort_order            INT                Reihenfolge innerhalb Eltern-Kategorie
+  lang                  VARCHAR(8)    NULL
+
+  Beispiel-Baum:
+    id=1  slug=technik     label=Technik      parent_id=NULL
+    id=2  slug=python      label=Python       parent_id=1
+    id=3  slug=tutorials   label=Tutorials    parent_id=2
+
+
+===============================================================================
+TABLE: post_categories   [Many-to-many: posts ↔ categories]            [NEU]
+===============================================================================
+  post_id               VARCHAR(36)   PK + FK → posts.id       ON DELETE CASCADE
+  category_id           INT           PK + FK → categories.id  ON DELETE CASCADE
+
+
+===============================================================================
+TABLE: posts
+===============================================================================
+  id                    VARCHAR(36)   PK   UUID
+  short_id              VARCHAR(12)   UK   stabile Kurz-ID (/o/{id})
+  author_id             VARCHAR(36)   FK → users.id  ON DELETE SET NULL
+  slug                  VARCHAR(256)
+  slug_old              VARCHAR(256)  NULL  Redirect-Quelle bei Slug-Wechsel
+  title                 VARCHAR(512)
+  body_md               TEXT               Markdown-Quelltext
+  body_html             TEXT               gerendertes HTML (gecacht)
+  excerpt               TEXT          NULL
+  status                ENUM               draft | published |
+                                           scheduled | archived
+  visibility            ENUM               public  → in Listen/Suche/Tags
+                                           hidden  → nur per direkter URL
+                                           private → HTTP 404
+  is_pinned             BOOL               immer oben in der Liste          [NEU]
+  is_featured           BOOL               visuell hervorgehoben im Theme   [NEU]
+  noindex               BOOL               robots: noindex                  [NEU]
+  reading_time_min      INT                Lesedauer in Minuten             [NEU]
+                                           (berechnet beim Speichern,
+                                            Formel siehe unten)
+  lang                  VARCHAR(8)    NULL  Sprachkürzel (§7)
+  ap_object_id          VARCHAR(512)  NULL  ActivityPub-Objekt-URL (§5)
+  captcha_type          VARCHAR(32)   NULL  Override für Kommentarcaptcha
+  published_at          DATETIME      NULL
+  created_at            DATETIME
+  updated_at            DATETIME
+
+
+===============================================================================
+TABLE: post_revisions                                                   [NEU]
+===============================================================================
+  id                    VARCHAR(36)   PK   UUID
+  post_id               VARCHAR(36)   FK → posts.id   ON DELETE CASCADE
+  rev_number            INT                fortlaufend pro Post (1, 2, 3, …)
+  title                 VARCHAR(512)       Snapshot-Titel
+  body_md               TEXT               Snapshot Markdown-Text
+  diff_to_prev          TEXT          NULL  unified diff zur Vorrevision
+                                           NULL bei rev_number = 1
+                                           Format: standard unified diff,
+                                           fromfile=revision-prev
+                                           tofile=revision-new
+  changed_by_id         VARCHAR(36)   NULL FK → users.id  ON DELETE SET NULL
+  change_summary        VARCHAR(256)  NULL  optionale Zusammenfassung
+  created_at            DATETIME
+
+  IDX: (post_id, rev_number)  → ix_post_revisions_post_id_rev
+
+
+===============================================================================
+TABLE: post_access_tokens   [Passwortschutz – mehrere Token pro Post]  [NEU]
+===============================================================================
+  id                    VARCHAR(36)   PK   UUID
+  post_id               VARCHAR(36)   FK → posts.id   ON DELETE CASCADE
+  label                 VARCHAR(128)       z. B. "Pressezugang", "Beta-Leser"
+  token_hash            VARCHAR(256)       Argon2/bcrypt-Hash des Klartexts
+  max_uses              INT           NULL  NULL = unlimitiert
+  use_count             INT                Anzahl erfolgreicher Einlösungen
+  expires_at            DATETIME      NULL  NULL = kein Ablauf
+  created_at            DATETIME
+
+  IDX: post_id  → ix_post_access_tokens_post_id
+
+  Ablauf:
+    1. Besucher ruft /p/<slug> auf → Passwort-Formular
+    2. Eingabe → Backend prüft alle token_hash-Einträge des Posts
+    3. Treffer + is_valid() → kurzlebiges Cookie → Inhalt sichtbar
+    4. use_count wird erhöht; max_uses-Bedingung geprüft
+
+  is_valid() = expires_at nicht überschritten UND
+               (max_uses NULL ODER use_count < max_uses)
+
+
+===============================================================================
+TABLE: pages
+===============================================================================
+  id                    VARCHAR(36)   PK   UUID
+  slug                  VARCHAR(256)
+  slug_old              VARCHAR(256)  NULL
+  title                 VARCHAR(512)
+  body_md               TEXT
+  body_html             TEXT
+  page_type             ENUM               custom | impressum |
+                                           privacy | rules
+  lang                  VARCHAR(8)    NULL
+  is_published          BOOL
+  visibility            ENUM               public | hidden | private
+                                           ─── bei Systemseiten (impressum/
+                                               privacy/rules) löst hidden
+                                               oder private eine Admin-CP-
+                                               Warnung aus ───
+  noindex               BOOL               robots: noindex
+  show_in_footer        BOOL               Footer-Navigation
+  created_at            DATETIME
+  updated_at            DATETIME
+
+
+===============================================================================
+TABLE: comments
+===============================================================================
+  id                    VARCHAR(36)   PK   UUID
+  post_id               VARCHAR(36)   FK → posts.id   ON DELETE CASCADE
+  author_name           VARCHAR(128)
+  author_email          VARCHAR(256)       nicht öffentlich
+  author_url            VARCHAR(512)  NULL
+  body                  TEXT
+  status                ENUM               pending    → eingereicht
+                                           confirmed  → E-Mail bestätigt
+                                           approved   → vom Admin freigeschaltet
+                                           rejected   → abgelehnt
+                                           spam       → als Spam markiert
+  confirmation_token    VARCHAR(64)        UUID für E-Mail-Link
+  confirmed_at          DATETIME      NULL
+  approved_at           DATETIME      NULL
+  quote_of_id           VARCHAR(36)   NULL FK → comments.id  ON DELETE SET NULL
+                                           ─── Zitat-Referenz (flaches Modell,
+                                               kein rekursives Nesting) ───
+  mod_note              TEXT          NULL  interne Moderationsnotiz
+  ip_address            VARCHAR(64)   NULL
+  user_agent            VARCHAR(512)  NULL
+  created_at            DATETIME
+
+
+===============================================================================
+TABLE: media
+===============================================================================
+  id                    VARCHAR(36)   PK   UUID
+  uploader_id           VARCHAR(36)   FK → users.id  ON DELETE SET NULL
+  filename              VARCHAR(256)       original Dateiname
+  mime_type             VARCHAR(128)
+  size_bytes            INT
+  storage_path          VARCHAR(512)       relativ zu MEDIA_ROOT (yyyy/mm/file)
+  alt_text              VARCHAR(512)  NULL
+  width                 INT           NULL  Pixel
+  height                INT           NULL  Pixel
+  uploaded_at           DATETIME
+
+
+===============================================================================
+TABLE: settings
+===============================================================================
+  key                   VARCHAR(64)   PK   Schlüssel (z. B. "captcha.type")
+  value                 TEXT               JSON-codierter Wert
+  updated_at            DATETIME
+
+  Relevante Schlüssel (Auswahl):
+    "comments.blocklist"              Zeilengetrennte Sperrliste
+    "comments.require_email_confirmation"
+    "comments.rate_limit_per_hour"
+    "captcha.type"                    globaler Standard-Captcha-Typ
+    "mail.backend"
+
+
+===============================================================================
+TABLE: mail_queue
+===============================================================================
+  id                    VARCHAR(36)   PK   UUID
+  to_address            VARCHAR(254)
+  subject               VARCHAR(998)
+  body_text             TEXT
+  body_html             TEXT          NULL
+  status                ENUM               pending | sent | failed
+  attempts              INT                Anzahl Sendeversuche
+  scheduled_at          DATETIME
+  sent_at               DATETIME      NULL
+  error                 VARCHAR(256)  NULL  letzter Fehlertext
+  created_at            DATETIME
+
+
+===============================================================================
+LESEZEIT-BERECHNUNG (reading_time_min)                                  [NEU]
+===============================================================================
+
+  Formel (berechnet beim Speichern, gespeichert als INT):
+    1. Code-Blöcke (```...```) extrahieren und aus Prose entfernen
+    2. Prose-Wörter zählen (split auf Whitespace)
+    3. reading_time = prose_words / 200 + len(code_blocks) * 0.5
+    4. round() + max(1, …) → Minimum 1 Minute
+
+  Hintergrund:
+    200 wpm = Durchschnitt Erwachsene (deutsche Prose)
+    × 0.5 pro Code-Block = Code wird ca. halb so schnell überflogen
+
+
+===============================================================================
+MIGRATIONS-ÜBERSICHT
+===============================================================================
+
+  0001  visibility + comments.quote_of_id
+        posts.visibility, pages.visibility, comments.quote_of_id
+
+  0002  PGP Multi-Key, Kategorien, Revisionen, Pins, Featured, Zugangstokens
+        users: +bio, +website; -pgp_public_key, -pgp_encrypt_mail
+        user_pgp_keys (neu)
+        posts: +is_pinned, +is_featured, +noindex, +reading_time_min
+        categories (neu, hierarchisch)
+        post_categories (neu, Pivot)
+        post_revisions (neu, mit unified diff)
+        post_access_tokens (neu, mehrere Passwörter pro Post)
+
+
+===============================================================================
+BEZIEHUNGEN (Entity-Relationship)
+===============================================================================
+
+  users ──────────────────┬──< webauthn_credentials         (1:n  CASCADE)
+                          ├──< mfa_devices                   (1:n  CASCADE)
+                          ├──< backup_codes                  (1:n  CASCADE)
+                          ├──< user_pgp_keys                 (1:n  CASCADE)
+                          ├──< posts.author_id               (1:n  SET NULL)
+                          ├──< post_revisions.changed_by_id  (1:n  SET NULL)
+                          └──< media.uploader_id             (1:n  SET NULL)
+
+  posts ──────────────────┬──< comments                      (1:n  CASCADE)
+                          ├──< post_tags                     (1:n  CASCADE)
+                          ├──< post_categories               (1:n  CASCADE)
+                          ├──< post_revisions                (1:n  CASCADE)
+                          └──< post_access_tokens            (1:n  CASCADE)
+
+  tags ───────────────────└──< post_tags                     (1:n  CASCADE)
+
+  categories ─────────────┬──< post_categories               (1:n  CASCADE)
+                          └──o categories.parent_id  (self-ref 0..1:n  SET NULL)
+                              ↑ Baum-Hierarchie (Root = parent_id NULL)
+
+  post_tags ────────────────── posts × tags                  (n:m via Pivot)
+  post_categories ─────────── posts × categories             (n:m via Pivot)
+
+  comments ──────────────────o comments.quote_of_id   (self-ref 0..1:n  SET NULL)
+                                ↑ flaches Zitat-Modell; kein rekursives Nesting

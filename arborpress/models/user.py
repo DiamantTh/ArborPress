@@ -68,9 +68,10 @@ class User(Base):
     require_uv: Mapped[bool] = mapped_column(Boolean, default=False)
     require_stepup: Mapped[bool] = mapped_column(Boolean, default=False)
     sso_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    # OpenPGP §13
-    pgp_public_key: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
-    pgp_encrypt_mail: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Öffentliches Profil (§4 PUBLIC-Konten, optional)
+    bio: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    website: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -84,6 +85,10 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     backup_codes: Mapped[list["BackupCode"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    # OpenPGP §13 – mehrere Schlüssel pro Nutzer möglich
+    pgp_keys: Mapped[list["UserPGPKey"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -179,3 +184,52 @@ class BackupCode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     user: Mapped["User"] = relationship(back_populates="backup_codes")
+
+
+class UserPGPKey(Base):
+    """OpenPGP-Schlüssel eines Nutzers (§13 – mehrere Schlüssel möglich).
+
+    Ein Nutzer kann mehrere OpenPGP-Schlüsselpaare hinterlegen, z. B.:
+      - privates Schlüsselpaar (für persönliche Mails)
+      - berufliches Schlüsselpaar (für Pressekontakt)
+
+    Rollen (nicht exklusiv – ein Schlüssel kann beide Rollen haben):
+      use_for_signing      → ausgehende Mails dieses Nutzers werden damit signiert
+      use_for_encryption   → eingehende Mails an diesen Nutzer werden damit verschlüsselt
+
+    Primärer Signierungsschlüssel (is_primary_signing=True):
+      → Es kann immer nur einen geben; beim Setzen eines neuen Primary wird
+        der alte automatisch auf False gesetzt (Application-Layer-Logik).
+    """
+
+    __tablename__ = "user_pgp_keys"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    # Menschenlesbares Label (z. B. "Privat", "Presse", "Arbeit")
+    label: Mapped[str] = mapped_column(String(128), nullable=False, default="Mein Schlüssel")
+    # ASCII-armored Public Key (BEGIN PGP PUBLIC KEY BLOCK)
+    public_key_armored: Mapped[str] = mapped_column(Text, nullable=False)
+    # Fingerprint für schnellen Vergleich / Anzeige (z. B. 40-stellige HEX)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Rollen
+    use_for_signing: Mapped[bool] = mapped_column(Boolean, default=True)
+    use_for_encryption: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Nur ein Schlüssel kann pro Nutzer der primäre Signierschlüssel sein
+    is_primary_signing: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Ablaufdatum (aus dem Schlüssel gelesen – optional)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="pgp_keys")
+
+    __table_args__ = (
+        # Pro Nutzer darf ein Fingerprint nur einmal vorkommen
+        UniqueConstraint("user_id", "fingerprint", name="uq_user_pgp_fingerprint"),
+    )

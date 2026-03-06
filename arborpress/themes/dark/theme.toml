@@ -5,6 +5,7 @@ version     = "1.0.0"
 author      = "ArborPress"
 description = "Dunkles Layout mit hohem Kontrast – augenschonend für Nachtarbeit."
 preview     = "preview.png"
+light_companion = "default"
 
 [theme.features]
 dark_mode_toggle = false

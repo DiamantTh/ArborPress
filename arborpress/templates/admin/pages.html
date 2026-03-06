@@ -6,11 +6,34 @@
   <a href="#" class="btn btn-primary">+ Neue Seite</a>
 </div>
 
+{# Warnung: gesperrte/unsichtbare Systemseiten #}
+{% if hidden_system_pages %}
+<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:.5rem;
+            padding:1rem 1.25rem;margin-bottom:1.5rem;color:#92400e">
+  <strong>⚠️ Hinweis:</strong> Die folgenden Systemseiten sind aktuell
+  <strong>nicht öffentlich sichtbar</strong>. Besucher können
+  Impressum/Datenschutzerklärung/Regeln nicht aufrufen:
+  <ul style="margin:.5rem 0 0 1.25rem">
+    {% for p in hidden_system_pages %}
+    <li>
+      <strong>{{ p.title | e }}</strong>
+      (<code>/page/{{ p.slug }}</code>) –
+      {% if not p.is_published %}nicht veröffentlicht
+      {% elif p.visibility.value == 'private' %}Sichtbarkeit: <em>Privat</em>
+      {% elif p.visibility.value == 'hidden' %}Sichtbarkeit: <em>Versteckt</em>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 <table class="admin-table">
   <thead>
     <tr>
       <th>Titel</th>
       <th>Slug</th>
+      <th>Sichtbarkeit</th>
       <th>In Fußzeile</th>
       <th></th>
     </tr>
@@ -18,15 +41,31 @@
   <tbody>
     {% for page in pages %}
     <tr>
-      <td>{{ page.title | e }}</td>
+      <td>
+        {{ page.title | e }}
+        {% if page.page_type.value in ('impressum', 'privacy', 'rules') %}
+        <span style="font-size:.75rem;background:#e0f2fe;color:#0369a1;
+                     padding:.1rem .45rem;border-radius:.3rem;margin-left:.35rem">
+          System</span>
+        {% endif %}
+      </td>
       <td><code>/page/{{ page.slug }}</code></td>
+      <td>
+        {% if page.visibility.value == 'public' %}
+          <span style="color:#16a34a;font-weight:600">● Öffentlich</span>
+        {% elif page.visibility.value == 'hidden' %}
+          <span style="color:#d97706;font-weight:600">◑ Versteckt</span>
+        {% elif page.visibility.value == 'private' %}
+          <span style="color:#dc2626;font-weight:600">● Privat</span>
+        {% endif %}
+      </td>
       <td>{{ '✓' if page.show_in_footer else '' }}</td>
       <td>
-        <a href="{{ url_for('public.static_page', slug=page.slug) }}" target="_blank" class="btn btn-sm">Ansehen</a>
+        <a href="{{ url_for('public.page_detail', slug=page.slug) }}" target="_blank" class="btn btn-sm">Ansehen</a>
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="4" class="empty-state">Keine Seiten vorhanden.</td></tr>
+    <tr><td colspan="5" class="empty-state">Keine Seiten vorhanden.</td></tr>
     {% endfor %}
   </tbody>
 </table>

@@ -1,0 +1,11 @@
+:root {
+  --color-bg:           #160e08;
+  --color-bg-alt:       #241808;
+  --color-surface:      #1c1209;
+  --color-border:       #3d2c1a;
+  --color-text:         #f0d8c0;
+  --color-text-muted:   #a88060;
+  --color-accent:       #e87d22;
+  --color-accent-hover: #ff9440;
+  --font-sans: Verdana, "Trebuchet MS", "Noto Sans", "Liberation Sans", Arial, sans-serif;
+}

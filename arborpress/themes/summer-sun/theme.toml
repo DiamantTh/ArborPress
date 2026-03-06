@@ -5,6 +5,7 @@ version = "1.0.0"
 author = "ArborPress"
 description = "Sommerpalette mit sonnigen Gelb-/Sandtönen."
 preview = "preview.png"
+dark_companion = "summer-sun-dark"
 
 [theme.features]
 dark_mode_toggle = false

@@ -1,13 +1,12 @@
 [theme]
-id          = "default"
-name        = "ArborPress Default"
+id          = "summer-sun-dark"
+name        = "Summer Sun Dark"
 version     = "1.0.0"
 author      = "ArborPress"
-description = "Sauberes, modernes Blog-Layout – hell, lesefreundlich, responsiv."
+description = "Dunkle Variante von Summer Sun – warmes Bernsteinlicht auf tiefem Nachtbraun."
 preview     = "preview.png"
-dark_companion = "dark"
+light_companion = "summer-sun"
 
-# Feature-Flags
 [theme.features]
 dark_mode_toggle = false
 code_highlight   = true

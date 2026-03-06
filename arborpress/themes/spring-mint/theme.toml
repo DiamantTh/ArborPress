@@ -5,6 +5,7 @@ version = "1.0.0"
 author = "ArborPress"
 description = "Frühlingspalette in Minzgrün und Salbei."
 preview = "preview.png"
+dark_companion = "spring-mint-dark"
 
 [theme.features]
 dark_mode_toggle = false

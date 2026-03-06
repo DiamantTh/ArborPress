@@ -6,11 +6,84 @@
   <title>{% block title %}{{ config.web.base_url | replace('https://', '') | replace('http://', '') }}{% endblock %}</title>
   <meta name="description" content="{% block description %}{% endblock %}">
   {% if noindex %}<meta name="robots" content="noindex,nofollow">{% endif %}
-  {# §10: CSS lokal, Theme-abhängig (§9) #}
-  <link rel="stylesheet" href="{{ theme.css_url if theme else url_for('static', filename='css/style.css') }}">
+  {# §9 Theme-CSS mit Cache-Busting via Version #}
+  {% set _cv = theme.theme.version if theme else '1.0.0' %}
+  {# Kern-CSS immer laden (Layout, Utility-Klassen); Full-Themes überschreiben via
+     eigene Selektoren, Saison-Themes ergänzen nur :root-Variablen oben drauf #}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ _cv }}">
+  {% if theme %}
+  <link id="ap-theme-css" rel="stylesheet" href="{{ theme.css_url }}?v={{ _cv }}">
+  {% else %}
+  {# kein explizites Theme – Fallback schon geladen, Dummy-ID für JS #}
+  <link id="ap-theme-css" rel="stylesheet" href="" disabled>
+  {% endif %}
+  {% if theme_dark %}
+  <link id="ap-theme-dark-css" rel="stylesheet" href="{{ theme_dark.css_url }}?v={{ theme_dark.theme.version }}" disabled>
+  {% endif %}
+  <link rel="alternate" type="application/rss+xml"  title="RSS-Feed"  href="{{ url_for('public.rss_feed') }}">
+  <link rel="alternate" type="application/atom+xml" title="Atom-Feed" href="{{ url_for('public.atom_feed') }}">
   {% block head %}{% endblock %}
+  {% if demo_mode %}
+  <style>
+  /* ArborPress Demo-Modus Panel & Banner */
+  .ap-demo-banner{
+    background:#1e293b;color:#94a3b8;font-size:.78rem;text-align:center;
+    padding:.3rem .5rem;font-family:var(--font-sans,system-ui,sans-serif);
+    letter-spacing:.04em;position:relative;z-index:200;
+  }
+  .ap-demo-banner b{color:#e2e8f0}
+  .ap-demo-panel{
+    position:fixed;bottom:1rem;right:1rem;z-index:9999;
+    font-family:var(--font-sans,system-ui,sans-serif);
+  }
+  .ap-demo-panel__toggle{
+    display:flex;align-items:center;gap:.4rem;
+    background:#1e293b;color:#e2e8f0;border:1px solid #334155;
+    border-radius:2rem;padding:.45rem .85rem;cursor:pointer;
+    font-size:.82rem;font-weight:600;
+    box-shadow:0 4px 12px rgba(0,0,0,.4);transition:background .15s;
+  }
+  .ap-demo-panel__toggle:hover{background:#334155}
+  .ap-demo-panel__inner{
+    position:absolute;bottom:calc(100% + .5rem);right:0;
+    background:#1e293b;border:1px solid #334155;border-radius:.75rem;
+    padding:.75rem;min-width:200px;max-width:260px;
+    box-shadow:0 8px 30px rgba(0,0,0,.5);
+  }
+  .ap-demo-panel__heading{
+    font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;
+    color:#64748b;margin-bottom:.5rem;padding-bottom:.4rem;
+    border-bottom:1px solid #334155;
+  }
+  .ap-demo-panel__list{
+    display:flex;flex-direction:column;gap:.2rem;
+    max-height:60vh;overflow-y:auto;
+  }
+  .ap-demo-panel__item{
+    display:flex;align-items:center;gap:.5rem;
+    width:100%;text-align:left;background:none;border:none;
+    border-radius:.4rem;padding:.4rem .55rem;color:#cbd5e1;
+    cursor:pointer;font-size:.82rem;transition:background .1s;
+  }
+  .ap-demo-panel__item:hover{background:#334155}
+  .ap-demo-panel__item.is-active{
+    background:#0f172a;color:#e2e8f0;font-weight:600;
+  }
+  .ap-demo-panel__item.is-active::after{content:'✓';margin-left:auto;color:#22d3ee}
+  .ap-demo-panel__swatch{
+    width:10px;height:10px;border-radius:50%;flex-shrink:0;
+    border:1px solid rgba(255,255,255,.15);
+  }
+  </style>
+  {% endif %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
+
+{% if demo_mode and demo_show_banner %}
+<div class="ap-demo-banner" role="banner">
+  <b>Demo-Modus</b> – Wähle ein Theme über das 🎨-Panel unten rechts. Änderungen werden nur im Browser gespeichert.
+</div>
+{% endif %}
 
 <header class="site-header">
   <div class="container">
@@ -29,6 +102,11 @@
         <a href="{{ url_for('auth.login_page') }}">{{ _('Anmelden') }}</a>
       {% endif %}
       {% endblock %}
+      {% if theme_dark %}
+      <button id="ap-dark-toggle" class="btn-icon" aria-label="{{ _('Hell/Dunkel umschalten') }}" title="{{ _('Hell/Dunkel umschalten') }}">
+        <span id="ap-toggle-icon">🌙</span>
+      </button>
+      {% endif %}
     </nav>
   </div>
 </header>
@@ -56,7 +134,154 @@
   </div>
 </footer>
 
-<script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+{% if demo_mode %}
+<div class="ap-demo-panel" id="ap-demo-panel">
+  <div class="ap-demo-panel__inner" id="ap-demo-inner" hidden>
+    <div class="ap-demo-panel__heading">🎨 Theme wählen</div>
+    <div class="ap-demo-panel__list">
+      {% for t in demo_light_themes | default([]) %}
+      {% set _td = demo_theme_map.get(t.theme.dark_companion) if t.theme.dark_companion else None %}
+      <button class="ap-demo-panel__item{{ ' is-active' if theme and theme.theme.id == t.theme.id }}"
+              data-id="{{ t.theme.id }}"
+              data-light="{{ t.css_url }}?v={{ t.theme.version }}"
+              data-dark-id="{{ t.theme.dark_companion or '' }}"
+              data-dark="{{ (_td.css_url + '?v=' + _td.theme.version) if _td else '' }}">
+        <span class="ap-demo-panel__swatch" style="background:#888"></span>
+        {{ t.theme.name }}
+      </button>
+      {% endfor %}
+    </div>
+  </div>
+  <button class="ap-demo-panel__toggle" id="ap-demo-toggle"
+          aria-expanded="false" aria-controls="ap-demo-inner">
+    🎨 <span id="ap-demo-label">{{ theme.theme.name if theme else 'Theme' }}</span>
+  </button>
+</div>
+{% endif %}
+
+<script src="{{ url_for('static', filename='js/app.js') }}?v={{ _cv }}" defer></script>
+{% if theme_dark %}
+<script>
+(function () {
+  var lightEl = document.getElementById('ap-theme-css');
+  var darkEl  = document.getElementById('ap-theme-dark-css');
+  var btn     = document.getElementById('ap-dark-toggle');
+  var iconEl  = document.getElementById('ap-toggle-icon');
+  if (!lightEl || !darkEl) return;
+
+  var autoDark      = {{ 'true' if theme_auto_dark else 'false' }};
+  var autoDarkStart = {{ theme_auto_dark_start }};
+  var autoDarkEnd   = {{ theme_auto_dark_end }};
+
+  function isNightTime() {
+    var h = new Date().getHours();
+    if (autoDarkStart > autoDarkEnd) return h >= autoDarkStart || h < autoDarkEnd; // über Mitternacht
+    return h >= autoDarkStart && h < autoDarkEnd;
+  }
+
+  function applyScheme(dark) {
+    darkEl.disabled  = !dark;
+    lightEl.disabled = dark;
+    if (iconEl) iconEl.textContent = dark ? '☀️' : '🌙';
+    document.documentElement.setAttribute('data-scheme', dark ? 'dark' : 'light');
+  }
+
+  // Initialzustand: gespeicherte Präferenz → Auto-Dark → hell
+  var stored = localStorage.getItem('ap-color-scheme');
+  var useDark = stored === 'dark' || (stored === null && autoDark && isNightTime());
+  applyScheme(useDark);
+
+  if (btn) {
+    btn.addEventListener('click', function () {
+      var nowDark = !darkEl.disabled;   // currently dark?
+      applyScheme(!nowDark);
+      localStorage.setItem('ap-color-scheme', nowDark ? 'light' : 'dark');
+    });
+  }
+})();
+</script>
+{% endif %}
 {% block scripts %}{% endblock %}
+{% if demo_mode %}
+<script>
+(function () {
+  var CKEY   = 'ap-theme';
+  var panel  = document.getElementById('ap-demo-panel');
+  var toggle = document.getElementById('ap-demo-toggle');
+  var inner  = document.getElementById('ap-demo-inner');
+  var label  = document.getElementById('ap-demo-label');
+  var lightEl = document.getElementById('ap-theme-css');
+  var darkEl  = document.getElementById('ap-theme-dark-css');
+  if (!panel || !toggle || !inner) return;
+
+  function saveCookie(id) {
+    document.cookie = CKEY + '=' + encodeURIComponent(id) +
+      '; path=/; max-age=31536000; SameSite=Lax';
+  }
+
+  function applyTheme(id, lightCss, darkId, darkCss) {
+    // CSS-Swap
+    if (lightEl) lightEl.href = lightCss;
+    if (darkEl) {
+      if (darkCss) {
+        darkEl.href = darkCss;
+        var pref = localStorage.getItem('ap-color-scheme');
+        var wantDark = (pref === 'dark');
+        darkEl.disabled  = !wantDark;
+        if (lightEl) lightEl.disabled = wantDark;
+      } else {
+        darkEl.href = ''; darkEl.disabled = true;
+        if (lightEl) lightEl.disabled = false;
+      }
+    } else if (lightEl) {
+      lightEl.disabled = false;
+    }
+    // Dark-Toggle-Icon aktualisieren
+    var icon = document.getElementById('ap-toggle-icon');
+    if (icon) icon.textContent = darkEl && !darkEl.disabled ? '\u2600\ufe0f' : '\uD83C\uDF19';
+    // Persistenz
+    localStorage.setItem(CKEY, id);
+    saveCookie(id);
+    // Panel-Label + aktiver Button
+    var btn = inner.querySelector('[data-id="' + id + '"]');
+    if (label) label.textContent = btn ? btn.textContent.trim() : id;
+    inner.querySelectorAll('.ap-demo-panel__item').forEach(function (b) {
+      b.classList.toggle('is-active', b.dataset.id === id);
+    });
+  }
+
+  // Panel öffnen/schließen
+  toggle.addEventListener('click', function (e) {
+    e.stopPropagation();
+    var open = !inner.hidden;
+    inner.hidden = open;
+    toggle.setAttribute('aria-expanded', String(!open));
+  });
+  document.addEventListener('click', function (e) {
+    if (!panel.contains(e.target)) {
+      inner.hidden = true;
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  // Theme auswählen
+  inner.querySelectorAll('.ap-demo-panel__item').forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      applyTheme(btn.dataset.id, btn.dataset.light, btn.dataset.darkId, btn.dataset.dark);
+      inner.hidden = true;
+      toggle.setAttribute('aria-expanded', 'false');
+    });
+  });
+
+  // Sofort gespeichertes Theme anwenden (verhindert FOUC beim Seiten-Reload)
+  var stored = localStorage.getItem(CKEY);
+  if (stored) {
+    var b = inner.querySelector('[data-id="' + stored + '"]');
+    if (b) applyTheme(stored, b.dataset.light, b.dataset.darkId, b.dataset.dark);
+  }
+})();
+</script>
+{% endif %}
 </body>
 </html>

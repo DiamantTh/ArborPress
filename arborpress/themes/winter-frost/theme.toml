@@ -5,6 +5,7 @@ version = "1.0.0"
 author = "ArborPress"
 description = "Winterpalette mit Eisblau und kühlen Grautönen."
 preview = "preview.png"
+dark_companion = "winter-night"
 
 [theme.features]
 dark_mode_toggle = false

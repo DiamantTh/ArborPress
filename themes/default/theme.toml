@@ -2,25 +2,15 @@
 # Minimaltheme – kein CDN, nur lokale Assets
 
 [theme]
-id          = "default"
-name        = "ArborPress Default"
-version     = "0.1.0"
-description = "Schlichtes Standard-Theme ohne externe Abhängigkeiten (§10 no remote HTML includes)"
-author      = "ArborPress Core Team"
+id             = "default"
+name           = "ArborPress Default"
+version        = "1.0.0"
+description    = "Schlichtes Standard-Theme ohne externe Abhängigkeiten (§10 no remote HTML includes)"
+author         = "ArborPress Core Team"
+dark_companion = "dark"
 
-# Minimale ArborPress-Version, mit der dieses Theme kompatibel ist
-requires    = ">=0.1.0"
-
-[theme.settings]
-# Primärfarbe (CSS custom property --color-primary)
-color_primary   = "#2d6a4f"
-# Akzentfarbe
-color_accent    = "#40916c"
-# Max. Inhaltsbreite in px
-content_width   = 740
-# Google Fonts o.ä. NICHT erlaubt (§10 no remote includes)
-# webfont_url   = ""  ← bleibt leer
-
-[theme.templates]
-# Keine geschützten Templates werden überschrieben (§9 security constraint).
-# login, security, admin-Templates sind durch Core gesperrt.
+[theme.features]
+dark_mode_toggle  = false
+code_highlight    = true
+reading_time      = true
+table_of_contents = true

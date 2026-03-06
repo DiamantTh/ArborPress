@@ -84,16 +84,18 @@ class ThemeOverrides(BaseModel):
 
 
 class ThemeMeta(BaseModel):
-    id:          str = "default"
-    name:        str
-    version:     str = "1.0.0"
-    license:     str = "unknown"
-    description: str = ""
-    min_core:    str = "0.1.0"
-    author:      str = ""
-    url:         str = ""
-    preview:     str = "preview.png"
-    features:    ThemeFeatures = Field(default_factory=ThemeFeatures)
+    id:               str = "default"
+    name:             str
+    version:          str = "1.0.0"
+    license:          str = "unknown"
+    description:      str = ""
+    min_core:         str = "0.1.0"
+    author:           str = ""
+    url:              str = ""
+    preview:          str = "preview.png"
+    features:         ThemeFeatures = Field(default_factory=ThemeFeatures)
+    dark_companion:   str | None = None  # ID des zugehörigen Dark-Themes
+    light_companion:  str | None = None  # ID des zugehörigen Light-Themes (für Dark-Themes)
 
 
 class ThemeManifest(BaseModel):
@@ -122,7 +124,16 @@ class ThemeManifest(BaseModel):
 
     @property
     def css_url(self) -> str:
-        """Haupt-CSS-URL relativ zu /static/themes/<id>/."""
+        """Haupt-CSS-URL für dieses Theme.
+
+        Full-Themes (default, minimal, dark, …) legen ihr CSS unter
+        ``static/css/style.css`` ab; Saison-Themes direkt unter
+        ``static/style.css``.  Wir wählen den Pfad nach tatsächlicher
+        Existenz der Datei; fällt sonst auf den flachen Pfad zurück.
+        """
+        if self._path:
+            if (self._path / "static" / "css" / "style.css").exists():
+                return f"/static/themes/{self.theme.id}/css/style.css"
         return f"/static/themes/{self.theme.id}/style.css"
 
     @property
@@ -161,9 +172,14 @@ class ThemeRegistry:
         self._loaded = False
 
     def load(self, extra_dirs: list[Path] | None = None) -> None:
-        self._themes = _scan_dir(_BUILTIN_THEMES_DIR)
+        # Externe Themes zuerst einlesen (niedrigere Priorität)
+        merged: dict[str, ThemeManifest] = {}
         for d in (extra_dirs or []):
-            self._themes.update(_scan_dir(d))
+            merged.update(_scan_dir(d))
+        # Eingebaute Themes überschreiben externe mit gleicher ID
+        # (stellt sicher, dass Built-in-Themes vollständig inkl. CSS bleiben)
+        merged.update(_scan_dir(_BUILTIN_THEMES_DIR))
+        self._themes = merged
         self._loaded = True
         log.debug("Themes geladen: %s", list(self._themes))
 

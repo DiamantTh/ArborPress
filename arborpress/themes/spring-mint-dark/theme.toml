@@ -1,13 +1,12 @@
 [theme]
-id          = "default"
-name        = "ArborPress Default"
+id          = "spring-mint-dark"
+name        = "Spring Mint Dark"
 version     = "1.0.0"
 author      = "ArborPress"
-description = "Sauberes, modernes Blog-Layout – hell, lesefreundlich, responsiv."
+description = "Dunkle Variante von Spring Mint – tiefes Waldgrün als Nachtmodus."
 preview     = "preview.png"
-dark_companion = "dark"
+light_companion = "spring-mint"
 
-# Feature-Flags
 [theme.features]
 dark_mode_toggle = false
 code_highlight   = true

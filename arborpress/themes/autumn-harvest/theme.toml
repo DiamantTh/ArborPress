@@ -5,6 +5,7 @@ version = "1.0.0"
 author = "ArborPress"
 description = "Herbstpalette mit Kupfer, Ocker und warmen Erdtönen."
 preview = "preview.png"
+dark_companion = "autumn-harvest-dark"
 
 [theme.features]
 dark_mode_toggle = false

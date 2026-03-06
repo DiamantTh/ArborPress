@@ -6,15 +6,22 @@ from arborpress.models.user import (  # noqa: F401
     MFADevice,
     MFADeviceType,
     User,
+    UserPGPKey,
     UserRole,
     WebAuthnCredential,
 )
 from arborpress.models.content import (  # noqa: F401
+    Category,
+    Comment,
+    CommentStatus,
     Media,
     Page,
     PageType,
     Post,
+    PostAccessToken,
+    PostRevision,
     PostStatus,
+    PostVisibility,
     Tag,
 )
 from arborpress.models.mail import MailQueue, MailStatus  # noqa: F401

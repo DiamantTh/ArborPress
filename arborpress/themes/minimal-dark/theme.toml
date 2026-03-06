@@ -1,11 +1,11 @@
 [theme]
-id          = "minimal"
-name        = "ArborPress Minimal"
+id          = "minimal-dark"
+name        = "Minimal Dark"
 version     = "1.0.0"
 author      = "ArborPress"
-description = "Zeitungsartiger Stil – maximale Lesbarkeit, Serif-Schrift, kein Ablenkungsschnickschnack."
+description = "Dunkle Variante des Minimal-Themes – Zeitungsstil mit warmem Dunkelton und hellem Weinrot."
 preview     = "preview.png"
-dark_companion = "minimal-dark"
+light_companion = "minimal"
 
 [theme.features]
 dark_mode_toggle  = false

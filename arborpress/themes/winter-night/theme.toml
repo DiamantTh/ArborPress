@@ -5,6 +5,7 @@ version = "1.0.0"
 author = "ArborPress"
 description = "Winterliche Dark-Variante mit klaren Kontrasten."
 preview = "preview.png"
+light_companion = "winter-frost"
 
 [theme.features]
 dark_mode_toggle = false

@@ -22,6 +22,7 @@
   <a href="#sec-federation" class="btn btn--small">Federation</a>
   <a href="#sec-search"     class="btn btn--small">Suche</a>
   <a href="#sec-theme"      class="btn btn--small">Theme</a>
+  <a href="#sec-demo"       class="btn btn--small">Demo-Modus</a>
 </div>
 
 
@@ -325,8 +326,74 @@
       <code>static/</code> und <code>templates/</code>.
     </p>
 
+    <h4 style="margin:1rem 0 .5rem">Automatischer Hell/Dunkel-Wechsel</h4>
+    <p class="hint" style="margin-bottom:.75rem">
+      Wenn aktiviert, wechselt das aktive Theme automatisch zum Dark-Companion zwischen
+      <em>Start-Stunde</em> und <em>End-Stunde</em>. Besucher können die Auswahl jederzeit
+      manuell überschreiben.
+    </p>
+
+    <label class="checkbox-row">
+      <input type="checkbox" name="auto_dark" value="1"
+             {{ 'checked' if sections.theme.get('auto_dark', False) }}>
+      Auto-Dark aktivieren
+    </label>
+
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-top:.5rem">
+      <label style="flex:1;min-width:120px">
+        Dunkel ab (Stunde, 0–23)
+        <input type="number" name="auto_dark_start" min="0" max="23"
+               value="{{ sections.theme.get('auto_dark_start', 19) }}">
+      </label>
+      <label style="flex:1;min-width:120px">
+        Hell ab (Stunde, 0–23)
+        <input type="number" name="auto_dark_end" min="0" max="23"
+               value="{{ sections.theme.get('auto_dark_end', 6) }}">
+      </label>
+    </div>
+
     <div class="form-actions">
       <button type="submit" class="btn btn--primary">Theme speichern</button>
+    </div>
+  </form>
+</section>
+
+
+<!-- ================================================================== -->
+<!-- DEMO-MODUS                                                          -->
+<!-- ================================================================== -->
+<section class="admin-card" id="sec-demo" style="margin-bottom:2rem">
+  <h3>Demo-Modus</h3>
+  <p class="hint" style="margin-bottom:1rem">
+    Im Demo-Modus können Besucher das Theme direkt im Browser wechseln, ohne
+    sich einloggen zu müssen. Die Wahl wird per Cookie &amp; <code>localStorage</code>
+    gespeichert und hat keinen Einfluss auf andere Besucher.
+    Ideal für Demo-Installationen, Showcases oder Theme-Previews.
+  </p>
+  <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    <input type="hidden" name="section" value="demo">
+
+    <label class="checkbox-row">
+      <input type="checkbox" name="enabled" value="1"
+             {{ 'checked' if sections.demo.get('enabled', False) }}>
+      Demo-Modus aktivieren
+    </label>
+
+    <label class="checkbox-row" style="margin-top:.5rem">
+      <input type="checkbox" name="show_banner" value="1"
+             {{ 'checked' if sections.demo.get('show_banner', True) }}>
+      Demo-Banner oben anzeigen
+      <span class="hint">(weist Besucher auf den Demo-Betrieb hin)</span>
+    </label>
+
+    <label class="checkbox-row" style="margin-top:.5rem">
+      <input type="checkbox" name="allow_all_themes" value="1"
+             {{ 'checked' if sections.demo.get('allow_all_themes', True) }}>
+      Alle Themes anzeigen (inkl. reiner Dark-Themes ohne Pendant)
+    </label>
+
+    <div class="form-actions" style="margin-top:1rem">
+      <button type="submit" class="btn btn--primary">Demo-Modus speichern</button>
     </div>
   </form>
 </section>
