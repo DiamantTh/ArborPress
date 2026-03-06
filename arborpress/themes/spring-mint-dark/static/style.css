@@ -1,3 +1,5 @@
+@import url('/static/themes/default/style.css');
+
 :root {
   --color-bg:           #0c1610;
   --color-bg-alt:       #122019;
