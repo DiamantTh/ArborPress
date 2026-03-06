@@ -205,6 +205,7 @@ def main() -> None:
     update_demo_html(DEMO_FILE, dark_pairs_js, themes_js)
     print()
     print(f"Fertig! {len(css_vars)} Themes verarbeitet.")
+    print("→ Öffne docs/demo.html im Browser. F5 lädt ohne Flackern dank Anti-FOUC-Preload.")
 
 
 if __name__ == "__main__":
