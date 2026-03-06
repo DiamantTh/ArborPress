@@ -1,13 +1,21 @@
-@import url('/static/themes/default/style.css');
+@import url('/static/themes/default/css/style.css');
 
 :root {
-  --color-bg:           #0c1610;
-  --color-bg-alt:       #122019;
-  --color-surface:      #0f1c14;
-  --color-border:       #1d3828;
+  --color-bg:           #131e18;
+  --color-bg-alt:       #1a2c22;
+  --color-surface:      #172518;
+  --color-border:       #284a38;
   --color-text:         #c8edd8;
   --color-text-muted:   #72a882;
   --color-accent:       #3dba8c;
   --color-accent-hover: #52d4a6;
   --font-sans: Verdana, "Trebuchet MS", "Noto Sans", "Liberation Sans", Arial, sans-serif;
+}
+
+/* ── OLED: absolutes Schwarz für AMOLED/OLED-Displays (html[data-oled]) ── */
+html[data-oled] {
+  --color-bg:     #000000;
+  --color-bg-alt: #000a04;
+  --color-surface:#010a04;
+  --color-border: #102010;
 }

@@ -133,6 +133,20 @@
   {% endwith %}
 
   <div id="comment-form" class="comment-form-wrapper">
+
+    <h3 class="comments__subheading">Kommentar schreiben</h3>
+
+    {# ── Moderationshinweis ── #}
+    <div class="comment-notice">
+      <span class="comment-notice__icon">📧</span>
+      <p>
+        <strong>Zweistufige Moderation</strong> –
+        Dein Kommentar wird erst nach <strong>E-Mail-Bestätigung</strong> durch dich
+        und anschließender <strong>Freischaltung</strong> durch den Betreiber veröffentlicht.
+        Deine E-Mail-Adresse bleibt privat.
+      </p>
+    </div>
+
     {# Zitat-Vorschau (wird per JS befüllt) #}
     <div id="quote-preview" class="comment-form__quote-preview" style="display:none">
       <div class="comment-form__quote-header">
@@ -156,7 +170,7 @@
         </label>
         <label>
           E-Mail <span aria-hidden="true">*</span>
-          <small>(wird nicht veröffentlicht)</small>
+          <small>Nicht öffentlich – nur für die Bestätigungs-Mail.</small>
           <input type="email" name="author_email" required maxlength="256" autocomplete="email">
         </label>
         <label>
@@ -170,16 +184,82 @@
         <textarea name="body" id="comment-body" rows="6" required maxlength="10000"></textarea>
       </label>
 
-      {# Captcha #}
-      {% if captcha and captcha.type != 'none' %}
+      {# ── Captcha ── #}
+      {% if captcha and captcha.type not in ('none', None) %}
       <div class="captcha-wrapper">
-        {{ captcha.html | safe }}
+        <div class="captcha-box">
+          <div class="captcha-box__header">
+            <span class="captcha-box__label">Anti-Spam-Prüfung</span>
+            <span class="captcha-provider-badge">
+              {%- if captcha.type == 'math' %}Mathe
+              {%- elif captcha.type == 'custom' %}Frage
+              {%- elif captcha.type == 'hcaptcha' %}hCaptcha
+              {%- elif captcha.type == 'friendly_captcha' %}Friendly Captcha
+              {%- elif captcha.type == 'altcha' %}ALTCHA
+              {%- elif captcha.type == 'mcaptcha' %}mCaptcha
+              {%- elif captcha.type == 'mosparo' %}mosparo
+              {%- elif captcha.type == 'turnstile' %}Turnstile
+              {%- else %}{{ captcha.type }}{%- endif %}
+            </span>
+          </div>
+
+          {% if captcha.type == 'math' %}
+          <div class="captcha-math">
+            <span class="captcha-q">{{ captcha.math_a }} + {{ captcha.math_b }} = ?</span>
+            <input type="hidden" name="captcha_a" value="{{ captcha.math_a }}">
+            <input type="hidden" name="captcha_b" value="{{ captcha.math_b }}">
+            <input type="number" name="captcha_answer"
+                   class="captcha-input captcha-input--number"
+                   required min="0" max="20" inputmode="numeric" autocomplete="off">
+          </div>
+
+          {% elif captcha.type == 'custom' and captcha.question %}
+          <div class="captcha-custom">
+            <span class="captcha-q-text">{{ captcha.question }}</span>
+            <input type="hidden" name="captcha_qi" value="{{ captcha.question_index }}">
+            <input type="text" name="captcha_answer" class="captcha-input"
+                   required autocomplete="off">
+          </div>
+
+          {% elif captcha.type == 'hcaptcha' %}
+          <div class="h-captcha" data-sitekey="{{ captcha.site_key }}"></div>
+          <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
+
+          {% elif captcha.type == 'friendly_captcha' %}
+          <div class="frc-captcha" data-sitekey="{{ captcha.site_key }}"></div>
+          <script src="https://cdn.jsdelivr.net/npm/friendly-challenge@0.9.14/widget.min.js" async defer></script>
+
+          {% elif captcha.type == 'altcha' %}
+          <div is="altcha-widget" challengejson="{{ captcha.altcha_challenge }}" hidelog></div>
+          <script src="https://cdn.jsdelivr.net/npm/altcha/dist/altcha.min.js" async defer></script>
+
+          {% elif captcha.type == 'mcaptcha' %}
+          <div id="mcaptcha__widget-container"></div>
+          <script src="{{ captcha.mcaptcha_url }}/api/v1/pow/score/widget.bundle.js?siteKey={{ captcha.site_key }}" async defer></script>
+
+          {% elif captcha.type == 'mosparo' %}
+          <div id="mosparo-box"></div>
+          <script src="{{ captcha.mosparo_url }}/build/mosparo-frontend.js" async defer></script>
+          <script>(function(){new mosparo('#mosparo-box','{{ captcha.mosparo_url }}','{{ captcha.mosparo_public_key }}',{});})();</script>
+
+          {% elif captcha.type == 'turnstile' %}
+          <div class="cf-turnstile" data-sitekey="{{ captcha.site_key }}"></div>
+          <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+          {% endif %}
+        </div>
       </div>
       {% endif %}
 
+      {# ── DSGVO-Zustimmung ── #}
+      <label class="comment-form__consent">
+        <input type="checkbox" name="consent" required>
+        <span>Ich habe die
+          <a href="/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a>
+          gelesen und stimme der Verarbeitung meiner Daten für diesen Kommentar zu.</span>
+      </label>
+
       <div class="comment-form__actions">
-        <button type="submit" class="btn btn-primary">Kommentar senden</button>
-        <small>Dein Kommentar wird nach E-Mail-Bestätigung und redaktioneller Prüfung veröffentlicht.</small>
+        <button type="submit" class="btn btn-primary">Kommentar einreichen</button>
       </div>
     </form>
   </div>

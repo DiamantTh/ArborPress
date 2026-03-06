@@ -139,6 +139,14 @@ a.tag { background: var(--color-primary); color: #fff; border-radius: var(--radi
   margin: 0 0 1.5rem;
   font-size: 1.3rem;
 }
+.comments__subheading {
+  margin: 2rem 0 1rem;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--color-text);
+  border-top: 1px solid var(--color-border);
+  padding-top: 1.5rem;
+}
 .comments__count {
   display: inline-block;
   background: var(--color-primary);
@@ -296,4 +304,101 @@ a.tag { background: var(--color-primary); color: #fff; border-radius: var(--radi
 .btn-icon:hover {
   background: var(--color-bg-alt, rgba(0,0,0,.06));
   border-color: var(--color-accent, currentColor);
+}
+.btn-icon.active {
+  background: var(--color-accent, #6366f1);
+  color: #fff;
+  border-color: transparent;
+}
+
+/* ── Kommentar-Hinweis-Box (Moderationsinfo) ── */
+.comment-notice {
+  display: flex;
+  gap: .75rem;
+  align-items: flex-start;
+  background: var(--color-bg-alt);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent, var(--color-primary));
+  border-radius: var(--radius-sm, .25rem);
+  padding: .75rem 1rem;
+  margin-bottom: 1.25rem;
+  font-size: .9rem;
+  line-height: 1.5;
+}
+.comment-notice__icon { font-size: 1.2rem; flex-shrink: 0; line-height: 1.4; }
+.comment-notice strong { color: var(--color-accent, var(--color-primary)); }
+.comment-notice p     { margin: 0; }
+
+/* ── Anti-Spam Captcha-Box ── */
+.captcha-wrapper { margin: 1rem 0; }
+.captcha-box {
+  background: var(--color-bg-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, .25rem);
+  padding: .75rem 1rem;
+}
+.captcha-box__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: .6rem;
+}
+.captcha-box__label {
+  font-size: .86rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.captcha-provider-badge {
+  font-size: .72rem;
+  font-weight: 700;
+  padding: .18rem .55rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--color-accent, var(--color-primary)) 15%, var(--color-bg-alt));
+  color: var(--color-accent, var(--color-primary));
+  border: 1px solid color-mix(in srgb, var(--color-accent, var(--color-primary)) 30%, transparent);
+}
+.captcha-math {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.captcha-q {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--color-accent, var(--color-primary));
+}
+.captcha-q-text {
+  display: block;
+  font-size: .97rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: .5rem;
+}
+.captcha-input {
+  padding: .38rem .55rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, .25rem);
+  background: var(--color-surface, var(--color-bg));
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: .97rem;
+}
+.captcha-input--number { width: 76px; text-align: center; }
+.captcha-input:focus   { outline: none; border-color: var(--color-accent, var(--color-primary)); }
+
+/* ── DSGVO-Consent-Checkbox ── */
+.comment-form__consent {
+  display: flex;
+  gap: .5rem;
+  align-items: flex-start;
+  margin: .75rem 0 1rem;
+  font-size: .88rem;
+  color: var(--color-text);
+}
+.comment-form__consent input[type="checkbox"] {
+  margin-top: .18rem;
+  flex-shrink: 0;
+  accent-color: var(--color-accent, var(--color-primary));
 }

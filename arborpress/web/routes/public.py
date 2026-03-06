@@ -571,6 +571,11 @@ async def post_comment_submit(slug: str):
             await flash("Bitte fülle alle Pflichtfelder aus.", "error")
             return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
 
+        # DSGVO-Zustimmung prüfen
+        if not form.get("consent"):
+            await flash("Bitte stimme der Datenschutzerklärung zu.", "error")
+            return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
+
         # Grobes E-Mail-Format-Check
         if "@" not in author_email or "." not in author_email.split("@")[-1]:
             await flash("Bitte gib eine gültige E-Mail-Adresse ein.", "error")

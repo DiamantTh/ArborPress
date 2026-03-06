@@ -106,6 +106,8 @@
       <button id="ap-dark-toggle" class="btn-icon" aria-label="{{ _('Hell/Dunkel umschalten') }}" title="{{ _('Hell/Dunkel umschalten') }}">
         <span id="ap-toggle-icon">🌙</span>
       </button>
+      <button id="ap-oled-toggle" class="btn-icon" aria-label="OLED-Modus" title="OLED: Absolutes Schwarz für AMOLED-Displays"
+              style="display:none; font-size:.62rem; font-weight:800; letter-spacing:-.02em">OLED</button>
       {% endif %}
     </nav>
   </div>
@@ -198,6 +200,31 @@
       localStorage.setItem('ap-color-scheme', nowDark ? 'light' : 'dark');
     });
   }
+})();
+</script>
+<script>
+/* OLED-Toggle */
+(function () {
+  var btn  = document.getElementById('ap-oled-toggle');
+  var html = document.documentElement;
+  if (!btn) return;
+
+  function applyOled(on) {
+    if (on) html.setAttribute('data-oled', '');
+    else    html.removeAttribute('data-oled');
+    btn.classList.toggle('active', on);
+    localStorage.setItem('ap-oled', on ? '1' : '0');
+  }
+  function syncVisibility() {
+    var isDark = html.getAttribute('data-scheme') === 'dark';
+    btn.style.display = isDark ? '' : 'none';
+    if (!isDark) { html.removeAttribute('data-oled'); btn.classList.remove('active'); }
+  }
+  var oledOn = localStorage.getItem('ap-oled') === '1';
+  applyOled(oledOn);
+  syncVisibility();
+  btn.addEventListener('click', function () { applyOled(!html.hasAttribute('data-oled')); });
+  new MutationObserver(syncVisibility).observe(html, { attributes: true, attributeFilter: ['data-scheme'] });
 })();
 </script>
 {% endif %}

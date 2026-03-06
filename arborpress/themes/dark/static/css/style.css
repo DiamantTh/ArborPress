@@ -4,10 +4,10 @@
    ===================================================================== */
 
 :root {
-  --color-bg:          #0f1117;
-  --color-bg-alt:      #1a1d27;
-  --color-surface:     #161923;
-  --color-border:      #2d3148;
+  --color-bg:          #161922;
+  --color-bg-alt:      #202438;
+  --color-surface:     #1c2030;
+  --color-border:      #363c58;
   --color-text:        #e2e8f0;
   --color-text-muted:  #8892a4;
   --color-accent:      #818cf8;
@@ -218,4 +218,12 @@ label { display: block; font-size: .9rem; font-weight: 600; margin-bottom: .35re
   :root { --gutter: 1rem; }
   .post-header__title { font-size: 1.5rem; }
   .dashboard-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* ── OLED: absolutes Schwarz für AMOLED/OLED-Displays (html[data-oled]) ── */
+html[data-oled] {
+  --color-bg:     #000000;
+  --color-bg-alt: #06060e;
+  --color-surface:#0a0c18;
+  --color-border: #1e2040;
 }

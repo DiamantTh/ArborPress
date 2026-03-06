@@ -4,10 +4,10 @@
    ===================================================================== */
 
 :root {
-  --color-bg:          #171410;
-  --color-bg-alt:      #211d18;
-  --color-surface:     #1c1814;
-  --color-border:      #3a342c;
+  --color-bg:          #1e1a16;
+  --color-bg-alt:      #28241e;
+  --color-surface:     #231f1a;
+  --color-border:      #46403a;
   --color-text:        #ede5d8;
   --color-text-muted:  #9e9080;
   --color-accent:      #c44444;    /* helles Weinrot – lesbar auf dunklem Grund */
@@ -188,4 +188,12 @@ main { flex: 1; padding: 2rem 0; }
   :root { --gutter: 1rem; }
   .site-header__brand { font-size: 1.6rem; }
   .post-header__title { font-size: 1.65rem; }
+}
+
+/* ── OLED: absolutes Schwarz für AMOLED/OLED-Displays (html[data-oled]) ── */
+html[data-oled] {
+  --color-bg:     #000000;
+  --color-bg-alt: #080704;
+  --color-surface:#0c0a08;
+  --color-border: #251e18;
 }
