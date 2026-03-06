@@ -46,7 +46,8 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
-# Demo (lokal generiert, nicht in Git)
+# Demo (lokal generiert/gepflegt, nicht in Git)
 docs/demo.html
 docs/demo-*.html
+scripts/update_demo.py
 scripts/__pycache__/

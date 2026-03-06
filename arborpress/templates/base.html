@@ -171,16 +171,6 @@
   var iconEl  = document.getElementById('ap-toggle-icon');
   if (!lightEl || !darkEl) return;
 
-  var autoDark      = {{ 'true' if theme_auto_dark else 'false' }};
-  var autoDarkStart = {{ theme_auto_dark_start }};
-  var autoDarkEnd   = {{ theme_auto_dark_end }};
-
-  function isNightTime() {
-    var h = new Date().getHours();
-    if (autoDarkStart > autoDarkEnd) return h >= autoDarkStart || h < autoDarkEnd; // über Mitternacht
-    return h >= autoDarkStart && h < autoDarkEnd;
-  }
-
   function applyScheme(dark) {
     darkEl.disabled  = !dark;
     lightEl.disabled = dark;
@@ -188,9 +178,9 @@
     document.documentElement.setAttribute('data-scheme', dark ? 'dark' : 'light');
   }
 
-  // Initialzustand: gespeicherte Präferenz → Auto-Dark → hell
+  // Initialzustand: gespeicherte Präferenz, Standard Hell
   var stored = localStorage.getItem('ap-color-scheme');
-  var useDark = stored === 'dark' || (stored === null && autoDark && isNightTime());
+  var useDark = stored === 'dark';
   applyScheme(useDark);
 
   if (btn) {
