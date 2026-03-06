@@ -19,3 +19,9 @@ html[data-oled] {
   --color-surface:#060a14;
   --color-border: #101e38;
 }
+
+/* Sternen-Muster – versetzt wie ein Sternenhimmel */
+body {
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36'><circle cx='18' cy='18' r='.9' fill='%2360a5fa' fill-opacity='.06'/><circle cx='0' cy='0' r='.5' fill='%2360a5fa' fill-opacity='.04'/><circle cx='36' cy='36' r='.5' fill='%2360a5fa' fill-opacity='.04'/><circle cx='0' cy='36' r='.3' fill='%2360a5fa' fill-opacity='.03'/><circle cx='36' cy='0' r='.3' fill='%2360a5fa' fill-opacity='.03'/></svg>");
+}
+html[data-oled] body { background-image: none; }

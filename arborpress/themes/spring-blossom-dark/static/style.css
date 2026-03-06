@@ -19,3 +19,9 @@ html[data-oled] {
   --color-surface:#0c010b;
   --color-border: #22082e;
 }
+
+/* zarte Blütenstaub-Punkte – sehr fein und diskret */
+body {
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='22' height='22'><circle cx='11' cy='11' r='.8' fill='%23e0688f' fill-opacity='.05'/></svg>");
+}
+html[data-oled] body { background-image: none; }

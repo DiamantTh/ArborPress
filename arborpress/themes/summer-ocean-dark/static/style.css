@@ -19,3 +19,9 @@ html[data-oled] {
   --color-surface:#00060e;
   --color-border: #0a2040;
 }
+
+/* wellenartig versetztes Ozean-Raster – leicht versetzt für Tiefenwirkung */
+body {
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='18'><circle cx='16' cy='9' r='1' fill='%2322b8d6' fill-opacity='.05'/><circle cx='0' cy='18' r='.6' fill='%2322b8d6' fill-opacity='.03'/><circle cx='32' cy='0' r='.6' fill='%2322b8d6' fill-opacity='.03'/></svg>");
+}
+html[data-oled] body { background-image: none; }

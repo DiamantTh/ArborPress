@@ -19,3 +19,9 @@ html[data-oled] {
   --color-surface:#0c0602;
   --color-border: #281800;
 }
+
+/* lauwarmes Bernstein-Punktraster – gemütliche Herbststübchen-Atmosphäre */
+body {
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><circle cx='14' cy='14' r='1.1' fill='%23e87d22' fill-opacity='.05'/></svg>");
+}
+html[data-oled] body { background-image: none; }

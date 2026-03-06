@@ -8,8 +8,8 @@
   --color-bg-alt:      #202438;
   --color-surface:     #1c2030;
   --color-border:      #363c58;
-  --color-text:        #e2e8f0;
-  --color-text-muted:  #8892a4;
+  --color-text:        #dce1f5;   /* leicht indigo-getönt, nicht reines Weiß */
+  --color-text-muted:  #8590bf;   /* passend zum indigo Akzent */
   --color-accent:      #818cf8;
   --color-accent-hover:#a5b4fc;
   --color-danger:      #f87171;
@@ -38,6 +38,8 @@ body {
   font-size: var(--font-size-base);
   line-height: var(--line-height);
   background: var(--color-bg);
+  /* dezentes Punktraster passend zum Indigo-Akzent */
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'><circle cx='12' cy='12' r='1' fill='%23818cf8' fill-opacity='.05'/></svg>");
   color: var(--color-text);
   min-height: 100vh;
   display: flex;
@@ -227,3 +229,4 @@ html[data-oled] {
   --color-surface:#0a0c18;
   --color-border: #1e2040;
 }
+html[data-oled] body { background-image: none; }

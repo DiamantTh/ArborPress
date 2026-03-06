@@ -19,3 +19,9 @@ html[data-oled] {
   --color-surface:#050400;
   --color-border: #201600;
 }
+
+/* spärliches, warmes Sonnenpunktmuster – großzügig und luftig */
+body {
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36'><circle cx='18' cy='18' r='1.2' fill='%23f5b522' fill-opacity='.04'/></svg>");
+}
+html[data-oled] body { background-image: none; }

@@ -38,6 +38,8 @@ body {
   font-size: var(--font-size-base);
   line-height: var(--line-height);
   background: var(--color-bg);
+  /* zartes Papiermaserungsmuster – subtil, warm, zeitungsartig */
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='44' height='44'><circle cx='8' cy='8' r='.6' fill='%23c44444' fill-opacity='.04'/><circle cx='30' cy='22' r='.5' fill='%23c44444' fill-opacity='.03'/><circle cx='18' cy='38' r='.6' fill='%23c44444' fill-opacity='.035'/></svg>");
   color: var(--color-text);
   min-height: 100vh;
   display: flex;
@@ -197,3 +199,4 @@ html[data-oled] {
   --color-surface:#0c0a08;
   --color-border: #251e18;
 }
+html[data-oled] body { background-image: none; }
