@@ -98,7 +98,8 @@ def vars_to_js_object(theme_id: str, vars_: dict[str, str], indent: str = "    "
         v = vars_.get(k)
         if v:
             lines.append(f"{indent}'{k}': '{v}',")
-    return f"'{theme_id}': {{\n" + "\n".join(lines) + "\n    }}"
+    # WICHTIG: normaler String-Ausdruck – kein f-String, also kein {{ }}
+    return f"'{theme_id}': {{\n" + "\n".join(lines) + "\n    }"
 
 
 def build_dark_pairs(themes: dict[str, dict]) -> str:
