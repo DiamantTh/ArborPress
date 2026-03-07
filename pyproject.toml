@@ -46,8 +46,6 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "packaging>=24.0",
-    # DB-Migrationen (§12)
-    "alembic>=1.13",
 ]
 
 [project.optional-dependencies]
