@@ -7,13 +7,28 @@ Aktivierte Plugins:
   - strikethrough  – ~~Text~~
   - tasklist       – [ ] / [x] Checklisten
 
-Öffentliche API:
-  render_md(text: str) -> str   – Markdown → sanitisiertes HTML
+Oeffentliche API
+  render_md(text)         – sync, Markdown → sanitisiertes HTML.
+                            Externe <img>-URLs → /proxy/img (wenn proxy_secret gesetzt).
+  render_md_async(text)   – async, wie render_md + oEmbed-Shortcodes aufloesen.
+
+Embed-Shortcode im Markdown::
+
+    {{embed:https://twitter.com/user/status/123}}
+    {{embed:https://www.youtube.com/watch?v=xyz}}
+
+  ArborPress holt oEmbed-HTML serverseitig, entfernt <script>-Tags,
+  cached Ergebnis auf Disk (TTL: 24 h). Kein JS-Request des Besuchers.
 """
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import hmac
 import logging
+import re
+from urllib.parse import urlencode
 
 import bleach
 from markdown_it import MarkdownIt
@@ -115,12 +130,101 @@ def render_md(text: str) -> str:
 
     # Externe Links sichern: rel="noopener noreferrer"
     clean_html = _add_link_rel(clean_html)
+
+    # Externe Bilder durch lokalen Proxy routen
+    try:
+        from arborpress.core.config import get_settings
+        _cfg = get_settings()
+        clean_html = _rewrite_external_imgs(
+            clean_html,
+            _cfg.web.base_url,
+            _cfg.web.proxy_secret.get_secret_value(),
+        )
+    except Exception:
+        pass  # Proxy-Rewrite ist optional – nie den Render-Prozess abbrechen
+
     return clean_html
+
+
+async def render_md_async(text: str) -> str:
+    """Async-Variante von render_md mit oEmbed-Shortcode-Aufloesung.
+
+    Ablauf:
+      1. ``{{embed:url}}``-Muster aus Text extrahieren, Platzhalter einfuegen.
+      2. Synchrones render_md() auf den verbleibenden Text anwenden.
+      3. Alle Platzhalter durch gecachtes oEmbed-HTML ersetzen.
+
+    Der Schritt 1+3 stellt sicher, dass oEmbed-HTML nicht durch markdown-it
+    prozessiert oder durch bleach sanitisiert wird.
+
+    Args:
+        text: Markdown-Text, kann ``{{embed:url}}``-Shortcodes enthalten.
+
+    Returns:
+        Vollstaendig gerendertes, sanitisiertes HTML.
+    """
+    if not text:
+        return ""
+
+    # Schritt 1: Shortcodes extrahieren, Platzhalter einsetzen
+    embed_urls: list[str] = []
+    placeholder_map: dict[str, str] = {}
+
+    def _extract(m: re.Match) -> str:
+        url = m.group(1).strip()
+        key = f"__EMBED_{len(embed_urls)}__"
+        embed_urls.append(url)
+        placeholder_map[key] = url
+        return key  # Wird in Markdown als normaler Text durch render_md gerendert
+
+    text_with_placeholders = _EMBED_RE.sub(_extract, text)
+
+    # Schritt 2: Normales Markdown-Rendering
+    rendered = render_md(text_with_placeholders)
+
+    if not embed_urls:
+        return rendered  # Kein Embed → fertig
+
+    # Schritt 3: Embeds holen (parallel) und einsetzen
+    try:
+        from arborpress.core.config import get_settings
+        from arborpress.core.oembed import get_embed_html
+        _cfg = get_settings()
+        cache_dir = _cfg.web.oembed_cache_dir
+    except Exception:
+        return rendered  # Fallback: Platzhalter im Text belassen
+
+    # Alle Fetches parallel starten
+    fetch_tasks = [
+        get_embed_html(url, cache_dir)
+        for url in embed_urls
+    ]
+    results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+
+    for key, result in zip(placeholder_map, results):
+        url = placeholder_map[key]
+        if isinstance(result, str) and result:
+            embed_block = (
+                f'<div class="ap-embed" data-provider-url="{url}">'
+                f'{result}'
+                f'</div>'
+            )
+        else:
+            # Fallback: Link zur Original-URL
+            embed_block = (
+                f'<p class="ap-embed-fallback">'
+                f'<a href="{url}" rel="noopener noreferrer" target="_blank">{url}</a>'
+                f'</p>'
+            )
+        # Platzhalter kann als <p>__EMBED_0__</p> im gerenderten HTML stehen
+        rendered = rendered.replace(f"<p>{key}</p>", embed_block)
+        rendered = rendered.replace(key, embed_block)
+
+    return rendered
 
 
 def _add_link_rel(html: str) -> str:
     """Fügt rel="noopener noreferrer" und target="_blank" zu externen Links."""
-    import re
     def _replace(m: re.Match) -> str:
         tag = m.group(0)
         href = re.search(r'href="([^"]*)"', tag)
@@ -131,3 +235,38 @@ def _add_link_rel(html: str) -> str:
                 tag += ' rel="noopener noreferrer" target="_blank">'
         return tag
     return re.sub(r'<a [^>]+>', _replace, html)
+
+
+# ---------------------------------------------------------------------------
+# Externer Bild-Proxy: automatisches Umschreiben von <img src="https://...">
+# ---------------------------------------------------------------------------
+
+_IMG_RE = re.compile(r'<img\b([^>]*)\bsrc="(https?://[^"]*)"([^>]*)>', re.IGNORECASE)
+
+
+def _rewrite_external_imgs(html: str, base_url: str, secret: str) -> str:
+    """Schreibt externe img-src-Attribute auf /proxy/img um.
+
+    Signiert jeden URL mit HMAC-SHA256 (gleiche Logik wie image_proxy.py).
+    Wenn kein ``secret`` gesetzt ist, wird nichts veraendert.
+    """
+    if not secret:
+        return html
+
+    def _replace(m: re.Match) -> str:
+        before, ext_url, after = m.group(1), m.group(2), m.group(3)
+        sig = hmac.new(secret.encode(), ext_url.encode(), hashlib.sha256).hexdigest()
+        proxy = (
+            f"{base_url.rstrip('/')}/proxy/img?"
+            + urlencode({"url": ext_url, "sig": sig})
+        )
+        return f'<img{before}src="{proxy}"{after}>'
+
+    return _IMG_RE.sub(_replace, html)
+
+
+# ---------------------------------------------------------------------------
+# oEmbed-Shortcode  {{embed:https://...}}
+# ---------------------------------------------------------------------------
+
+_EMBED_RE = re.compile(r"\{\{embed:(https?://[^}]+)\}\}", re.IGNORECASE)

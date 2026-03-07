@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from arborpress.auth.stepup import assert_stepup, is_stepup_active
 from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
-from arborpress.core.markdown import render_md
+from arborpress.core.markdown import render_md_async
 from arborpress.logging.config import get_audit_logger
 
 log = logging.getLogger("arborpress.web.admin")
@@ -144,7 +144,7 @@ async def post_new_save():
             title=title,
             slug=slug,
             body_md=body_md,
-            body_html=render_md(body_md),
+            body_html=await render_md_async(body_md),
             status=PostStatus(status_val) if status_val in PostStatus.__members__ else PostStatus.DRAFT,
             visibility=PostVisibility(visibility_val) if visibility_val in PostVisibility.__members__ else PostVisibility.PUBLIC,
             captcha_type=captcha_type,
@@ -237,7 +237,7 @@ async def post_edit_save(slug: str):
             post.slug_old = slug
             post.slug = new_slug
         post.body_md          = body_md
-        post.body_html        = render_md(body_md)
+        post.body_html        = await render_md_async(body_md)
         post.captcha_type     = captcha_type
         post.reading_time_min = Post.calc_reading_time(body_md)
         try:

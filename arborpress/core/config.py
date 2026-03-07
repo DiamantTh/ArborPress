@@ -49,6 +49,8 @@ class WebSettings(BaseSettings):
     proxy_secret: SecretStr = SecretStr("")
     proxy_cache_dir: Path = Path("media/.proxy-cache")
     proxy_max_size: int = 8 * 1024 * 1024  # 8 MiB
+    # oEmbed-Cache fuer eingebettete externe Posts
+    oembed_cache_dir: Path = Path("media/.oembed-cache")
 
 
 class AuthSettings(BaseSettings):

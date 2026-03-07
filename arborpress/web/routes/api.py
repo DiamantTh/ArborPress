@@ -22,7 +22,7 @@ from quart import Blueprint, jsonify, request, abort, session
 from quart import current_app  # noqa: F401
 
 from arborpress.core.config import get_settings
-from arborpress.core.markdown import render_md
+from arborpress.core.markdown import render_md_async
 
 # ---------------------------------------------------------------------------
 # Blueprints
@@ -225,7 +225,7 @@ async def admin_api_markdown_preview():
     """
     data = await request.get_json(silent=True) or {}
     raw = data.get("text", "")
-    return jsonify({"html": render_md(raw)})
+    return jsonify({"html": await render_md_async(raw)})
 
 
 # ---------------------------------------------------------------------------
