@@ -20,8 +20,8 @@ html[data-oled] {
   --color-border: #102010;
 }
 
-/* frische Minz-Punkte auf versetztem Raster */
+/* Hexagon – organisch wie Waben / Pflanzenstruktur */
 body {
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='24'><circle cx='14' cy='12' r='.9' fill='%233dba8c' fill-opacity='.05'/><circle cx='0' cy='0' r='.5' fill='%233dba8c' fill-opacity='.03'/><circle cx='28' cy='24' r='.5' fill='%233dba8c' fill-opacity='.03'/></svg>");
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='34' height='30'><polygon points='17,1 30,8 30,22 17,29 4,22 4,8' fill='none' stroke='%233dba8c' stroke-width='0.9' stroke-opacity='.08'/></svg>");
 }
 html[data-oled] body { background-image: none; }

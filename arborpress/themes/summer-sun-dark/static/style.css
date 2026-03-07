@@ -20,8 +20,8 @@ html[data-oled] {
   --color-border: #201600;
 }
 
-/* spärliches, warmes Sonnenpunktmuster – großzügig und luftig */
+/* große luftige Raute – Sonnenlicht-Reflexion auf warmem Dunkelhintergrund */
 body {
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36'><circle cx='18' cy='18' r='1.2' fill='%23f5b522' fill-opacity='.04'/></svg>");
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='42' height='42'><polygon points='21,1 41,21 21,41 1,21' fill='none' stroke='%23f5b522' stroke-width='0.9' stroke-opacity='.06'/></svg>");
 }
 html[data-oled] body { background-image: none; }

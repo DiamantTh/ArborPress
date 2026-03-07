@@ -20,8 +20,8 @@ html[data-oled] {
   --color-border: #162510;
 }
 
-/* dezentes organisches Punktraster – Waldgrün */
+/* gleichseitiges Dreieck (nach oben) – organisch, naturhaft */
 body {
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='30' height='26'><circle cx='15' cy='13' r='1' fill='%233daa6a' fill-opacity='.05'/><circle cx='0' cy='0' r='.7' fill='%233daa6a' fill-opacity='.04'/><circle cx='30' cy='26' r='.7' fill='%233daa6a' fill-opacity='.04'/></svg>");
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='24'><polygon points='14,1 27,23 1,23' fill='none' stroke='%233daa6a' stroke-width='0.9' stroke-opacity='.08'/></svg>");
 }
 html[data-oled] body { background-image: none; }

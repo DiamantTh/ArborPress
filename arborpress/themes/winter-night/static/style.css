@@ -20,8 +20,8 @@ html[data-oled] {
   --color-border: #101e38;
 }
 
-/* Sternen-Muster – versetzt wie ein Sternenhimmel */
+/* Sechszackiger Stern (zwei überlagerte gleichseitige Dreiecke) – Sternenhimmel */
 body {
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36'><circle cx='18' cy='18' r='.9' fill='%2360a5fa' fill-opacity='.06'/><circle cx='0' cy='0' r='.5' fill='%2360a5fa' fill-opacity='.04'/><circle cx='36' cy='36' r='.5' fill='%2360a5fa' fill-opacity='.04'/><circle cx='0' cy='36' r='.3' fill='%2360a5fa' fill-opacity='.03'/><circle cx='36' cy='0' r='.3' fill='%2360a5fa' fill-opacity='.03'/></svg>");
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='37'><polygon points='19,6 29,24 9,24' fill='none' stroke='%2360a5fa' stroke-width='0.8' stroke-opacity='.07'/><polygon points='19,30 29,12 9,12' fill='none' stroke='%2360a5fa' stroke-width='0.8' stroke-opacity='.07'/></svg>");
 }
 html[data-oled] body { background-image: none; }
