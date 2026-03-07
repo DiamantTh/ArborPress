@@ -11,10 +11,18 @@ CSRF-Hinweis (§8 / §10):
 
 from __future__ import annotations
 
-from quart import Blueprint, jsonify, request, abort
+import asyncio
+import os
+import uuid as _uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+import aiofiles
+from quart import Blueprint, jsonify, request, abort, session
 from quart import current_app  # noqa: F401
 
 from arborpress.core.config import get_settings
+from arborpress.core.markdown import render_md
 
 # ---------------------------------------------------------------------------
 # Blueprints
@@ -201,3 +209,140 @@ async def admin_api_plugin_disable(plugin_id: str):
 async def admin_api_media_list():
     """Admin: Medienliste (§6 stabile URLs)."""
     return jsonify({"items": [], "total": 0})
+
+
+# ---------------------------------------------------------------------------
+# Markdown-Preview (§1 Split-View-Editor)
+# ---------------------------------------------------------------------------
+
+
+@api_admin_bp.post("/markdown/preview")
+async def admin_api_markdown_preview():
+    """Rendert Markdown-Text zu HTML für den Split-View-Editor.
+
+    Request:  ``{"text": "..."}``
+    Response: ``{"html": "..."}``
+    """
+    data = await request.get_json(silent=True) or {}
+    raw = data.get("text", "")
+    return jsonify({"html": render_md(raw)})
+
+
+# ---------------------------------------------------------------------------
+# Media-Upload (§6 /media/{yyyy}/{mm}/{filename}, Pillow-Dimensionen)
+# ---------------------------------------------------------------------------
+
+
+_ALLOWED_UPLOAD_TYPES = frozenset(
+    {
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "image/avif",
+        "image/svg+xml",
+    }
+)
+_MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20 MiB
+
+
+@api_admin_bp.post("/media/upload")
+async def media_upload():
+    """Lädt eine Mediendatei hoch und speichert sie unter {media_dir}/{yyyy}/{mm}/{filename}.
+
+    Formularfelder:
+      ``file``    – multipart/form-data Dateifeld
+      ``alt_text`` – optionaler Alt-Text
+
+    Antwort: ``{"id", "url", "filename", "mime_type", "width", "height", "size_bytes"}``
+    """
+    files = await request.files
+    form = await request.form
+    upload = files.get("file")
+    if upload is None:
+        abort(400, "Kein Datei-Feld 'file' gefunden")
+
+    mime_type: str = upload.content_type or ""
+    mime_base = mime_type.split(";")[0].strip().lower()
+    if mime_base not in _ALLOWED_UPLOAD_TYPES:
+        abort(415, f"Dateityp nicht erlaubt: {mime_base!r}")
+
+    data: bytes = await upload.read(_MAX_UPLOAD_SIZE + 1)
+    if len(data) > _MAX_UPLOAD_SIZE:
+        abort(413, "Datei überschreitet 20-MiB-Limit")
+
+    cfg = get_settings()
+    now = datetime.now(timezone.utc)
+    yyyy = now.year
+    mm = now.month
+
+    import mimetypes as _mt
+    original_name = os.path.basename(upload.filename or "upload")
+    stem, ext = os.path.splitext(original_name)
+    if not ext:
+        guessed = _mt.guess_extension(mime_base) or ".bin"
+        ext = guessed
+
+    file_id = _uuid.uuid4().hex[:16]
+    safe_filename = f"{file_id}{ext}"
+    dest_dir = cfg.web.media_dir / str(yyyy) / f"{mm:02d}"
+    dest_path = dest_dir / safe_filename
+
+    # Dimensionen via Pillow (nur für Rasterbilder)
+    width: int | None = None
+    height: int | None = None
+    if mime_base not in ("image/svg+xml",):
+        try:
+            from io import BytesIO
+            from PIL import Image
+            img = Image.open(BytesIO(data))
+            width, height = img.size
+        except Exception:
+            pass
+
+    # Datei asynchron schreiben
+    await asyncio.to_thread(_write_upload, dest_dir, dest_path, data)
+
+    # DB-Eintrag
+    storage_path = f"{yyyy}/{mm:02d}/{safe_filename}"
+    alt_text = (form.get("alt_text") or "").strip() or None
+
+    from arborpress.core.db import get_db_session
+    from arborpress.models.content import Media
+
+    media_obj = Media(
+        id=str(_uuid.uuid4()),
+        uploader_id=session.get("user_id"),  # type: ignore[attr-defined]
+        filename=safe_filename,
+        mime_type=mime_base,
+        size_bytes=len(data),
+        storage_path=storage_path,
+        alt_text=alt_text,
+        width=width,
+        height=height,
+    )
+    async for db in get_db_session():
+        db.add(media_obj)
+        await db.commit()
+
+    url = f"{cfg.web.base_url.rstrip('/')}/media/{yyyy}/{mm:02d}/{safe_filename}"
+    return jsonify(
+        {
+            "id": media_obj.id,
+            "url": url,
+            "filename": safe_filename,
+            "mime_type": mime_base,
+            "width": width,
+            "height": height,
+            "size_bytes": len(data),
+        }
+    ), 201
+
+
+def _write_upload(dest_dir: Path, dest_path: Path, data: bytes) -> None:
+    """Schreibt Datei atomar (sync, für asyncio.to_thread)."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    tmp = dest_path.with_suffix(".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, dest_path)
+

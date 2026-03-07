@@ -162,8 +162,10 @@ def create_app() -> Quart:
     # §12 DB-Capability-Detection beim Start
     @app.before_serving
     async def _on_startup() -> None:
+        import asyncio
         from arborpress.core.db import get_engine
         from arborpress.core.db_capabilities import detect_capabilities, set_capabilities
+        from arborpress.core.scheduler import run_scheduler
 
         try:
             caps = await detect_capabilities(get_engine())
@@ -171,6 +173,9 @@ def create_app() -> Quart:
         except Exception as exc:
             import logging
             logging.getLogger("arborpress").warning("DB-Capability-Detection fehlgeschlagen: %s", exc)
+
+        # Scheduled-Publishing-Worker starten
+        asyncio.ensure_future(run_scheduler())
 
     return app
 

@@ -32,4 +32,14 @@ class ReverseProxyMiddleware:
             if forwarded_host:
                 scope["server"] = (forwarded_host, None)
 
+            # Client-IP: rechte N Einträge aus X-Forwarded-For vertrauen
+            xff = headers.get(b"x-forwarded-for", b"").decode().strip()
+            if xff and self.trusted_proxies > 0:
+                ips = [ip.strip() for ip in xff.split(",")]
+                # Das N-te Element von rechts ist die vertrauenswürdige Client-IP
+                client_ip = ips[-min(self.trusted_proxies, len(ips))]
+                # Scope: (host, port) – Port aus Original-Client übernehmen
+                orig_port = (scope.get("client") or (None, 0))[1]
+                scope["client"] = (client_ip, orig_port)
+
         await self.app(scope, receive, send)

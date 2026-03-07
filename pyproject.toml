@@ -31,6 +31,7 @@ dependencies = [
     "bleach>=6.1",                # §10 federated/user-content sanitization
     "python-slugify>=8.0",        # §6 slug canonicalization
     "markdown-it-py>=3.0",        # Markdown rendering §1
+    "mdit-py-plugins>=0.4",        # Markdown-Erweiterungen (Tasklists, Footnotes)
     # Media
     "pillow>=10.3",               # image handling §1
     "aiofiles>=23.2",             # async file I/O

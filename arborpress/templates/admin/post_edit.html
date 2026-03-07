@@ -1,5 +1,157 @@
 {% extends "admin/_base.html" %}
 {% block title %}{{ 'Beitrag bearbeiten' if post else 'Neuer Beitrag' }} – ArborPress Admin{% endblock %}
+
+{% block head_extra %}
+<style>
+/* ── Editor-Layout ──────────────────────────────────────────── */
+#ap-editor-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Toolbar */
+.ap-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .25rem;
+  padding: .4rem .5rem;
+  background: var(--admin-table-header, #f0f4f8);
+  border: 1px solid var(--admin-border, #dde1e7);
+  border-bottom: none;
+  border-radius: var(--radius, .5rem) var(--radius, .5rem) 0 0;
+}
+.ap-editor-toolbar button {
+  padding: .2rem .5rem;
+  font-size: .82rem;
+  font-family: var(--font-mono, monospace);
+  cursor: pointer;
+  background: var(--admin-card, #fff);
+  border: 1px solid var(--admin-border, #dde1e7);
+  border-radius: .25rem;
+  color: var(--admin-text, #1a202c);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.ap-editor-toolbar button:hover,
+.ap-editor-toolbar button.active {
+  background: var(--admin-primary, #4f46e5);
+  color: #fff;
+  border-color: var(--admin-primary, #4f46e5);
+}
+.ap-toolbar-sep {
+  display: inline-block;
+  width: 1px;
+  background: var(--admin-border, #dde1e7);
+  margin: .1rem .15rem;
+  align-self: stretch;
+}
+.ap-toolbar-view-group {
+  margin-left: auto;
+  display: flex;
+  gap: .2rem;
+}
+
+/* Split-Container */
+.ap-editor-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--admin-border, #dde1e7);
+  border-radius: 0 0 var(--radius, .5rem) var(--radius, .5rem);
+  overflow: hidden;
+  min-height: 460px;
+}
+.ap-editor-split.ap-view-edit   { grid-template-columns: 1fr 0; }
+.ap-editor-split.ap-view-preview{ grid-template-columns: 0 1fr; }
+
+/* Editor-Pane */
+.ap-editor-pane {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--admin-border, #dde1e7);
+  overflow: hidden;
+}
+.ap-editor-split.ap-view-edit    .ap-editor-pane  { border-right: none; }
+.ap-editor-split.ap-view-preview .ap-editor-pane  { display: none; }
+.ap-editor-split.ap-view-preview .ap-preview-pane { overflow: auto; }
+
+.ap-editor-pane textarea {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  padding: .75rem;
+  font-family: var(--font-mono, 'Fira Mono', monospace);
+  font-size: .9rem;
+  line-height: 1.6;
+  resize: none;
+  border: none;
+  outline: none;
+  background: var(--admin-code-bg, #1e1e2e);
+  color: var(--admin-code-fg, #cdd6f4);
+  box-sizing: border-box;
+}
+
+/* Preview-Pane */
+.ap-preview-pane {
+  overflow: auto;
+  background: var(--admin-card, #fff);
+}
+.ap-editor-split.ap-view-edit .ap-preview-pane { display: none; }
+
+.ap-preview-label {
+  padding: .3rem .75rem;
+  font-size: .75rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--admin-muted, #718096);
+  background: var(--admin-table-header, #f0f4f8);
+  border-bottom: 1px solid var(--admin-border, #dde1e7);
+}
+.ap-preview-content {
+  padding: 1rem 1.25rem;
+}
+
+/* Prose-Stile für die Preview */
+.ap-prose h1,.ap-prose h2,.ap-prose h3 { margin: 1em 0 .4em; font-weight: 700; }
+.ap-prose h2 { font-size: 1.3em; }
+.ap-prose h3 { font-size: 1.1em; }
+.ap-prose p  { margin: .6em 0; line-height: 1.65; }
+.ap-prose ul,.ap-prose ol { margin: .5em 0 .5em 1.4em; }
+.ap-prose li { margin: .2em 0; }
+.ap-prose blockquote {
+  border-left: 3px solid var(--admin-primary, #4f46e5);
+  margin: .8em 0; padding: .4em .8em;
+  color: var(--admin-muted, #718096);
+  background: var(--admin-table-header, #f0f4f8);
+  border-radius: 0 .25rem .25rem 0;
+}
+.ap-prose code {
+  font-family: var(--font-mono, monospace);
+  font-size: .9em;
+  background: var(--admin-code-bg-inline, #e2e8f0);
+  padding: .1em .35em;
+  border-radius: .2em;
+}
+.ap-prose pre {
+  background: var(--admin-code-bg, #1e1e2e);
+  color: var(--admin-code-fg, #cdd6f4);
+  padding: .8em 1em;
+  border-radius: .35em;
+  overflow-x: auto;
+  font-size: .88em;
+}
+.ap-prose pre code { background: none; padding: 0; }
+.ap-prose a { color: var(--admin-primary, #4f46e5); }
+.ap-prose img { max-width: 100%; border-radius: .25rem; }
+.ap-prose hr { border: none; border-top: 1px solid var(--admin-border, #dde1e7); margin: 1em 0; }
+.ap-prose table { border-collapse: collapse; width: 100%; margin: .8em 0; font-size: .9em; }
+.ap-prose th,.ap-prose td { border: 1px solid var(--admin-border, #dde1e7); padding: .35em .6em; }
+.ap-prose th { background: var(--admin-table-header, #f0f4f8); font-weight: 600; }
+</style>
+{% endblock %}
+
 {% block admin_content %}
 <h2>{{ 'Beitrag bearbeiten' if post else 'Neuer Beitrag' }}</h2>
 
@@ -15,10 +167,20 @@
     <input type="text" name="slug" value="{{ post.slug if post else '' }}"
            placeholder="Wird aus Titel erzeugt" pattern="[a-z0-9\-]+">
   </label>
-  <label>
-    Inhalt (Markdown)
-    <textarea name="body" rows="20" class="code-editor">{{ post.body if post else '' }}</textarea>
-  </label>
+
+  {# ── Markdown-Editor mit Split-View ──────────────────────── #}
+  <div class="form-group">
+    <label style="margin-bottom:.35rem;display:block;">Inhalt (Markdown)</label>
+    <div id="ap-editor-wrap">
+      {# Toolbar + Split-View werden durch editor.js eingebaut #}
+      <textarea name="body" rows="20" class="code-editor" style="width:100%">{{ post.body_md if post else '' }}</textarea>
+    </div>
+    <small style="color:var(--admin-muted);margin-top:.3rem;display:block;">
+      Markdown · GFM-Syntax ·
+      <a href="https://commonmark.org/help/" target="_blank" rel="noopener noreferrer">Syntax-Referenz</a>
+    </small>
+  </div>
+
   <label>
     Tags (kommagetrennt)
     <input type="text" name="tags"
@@ -27,14 +189,29 @@
   <label>
     Status
     <select name="status">
-      {% for s in ['draft', 'published', 'unlisted', 'deleted'] %}
+      {% for s in ['draft', 'scheduled', 'published', 'unlisted', 'deleted'] %}
       <option value="{{ s }}"
         {% if post and post.status.value == s %}selected{% endif %}>
         {{ s | capitalize }}
+        {% if s == 'scheduled' %} – automatisch veröffentlichen am…{% endif %}
       </option>
       {% endfor %}
     </select>
   </label>
+  {% if post and post.status.value == 'scheduled' %}
+  <label>
+    Geplante Veröffentlichung (UTC)
+    <input type="datetime-local" name="published_at"
+           value="{{ post.published_at.strftime('%Y-%m-%dT%H:%M') if post.published_at else '' }}">
+  </label>
+  {% else %}
+  <label>
+    Geplante Veröffentlichung (UTC)
+    <input type="datetime-local" name="published_at"
+           value="{{ post.published_at.strftime('%Y-%m-%dT%H:%M') if post and post.published_at else '' }}"
+           placeholder="Optional – für Scheduled-Publishing">
+  </label>
+  {% endif %}
   <label>
     Sichtbarkeit
     <select name="visibility">
@@ -81,6 +258,12 @@
     </select>
     <small style="color:var(--admin-muted)">Leer = globaler Standard aus <em>Admin → Captcha</em></small>
   </label>
+  {% if post %}
+  <label>
+    Änderungsnotiz
+    <input type="text" name="change_summary" placeholder="z.B. Tippfehler behoben, Abschnitt erweitert…">
+  </label>
+  {% endif %}
   <div class="form-actions">
     <button type="submit" name="action" value="save" class="btn btn-primary">Speichern</button>
     {% if post %}
@@ -92,3 +275,8 @@
   </div>
 </form>
 {% endblock %}
+
+{% block scripts %}{{ super() }}
+<script src="{{ url_for('static', filename='js/editor.js') }}"></script>
+{% endblock %}
+

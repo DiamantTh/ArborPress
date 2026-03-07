@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 from arborpress.auth.stepup import assert_stepup, is_stepup_active
 from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
+from arborpress.core.markdown import render_md
 from arborpress.logging.config import get_audit_logger
 
 log = logging.getLogger("arborpress.web.admin")
@@ -115,6 +116,16 @@ async def post_new_save():
     visibility_val = form.get("visibility", "public")
     captcha_type = (form.get("captcha_type") or "").strip() or None
 
+    # Geplante Veröffentlichung (datetime-local ohne Zeitzone → UTC)
+    from datetime import datetime as _dt
+    _pub_raw = (form.get("published_at") or "").strip()
+    published_at = None
+    if _pub_raw:
+        try:
+            published_at = _dt.fromisoformat(_pub_raw)
+        except ValueError:
+            pass
+
     if not title:
         abort(400)
 
@@ -133,11 +144,12 @@ async def post_new_save():
             title=title,
             slug=slug,
             body_md=body_md,
-            body_html=body_md,    # TODO: Markdown → HTML
+            body_html=render_md(body_md),
             status=PostStatus(status_val) if status_val in PostStatus.__members__ else PostStatus.DRAFT,
             visibility=PostVisibility(visibility_val) if visibility_val in PostVisibility.__members__ else PostVisibility.PUBLIC,
             captcha_type=captcha_type,
             reading_time_min=Post.calc_reading_time(body_md),
+            published_at=published_at,
         )
         db.add(post)
         await db.flush()   # ID vergeben, aber Transaktion offen halten
@@ -206,6 +218,15 @@ async def post_edit_save(slug: str):
         captcha_type   = (form.get("captcha_type") or "").strip() or None
         change_summary = (form.get("change_summary") or "").strip() or None
 
+        # Geplante Veröffentlichung
+        from datetime import datetime as _dt
+        _pub_raw = (form.get("published_at") or "").strip()
+        if _pub_raw:
+            try:
+                post.published_at = _dt.fromisoformat(_pub_raw)
+            except ValueError:
+                pass
+
         # Snapshot vor Änderung für Diff
         old_body_md = post.body_md or ""
         old_title   = post.title
@@ -216,7 +237,7 @@ async def post_edit_save(slug: str):
             post.slug_old = slug
             post.slug = new_slug
         post.body_md          = body_md
-        post.body_html        = body_md  # TODO: Markdown → HTML
+        post.body_html        = render_md(body_md)
         post.captcha_type     = captcha_type
         post.reading_time_min = Post.calc_reading_time(body_md)
         try:
