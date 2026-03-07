@@ -15,6 +15,7 @@ from arborpress.models.content import (  # noqa: F401
     Comment,
     CommentStatus,
     Media,
+    OEmbedCache,
     Page,
     PageType,
     Post,

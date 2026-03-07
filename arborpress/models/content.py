@@ -297,8 +297,32 @@ class Media(Base):
     alt_text: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     width: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Externes Original-URL (gesetzt wenn das Bild automatisch heruntergeladen wurde)
+    original_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True, index=True)
 
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class OEmbedCache(Base):
+    """Serverseitig gecachtes oEmbed-HTML (kein Besucher-Request zu Drittanbietern).
+
+    Wird beim Post-Speichern befüllt wenn der Autor einen
+    ``{{embed:url}}``-Shortcode verwendet.
+    """
+
+    __tablename__ = "oembed_cache"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    # Original Post-URL (eindeutiger Schlüssel)
+    url: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
+    provider_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    # Bereinigtes HTML ohne <script>-Tags
+    html: Mapped[str] = mapped_column(Text, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Ablaufdatum – nach Ablauf beim nächsten Render neu geholt
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 # ---------------------------------------------------------------------------

@@ -9,8 +9,8 @@ Aktivierte Plugins:
 
 Oeffentliche API
   render_md(text)         – sync, Markdown → sanitisiertes HTML.
-                            Externe <img>-URLs → /proxy/img (wenn proxy_secret gesetzt).
-  render_md_async(text)   – async, wie render_md + oEmbed-Shortcodes aufloesen.
+  render_md_async(text, db=None) – async, render_md + oEmbed-Shortcodes aufloesen
+                               + externe Bilder lokal speichern (wenn db übergeben).
 
 Embed-Shortcode im Markdown::
 
@@ -24,11 +24,8 @@ Embed-Shortcode im Markdown::
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
 import logging
 import re
-from urllib.parse import urlencode
 
 import bleach
 from markdown_it import MarkdownIt
@@ -131,27 +128,16 @@ def render_md(text: str) -> str:
     # Externe Links sichern: rel="noopener noreferrer"
     clean_html = _add_link_rel(clean_html)
 
-    # Externe Bilder durch lokalen Proxy routen
-    try:
-        from arborpress.core.config import get_settings
-        _cfg = get_settings()
-        clean_html = _rewrite_external_imgs(
-            clean_html,
-            _cfg.web.base_url,
-            _cfg.web.proxy_secret.get_secret_value(),
-        )
-    except Exception:
-        pass  # Proxy-Rewrite ist optional – nie den Render-Prozess abbrechen
-
     return clean_html
 
 
-async def render_md_async(text: str) -> str:
+async def render_md_async(text: str, db=None) -> str:
     """Async-Variante von render_md mit oEmbed-Shortcode-Aufloesung.
 
     Ablauf:
       1. ``{{embed:url}}``-Muster aus Text extrahieren, Platzhalter einfuegen.
       2. Synchrones render_md() auf den verbleibenden Text anwenden.
+      2b. Externe <img>-URLs herunterladen und lokal speichern (wenn db übergeben).
       3. Alle Platzhalter durch gecachtes oEmbed-HTML ersetzen.
 
     Der Schritt 1+3 stellt sicher, dass oEmbed-HTML nicht durch markdown-it
@@ -159,6 +145,8 @@ async def render_md_async(text: str) -> str:
 
     Args:
         text: Markdown-Text, kann ``{{embed:url}}``-Shortcodes enthalten.
+        db:   Aktive AsyncSession für Bild-Download + oEmbed-DB-Cache.
+              ``None`` = Preview-Modus (kein Download, Embeds als Fallback-Link).
 
     Returns:
         Vollstaendig gerendertes, sanitisiertes HTML.
@@ -182,21 +170,34 @@ async def render_md_async(text: str) -> str:
     # Schritt 2: Normales Markdown-Rendering
     rendered = render_md(text_with_placeholders)
 
+    # Schritt 2b: Externe Bilder herunterladen (Mastodon-Ansatz)
+    if db is not None:
+        rendered = await _fetch_and_replace_imgs(rendered, db)
+
     if not embed_urls:
         return rendered  # Kein Embed → fertig
 
+    if db is None:
+        # Preview-Modus: Platzhalter durch Fallback-Link ersetzen
+        for key, url in placeholder_map.items():
+            fallback = (
+                f'<p class="ap-embed-fallback">'
+                f'<a href="{url}" rel="noopener noreferrer" target="_blank">{url}</a>'
+                f'</p>'
+            )
+            rendered = rendered.replace(f"<p>{key}</p>", fallback)
+            rendered = rendered.replace(key, fallback)
+        return rendered
+
     # Schritt 3: Embeds holen (parallel) und einsetzen
     try:
-        from arborpress.core.config import get_settings
         from arborpress.core.oembed import get_embed_html
-        _cfg = get_settings()
-        cache_dir = _cfg.web.oembed_cache_dir
     except Exception:
         return rendered  # Fallback: Platzhalter im Text belassen
 
     # Alle Fetches parallel starten
     fetch_tasks = [
-        get_embed_html(url, cache_dir)
+        get_embed_html(url, db)
         for url in embed_urls
     ]
     results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
@@ -238,31 +239,41 @@ def _add_link_rel(html: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Externer Bild-Proxy: automatisches Umschreiben von <img src="https://...">
+# Externe Bilder herunterladen (Mastodon-Ansatz)
 # ---------------------------------------------------------------------------
 
-_IMG_RE = re.compile(r'<img\b([^>]*)\bsrc="(https?://[^"]*)"([^>]*)>', re.IGNORECASE)
+_EXT_IMG_RE = re.compile(
+    r'<img\b([^>]*)\bsrc="(https?://[^"]*)"([^>]*)>', re.IGNORECASE
+)
 
 
-def _rewrite_external_imgs(html: str, base_url: str, secret: str) -> str:
-    """Schreibt externe img-src-Attribute auf /proxy/img um.
+async def _fetch_and_replace_imgs(html: str, db) -> str:
+    """Lädt externe <img>-URLs herunter und ersetzt src durch lokale URL.
 
-    Signiert jeden URL mit HMAC-SHA256 (gleiche Logik wie image_proxy.py).
-    Wenn kein ``secret`` gesetzt ist, wird nichts veraendert.
+    Verwendet ``download_and_store`` aus ``image_fetch`` – gleiche Logik
+    wie Mastodon: einmaliger Server-Download, Besucher bekommt nur die
+    lokale ``/media/``-URL.
     """
-    if not secret:
+    from arborpress.core.image_fetch import download_and_store
+
+    matches = list(_EXT_IMG_RE.finditer(html))
+    if not matches:
         return html
 
-    def _replace(m: re.Match) -> str:
+    for m in matches:
         before, ext_url, after = m.group(1), m.group(2), m.group(3)
-        sig = hmac.new(secret.encode(), ext_url.encode(), hashlib.sha256).hexdigest()
-        proxy = (
-            f"{base_url.rstrip('/')}/proxy/img?"
-            + urlencode({"url": ext_url, "sig": sig})
-        )
-        return f'<img{before}src="{proxy}"{after}>'
+        try:
+            local_url = await download_and_store(ext_url, db)
+        except Exception:
+            local_url = None
+        if local_url:
+            html = html.replace(
+                m.group(0),
+                f'<img{before}src="{local_url}"{after}>',
+                1,
+            )
 
-    return _IMG_RE.sub(_replace, html)
+    return html
 
 
 # ---------------------------------------------------------------------------

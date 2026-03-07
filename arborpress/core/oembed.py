@@ -1,25 +1,26 @@
-"""oEmbed-Proxy und Disk-Cache für externe Post-Einbettungen.
+"""oEmbed-Fetch mit Datenbank-Cache für externe Post-Einbettungen.
 
-Architektur
------------
+Architektur (Mastodon-Ansatz)
+-----------------------------
 Der Autor schreibt im Markdown::
 
     {{embed:https://twitter.com/user/status/123}}
 
-``render_md_async()`` erkennt das Muster, fragt ``get_embed_html()`` ab:
+``render_md_async()`` erkennt das Muster und fragt ``get_embed_html()`` ab:
 
-1. Disk-Cache vorhanden und nicht abgelaufen → sofort zurückgeben.
+1. DB-Cache vorhanden und nicht abgelaufen → sofort zurückgeben (kein Netz).
 2. Cache-Miss → httpx-Request an oEmbed-Endpoint des Anbieters.
-3. ``<script>``-Tags werden aus der Antwort **entfernt**.
-4. Sanitisiertes HTML auf Disk cachen (Standard-TTL: 24 h).
+3. ``<script>``, ``<noscript>`` und ``<iframe>``-Tags werden **entfernt**.
+4. Sanitisiertes HTML in der DB persistieren (Standard-TTL: 24 h).
 
 DSGVO-Konformität
 -----------------
 Kein Browser-Request landet bei Twitter / Meta / Google.
-Der ArborPress-Server holt die Embed-HTML einmalig serverseitig.
-Das entfernte ``<script src="platform.twitter.com/widgets.js">`` bedeutet:
-Der Besucher sieht ein statisches ``<blockquote>``-Element (Text + ggf. Bild)
-ohne interaktives Widget – kein Tracking, kein First-/Third-Party-Cookie.
+Der ArborPress-Server holt das Embed-HTML einmalig serverseitig.
+Ohne ``<script src="platform.twitter.com/...">`` sieht der Besucher
+ein statisches ``<blockquote>``-Element – kein Tracking, kein Cookie.
+Facebook-/Instagram-``<iframe>``-Embeds werden vollständig entfernt;
+der Fallback in ``render_md_async`` liefert einen Textlink.
 
 Unterstützte Anbieter
 ---------------------
@@ -35,19 +36,19 @@ Eigene Provider via ``register_provider()`` hinzufügbar.
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import json
 import logging
-import os
 import re
-import time
-from datetime import timedelta
-from pathlib import Path
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 from urllib.parse import urlencode, urlparse
 
 import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from arborpress.models.content import OEmbedCache
 
 log = logging.getLogger("arborpress.oembed")
 
@@ -59,7 +60,7 @@ class OEmbedProvider(NamedTuple):
     name: str
     # Regex auf die Post-URL (nicht den oEmbed-Endpoint)
     url_pattern: re.Pattern
-    # Format-String; {url} wird durch die encoded URL ersetzt
+    # Basis-URL des oEmbed-Endpoints
     endpoint: str
     # Zusätzliche Query-Params (z.B. omit_script=1 bei Twitter)
     extra_params: dict[str, str] = {}
@@ -117,7 +118,6 @@ def _match_provider(url: str) -> OEmbedProvider | None:
             return p
 
     # Mastodon: generischer Fallback für beliebige Instanzen
-    # (Mastodon-Instanzen servieren /api/oembed?url=...)
     parsed = urlparse(url)
     if parsed.path.startswith("/@") or "/objects/" in parsed.path:
         return OEmbedProvider(
@@ -129,91 +129,62 @@ def _match_provider(url: str) -> OEmbedProvider | None:
     return None
 
 
-# ─── Cache ────────────────────────────────────────────────────────────────────
+# ─── HTML-Bereinigung ─────────────────────────────────────────────────────────
+
+_SCRIPT_RE = re.compile(
+    r"<(script|noscript|iframe)[^>]*>.*?</\1\s*>", re.DOTALL | re.IGNORECASE
+)
+
+
+def _strip_scripts(html: str) -> str:
+    """Entfernt alle <script>-, <noscript>- und <iframe>-Tags (inkl. Inhalt)."""
+    return _SCRIPT_RE.sub("", html).strip()
+
+
+# ─── Kern-Logik (DB-Cache) ────────────────────────────────────────────────────
 
 _DEFAULT_TTL: timedelta = timedelta(hours=24)
 _TIMEOUT: float = 8.0
 
 
-def _cache_paths(cache_dir: Path, url: str) -> tuple[Path, Path]:
-    """Gibt (html_path, meta_path) für *url* zurück."""
-    digest = hashlib.sha256(url.encode()).hexdigest()
-    base = cache_dir / "oembed" / digest[:2] / digest
-    return base.with_suffix(".html"), base.with_suffix(".meta.json")
-
-
-def _cache_valid(meta_path: Path, ttl: timedelta = _DEFAULT_TTL) -> bool:
-    """True wenn die Cache-Datei existiert und nicht abgelaufen ist."""
-    if not meta_path.exists():
-        return False
-    try:
-        meta = json.loads(meta_path.read_text())
-        return time.time() < meta.get("expires_at", 0)
-    except (json.JSONDecodeError, OSError):
-        return False
-
-
-def _write_cache(html_path: Path, meta_path: Path, html: str, ttl: timedelta) -> None:
-    """Schreibt HTML + Meta-JSON atomar (sync, für asyncio.to_thread)."""
-    html_path.parent.mkdir(parents=True, exist_ok=True)
-
-    tmp_html = html_path.with_suffix(".tmp")
-    tmp_html.write_text(html, encoding="utf-8")
-    os.replace(tmp_html, html_path)
-
-    meta = {"expires_at": time.time() + ttl.total_seconds()}
-    tmp_meta = meta_path.with_suffix(".tmp")
-    tmp_meta.write_text(json.dumps(meta), encoding="utf-8")
-    os.replace(tmp_meta, meta_path)
-
-
-# ─── HTML-Bereinigung ─────────────────────────────────────────────────────────
-
-_SCRIPT_RE = re.compile(r"<script[^>]*>.*?</script\s*>", re.DOTALL | re.IGNORECASE)
-_NOSCRIPT_RE = re.compile(r"<noscript[^>]*>.*?</noscript\s*>", re.DOTALL | re.IGNORECASE)
-
-
-def _strip_scripts(html: str) -> str:
-    """Entfernt alle <script>- und <noscript>-Tags aus dem HTML-String."""
-    html = _SCRIPT_RE.sub("", html)
-    html = _NOSCRIPT_RE.sub("", html)
-    return html.strip()
-
-
-# ─── Kern-Logik ───────────────────────────────────────────────────────────────
-
-
 async def get_embed_html(
     url: str,
-    cache_dir: Path,
+    db: AsyncSession,
     ttl: timedelta = _DEFAULT_TTL,
 ) -> str | None:
     """Gibt sanitisiertes oEmbed-HTML für *url* zurück.
 
+    Der Abruf erfolgt einmalig serverseitig; das Ergebnis wird in der DB
+    gespeichert (``oembed_cache``-Tabelle).  Kein Browser-Request an Dritte.
+
     Args:
-        url:       Öffentlich zugänglicher Post-URL (Twitter, YouTube, …).
-        cache_dir: Verzeichnis für den Disk-Cache.
-        ttl:       Cache-Lebensdauer (Standard: 24 h).
+        url: Öffentliche Post-URL (Twitter, YouTube, …).
+        db:  Aktive AsyncSession – wird für Lesen **und** Schreiben genutzt.
+             Der Aufrufer muss committen (oder autocommit verwenden).
+        ttl: Cache-Lebensdauer (Standard: 24 h).
 
     Returns:
         HTML-Fragment als String, oder ``None`` wenn kein Anbieter passt
         oder der Fetch fehlschlägt.
     """
+    now = datetime.now(timezone.utc)
+
+    # ── DB-Cache-Lookup ────────────────────────────────────────────────────
+    stmt = select(OEmbedCache).where(OEmbedCache.url == url)
+    result = await db.execute(stmt)
+    cached: OEmbedCache | None = result.scalar_one_or_none()
+
+    if cached is not None and cached.expires_at.replace(tzinfo=timezone.utc) > now:
+        log.debug("oEmbed DB-Cache-Hit: %s", url)
+        return cached.html
+
+    # ── Anbieter bestimmen ────────────────────────────────────────────────
     provider = _match_provider(url)
     if provider is None:
         log.debug("oEmbed: kein Anbieter für %s", url)
         return None
 
-    html_path, meta_path = _cache_paths(cache_dir, url)
-
-    # Cache-Hit
-    if _cache_valid(meta_path, ttl):
-        try:
-            return html_path.read_text(encoding="utf-8")
-        except OSError:
-            pass  # Datei fehlt → neu holen
-
-    # Cache-Miss → Fetch
+    # ── HTTP-Fetch ────────────────────────────────────────────────────────
     params = {**provider.extra_params, "url": url}
     endpoint_url = f"{provider.endpoint}?{urlencode(params)}"
 
@@ -236,7 +207,23 @@ async def get_embed_html(
         return None
 
     clean_html = _strip_scripts(raw_html)
-    log.info("oEmbed gecacht: %s (%s)", url, provider.name)
+    expires = now + ttl
 
-    await asyncio.to_thread(_write_cache, html_path, meta_path, clean_html, ttl)
+    # ── DB upsert ─────────────────────────────────────────────────────────
+    if cached is not None:
+        cached.html = clean_html
+        cached.provider_name = provider.name
+        cached.fetched_at = now
+        cached.expires_at = expires
+    else:
+        db.add(OEmbedCache(
+            id=str(uuid.uuid4()),
+            url=url,
+            provider_name=provider.name,
+            html=clean_html,
+            fetched_at=now,
+            expires_at=expires,
+        ))
+
+    log.info("oEmbed gespeichert: %s (%s)", url, provider.name)
     return clean_html

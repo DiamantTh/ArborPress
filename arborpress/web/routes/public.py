@@ -421,52 +421,6 @@ async def media_serve(yyyy: int, mm: int, filename: str):
 
 
 # ---------------------------------------------------------------------------
-# Externer Bild-Proxy (§DSGVO – kein direkter Drittanbieter-Kontakt des Browsers)
-# ---------------------------------------------------------------------------
-
-
-@public_bp.get("/proxy/img")
-async def proxy_img():
-    """Proxiert und cached externe Bilder.
-
-    Parameter:
-      ``url``  – Externes Bild-URL (URL-encoded)
-      ``sig``  – HMAC-SHA256-Signatur (über den URL-Wert)
-
-    Gibt 501 zurück wenn ``proxy_secret`` nicht konfiguriert ist.
-    Gibt 403 bei ungültiger Signatur.
-    """
-    from quart import Response as _Resp
-    from arborpress.core.image_proxy import handle_proxy_request
-
-    cfg = get_settings()
-    secret: str = cfg.web.proxy_secret.get_secret_value()
-    if not secret:
-        abort(501, "Bild-Proxy nicht konfiguriert (proxy_secret fehlt)")
-
-    url = request.args.get("url", "").strip()
-    sig = request.args.get("sig", "").strip()
-    if not url or not sig:
-        abort(400, "Parameter 'url' und 'sig' erforderlich")
-
-    result = await handle_proxy_request(
-        url=url,
-        sig=sig,
-        secret=secret,
-        cache_dir=cfg.web.proxy_cache_dir,
-        max_size=cfg.web.proxy_max_size,
-    )
-    if result is None:
-        abort(403)
-
-    data, content_type = result
-    resp = _Resp(data, mimetype=content_type)
-    resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"  # 30 Tage
-    resp.headers["X-Content-Type-Options"] = "nosniff"
-    return resp
-
-
-# ---------------------------------------------------------------------------
 # Nutzerprofil /@{handle} (§4 PUBLIC-Konten, §6)
 # ---------------------------------------------------------------------------
 
