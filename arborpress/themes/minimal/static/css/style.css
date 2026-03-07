@@ -29,6 +29,7 @@
 
   --max-w:   700px;
   --gutter:  1.25rem;
+  --bg-pattern: none;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }

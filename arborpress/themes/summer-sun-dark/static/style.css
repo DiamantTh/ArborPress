@@ -10,6 +10,7 @@
   --color-accent:       #f5b522;
   --color-accent-hover: #fcca40;
   --font-sans: Verdana, "Trebuchet MS", "Noto Sans", "Liberation Sans", Arial, sans-serif;
+  --bg-pattern: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='42' height='42'><polygon points='21,1 41,21 21,41 1,21' fill='none' stroke='%23f5b522' stroke-width='0.9' stroke-opacity='.06'/></svg>");
 }
 
 /* ── OLED: absolutes Schwarz für AMOLED/OLED-Displays (html[data-oled]) ── */
@@ -20,8 +21,7 @@ html[data-oled] {
   --color-border: #201600;
 }
 
-/* große luftige Raute – Sonnenlicht-Reflexion auf warmem Dunkelhintergrund */
 body {
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='42' height='42'><polygon points='21,1 41,21 21,41 1,21' fill='none' stroke='%23f5b522' stroke-width='0.9' stroke-opacity='.06'/></svg>");
+  background-image: var(--bg-pattern);
 }
 html[data-oled] body { background-image: none; }

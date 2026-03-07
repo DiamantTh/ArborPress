@@ -29,6 +29,7 @@
 
   --max-w:   700px;
   --gutter:  1.25rem;
+  --bg-pattern: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><polygon points='14,1 27,14 14,27 1,14' fill='none' stroke='%23c44444' stroke-width='0.8' stroke-opacity='.07'/></svg>");
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -38,8 +39,7 @@ body {
   font-size: var(--font-size-base);
   line-height: var(--line-height);
   background: var(--color-bg);
-  /* Rauten-Gitter (Rhombus) – klassisch-elegante Zeitungstextur */
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><polygon points='14,1 27,14 14,27 1,14' fill='none' stroke='%23c44444' stroke-width='0.8' stroke-opacity='.07'/></svg>");
+  background-image: var(--bg-pattern);
   color: var(--color-text);
   min-height: 100vh;
   display: flex;

@@ -10,6 +10,7 @@
   --color-accent:       #22b8d6;
   --color-accent-hover: #3dd0ee;
   --font-sans: Verdana, "Trebuchet MS", "Noto Sans", "Liberation Sans", Arial, sans-serif;
+  --bg-pattern: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='24'><polyline points='1,1 16,12 1,23' fill='none' stroke='%2322b8d6' stroke-width='0.9' stroke-opacity='.07' stroke-linejoin='round'/></svg>");
 }
 
 /* ── OLED: absolutes Schwarz für AMOLED/OLED-Displays (html[data-oled]) ── */
@@ -20,8 +21,7 @@ html[data-oled] {
   --color-border: #0a2040;
 }
 
-/* Chevron / Pfeil-Polygon – wellenartige Horizontalstruktur */
 body {
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='24'><polyline points='1,1 16,12 1,23' fill='none' stroke='%2322b8d6' stroke-width='0.9' stroke-opacity='.07' stroke-linejoin='round'/></svg>");
+  background-image: var(--bg-pattern);
 }
 html[data-oled] body { background-image: none; }

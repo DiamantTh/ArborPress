@@ -10,6 +10,7 @@
   --color-accent: #60a5fa;
   --color-accent-hover: #93c5fd;
   --font-sans: Verdana, "Trebuchet MS", "Noto Sans", "Liberation Sans", Arial, sans-serif;
+  --bg-pattern: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='37'><polygon points='19,6 29,24 9,24' fill='none' stroke='%2360a5fa' stroke-width='0.8' stroke-opacity='.07'/><polygon points='19,30 29,12 9,12' fill='none' stroke='%2360a5fa' stroke-width='0.8' stroke-opacity='.07'/></svg>");
 }
 
 /* ── OLED: absolutes Schwarz für AMOLED/OLED-Displays (html[data-oled]) ── */
@@ -20,8 +21,7 @@ html[data-oled] {
   --color-border: #101e38;
 }
 
-/* Sechszackiger Stern (zwei überlagerte gleichseitige Dreiecke) – Sternenhimmel */
 body {
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='37'><polygon points='19,6 29,24 9,24' fill='none' stroke='%2360a5fa' stroke-width='0.8' stroke-opacity='.07'/><polygon points='19,30 29,12 9,12' fill='none' stroke='%2360a5fa' stroke-width='0.8' stroke-opacity='.07'/></svg>");
+  background-image: var(--bg-pattern);
 }
 html[data-oled] body { background-image: none; }

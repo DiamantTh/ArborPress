@@ -549,6 +549,7 @@ async def site_settings_page():
     _require_session()
     from arborpress.core.site_settings import get_section
     from arborpress.themes.manifest import get_theme_registry
+    from arborpress.themes.patterns import PATTERN_LABELS, PATTERN_ORDER
 
     sections: dict = {}
     async for db in get_db_session():
@@ -562,10 +563,17 @@ async def site_settings_page():
         for t in registry.all()
     ]
 
+    # Verfügbare Muster für Pattern-Picker
+    available_patterns = [
+        {"id": pid, "label": PATTERN_LABELS.get(pid, pid)}
+        for pid in PATTERN_ORDER
+    ]
+
     return await render_template(
         "admin/settings.html",
         sections=sections,
         available_themes=available_themes,
+        available_patterns=available_patterns,
         noindex=True,
     )
 
@@ -638,10 +646,13 @@ async def site_settings_save():
 
         elif section == "theme":
             current.update({
-                "active":          (form.get("active") or "default").strip(),
-                "auto_dark":       form.get("auto_dark") == "1",
-                "auto_dark_start": int(form.get("auto_dark_start") or 19),
-                "auto_dark_end":   int(form.get("auto_dark_end") or 6),
+                "active":              (form.get("active") or "default").strip(),
+                "auto_dark":           form.get("auto_dark") == "1",
+                "auto_dark_start":     int(form.get("auto_dark_start") or 19),
+                "auto_dark_end":       int(form.get("auto_dark_end") or 6),
+                "bg_pattern":          (form.get("bg_pattern") or "auto").strip(),
+                "bg_pattern_color":    (form.get("bg_pattern_color") or "").strip(),
+                "bg_pattern_opacity":  float(form.get("bg_pattern_opacity") or 0.07),
             })
 
         elif section == "demo":

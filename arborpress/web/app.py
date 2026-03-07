@@ -57,6 +57,18 @@ def create_app() -> Quart:
     app.jinja_env.globals["theme_auto_dark_start"] = int(_theme_settings.get("auto_dark_start", 19))
     app.jinja_env.globals["theme_auto_dark_end"] = int(_theme_settings.get("auto_dark_end", 6))
 
+    # Hintergrundmuster-Override: per-Request aus Cache gelesen
+    @app.context_processor
+    async def _pattern_context() -> dict:
+        from arborpress.core.site_settings import get_cached, get_defaults
+        from arborpress.themes.patterns import make_pattern_url
+        _ts = get_cached("theme") or get_defaults("theme")
+        _pid     = _ts.get("bg_pattern", "auto")
+        _color   = _ts.get("bg_pattern_color", "") or "#818cf8"
+        _opacity = float(_ts.get("bg_pattern_opacity", 0.07))
+        _css_val = make_pattern_url(_pid, _color, _opacity)
+        return {"theme_bg_pattern": _pid, "theme_bg_pattern_css": _css_val}
+
     # Demo-Modus – Per-Request-Context-Processor liest Cache dynamisch
     # (wirkt sofort nach Admin-Änderung ohne Neustart)
     @app.context_processor

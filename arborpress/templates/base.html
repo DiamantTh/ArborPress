@@ -22,6 +22,11 @@
   {% endif %}
   <link rel="alternate" type="application/rss+xml"  title="RSS-Feed"  href="{{ url_for('public.rss_feed') }}">
   <link rel="alternate" type="application/atom+xml" title="Atom-Feed" href="{{ url_for('public.atom_feed') }}">
+  {# Hintergrundmuster-Override: nur wenn explizit gewählt (nicht 'auto') #}
+  {% if theme_bg_pattern_css %}
+  <style>:root { --bg-pattern: {{ theme_bg_pattern_css | safe }}; }
+  html[data-oled] body { background-image: none !important; }</style>
+  {% endif %}
   {% block head %}{% endblock %}
   {% if demo_mode %}
   <style>

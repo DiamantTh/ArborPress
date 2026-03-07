@@ -10,6 +10,7 @@
   --color-accent:       #3daa6a;
   --color-accent-hover: #52c882;
   --font-sans: Verdana, "Trebuchet MS", "Noto Sans", "Liberation Sans", Arial, sans-serif;
+  --bg-pattern: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='24'><polygon points='14,1 27,23 1,23' fill='none' stroke='%233daa6a' stroke-width='0.9' stroke-opacity='.08'/></svg>");
 }
 
 /* ── OLED: absolutes Schwarz für AMOLED/OLED-Displays (html[data-oled]) ── */
@@ -20,8 +21,7 @@ html[data-oled] {
   --color-border: #162510;
 }
 
-/* gleichseitiges Dreieck (nach oben) – organisch, naturhaft */
 body {
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='24'><polygon points='14,1 27,23 1,23' fill='none' stroke='%233daa6a' stroke-width='0.9' stroke-opacity='.08'/></svg>");
+  background-image: var(--bg-pattern);
 }
 html[data-oled] body { background-image: none; }

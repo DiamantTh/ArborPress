@@ -10,6 +10,7 @@
   --color-accent:       #3dba8c;
   --color-accent-hover: #52d4a6;
   --font-sans: Verdana, "Trebuchet MS", "Noto Sans", "Liberation Sans", Arial, sans-serif;
+  --bg-pattern: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='34' height='30'><polygon points='17,1 30,8 30,22 17,29 4,22 4,8' fill='none' stroke='%233dba8c' stroke-width='0.9' stroke-opacity='.08'/></svg>");
 }
 
 /* ── OLED: absolutes Schwarz für AMOLED/OLED-Displays (html[data-oled]) ── */
@@ -20,8 +21,7 @@ html[data-oled] {
   --color-border: #102010;
 }
 
-/* Hexagon – organisch wie Waben / Pflanzenstruktur */
 body {
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='34' height='30'><polygon points='17,1 30,8 30,22 17,29 4,22 4,8' fill='none' stroke='%233dba8c' stroke-width='0.9' stroke-opacity='.08'/></svg>");
+  background-image: var(--bg-pattern);
 }
 html[data-oled] body { background-image: none; }

@@ -326,6 +326,40 @@
       <code>static/</code> und <code>templates/</code>.
     </p>
 
+    <h4 style="margin:1rem 0 .5rem">Hintergrundmuster</h4>
+    <p class="hint" style="margin-bottom:.75rem">
+      Wähle ein globales Polygon-Muster für den Seitenhintergrund.
+      <em>Theme-Standard</em> verwendet das jeweils im Theme definierte Muster.
+      Die Farbe und Deckkraft können unabhängig vom Theme gesetzt werden.
+    </p>
+
+    <div class="pattern-picker" style="display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem">
+      {% set cur_pattern = sections.theme.get('bg_pattern','auto') %}
+      {% for pat in available_patterns %}
+      <label class="pattern-opt" style="display:flex;flex-direction:column;align-items:center;gap:.25rem;cursor:pointer;font-size:.72rem;text-align:center;width:60px">
+        <input type="radio" name="bg_pattern" value="{{ pat.id }}"
+               {{ 'checked' if cur_pattern == pat.id }}
+               style="margin-bottom:.2rem">
+        <span style="font-size:.68rem;color:var(--color-text-muted)">{{ pat.label }}</span>
+      </label>
+      {% endfor %}
+    </div>
+
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem">
+      <label style="flex:1;min-width:120px">
+        Musterfarbe (Hex)
+        <input type="text" name="bg_pattern_color" maxlength="9"
+               placeholder="leer = Theme-Akzentfarbe"
+               value="{{ sections.theme.get('bg_pattern_color','') }}">
+        <span class="hint">z. B. <code>#818cf8</code></span>
+      </label>
+      <label style="flex:1;min-width:120px">
+        Deckkraft (0–1)
+        <input type="number" name="bg_pattern_opacity" min="0" max="1" step="0.01"
+               value="{{ sections.theme.get('bg_pattern_opacity', 0.07) }}">
+      </label>
+    </div>
+
     <h4 style="margin:1rem 0 .5rem">Automatischer Hell/Dunkel-Wechsel</h4>
     <p class="hint" style="margin-bottom:.75rem">
       Wenn aktiviert, wechselt das aktive Theme automatisch zum Dark-Companion zwischen

@@ -10,6 +10,7 @@
   --color-accent:       #e87d22;
   --color-accent-hover: #ff9440;
   --font-sans: Verdana, "Trebuchet MS", "Noto Sans", "Liberation Sans", Arial, sans-serif;
+  --bg-pattern: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='38'><polygon points='19,1 37,19 19,37 1,19' fill='none' stroke='%23e87d22' stroke-width='0.9' stroke-opacity='.07'/></svg>");
 }
 
 /* ── OLED: absolutes Schwarz für AMOLED/OLED-Displays (html[data-oled]) ── */
@@ -20,8 +21,7 @@ html[data-oled] {
   --color-border: #281800;
 }
 
-/* große Raute – warme Herbstenergie */
 body {
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='38'><polygon points='19,1 37,19 19,37 1,19' fill='none' stroke='%23e87d22' stroke-width='0.9' stroke-opacity='.07'/></svg>");
+  background-image: var(--bg-pattern);
 }
 html[data-oled] body { background-image: none; }

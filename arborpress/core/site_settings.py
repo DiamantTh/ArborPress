@@ -47,6 +47,10 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "auto_dark":       False,          # automatisch Dark-Companion ab/bis Uhrzeit aktivieren
         "auto_dark_start": 19,             # Stunde (0–23), ab der das Dark-Theme gilt
         "auto_dark_end":   6,              # Stunde (0–23), bis zu der das Dark-Theme gilt
+        # Hintergrundmuster-Override ("auto" = Theme-eigene --bg-pattern-Variable)
+        "bg_pattern":       "auto",        # none | auto | hexagon | diamond | triangle | ...
+        "bg_pattern_color": "",            # Hex-Farbe, leer = Theme-Akzentfarbe
+        "bg_pattern_opacity": 0.07,        # 0–1
     },
     "mail": {
         "backend":          "none",   # smtp | console | none

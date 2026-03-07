@@ -29,6 +29,7 @@
 
   --max-w:   720px;
   --gutter:  1.25rem;
+  --bg-pattern: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='36' height='30'><polygon points='18,1 31,8 31,22 18,29 5,22 5,8' fill='none' stroke='%23818cf8' stroke-width='0.9' stroke-opacity='.07'/></svg>");
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -38,8 +39,7 @@ body {
   font-size: var(--font-size-base);
   line-height: var(--line-height);
   background: var(--color-bg);
-  /* Hexagon-Gitter – 6-seitiges Polygon, passend zum Indigo-Akzent */
-  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='36' height='30'><polygon points='18,1 31,8 31,22 18,29 5,22 5,8' fill='none' stroke='%23818cf8' stroke-width='0.9' stroke-opacity='.07'/></svg>");
+  background-image: var(--bg-pattern);
   color: var(--color-text);
   min-height: 100vh;
   display: flex;
