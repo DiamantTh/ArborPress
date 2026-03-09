@@ -68,6 +68,8 @@ class User(Base):
     require_uv: Mapped[bool] = mapped_column(Boolean, default=False)
     require_stepup: Mapped[bool] = mapped_column(Boolean, default=False)
     sso_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # §5 Federation – opt-out pro Account (auch wenn Instanz federiert)
+    federation_opt_out: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Öffentliches Profil (§4 PUBLIC-Konten, optional)
     bio: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -90,6 +92,25 @@ class User(Base):
     # OpenPGP §13 – mehrere Schlüssel pro Nutzer möglich
     pgp_keys: Mapped[list["UserPGPKey"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
+    )
+    # §5 Federation – Schlüsselpaar für HTTP-Signatures, max. 1 pro Nutzer
+    actor_keypair: Mapped[Optional["ActorKeypair"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", uselist=False
+    )
+    # §5 Federation – Follower/Following-Beziehungen
+    followers: Mapped[list["Follower"]] = relationship(
+        "Follower",
+        primaryjoin="and_(Follower.local_user_id == User.id, Follower.direction == 'inbound')",
+        back_populates="local_user",
+        cascade="all, delete-orphan",
+        overlaps="following",
+    )
+    following: Mapped[list["Follower"]] = relationship(
+        "Follower",
+        primaryjoin="and_(Follower.local_user_id == User.id, Follower.direction == 'outbound')",
+        back_populates="local_user",
+        cascade="all, delete-orphan",
+        overlaps="followers",
     )
 
     @property
@@ -166,6 +187,9 @@ class MFADevice(Base):
 
     user: Mapped["User"] = relationship(back_populates="mfa_devices")
 
+    # Jedes Label muss pro Nutzer eindeutig sein
+    __table_args__ = (UniqueConstraint("user_id", "label", name="uq_user_mfa_label"),)
+
 
 class BackupCode(Base):
     """Einmaliger Backup-Code §2 / §3."""
@@ -232,4 +256,148 @@ class UserPGPKey(Base):
     __table_args__ = (
         # Pro Nutzer darf ein Fingerprint nur einmal vorkommen
         UniqueConstraint("user_id", "fingerprint", name="uq_user_pgp_fingerprint"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# §5 Federation – Actor-Schlüsselpaar (HTTP-Signatures)
+# ---------------------------------------------------------------------------
+
+
+class ActorKeypair(Base):
+    """Ed25519-Schlüsselpaar für ActivityPub HTTP-Signatures (§5).
+
+    Default-Algorithmus: Ed25519 (RFC 8037, DataIntegrity / Cavage-httpsig).
+    Mastodon ≥ 4.x, Misskey, Pleroma, Pixelfed unterstützen Ed25519 vollständig.
+    RSA-SHA256 bleibt als Legacy-Option wählbar (--algo rsa-sha256) für ältere
+    Software, die noch kein Ed25519 akzeptiert.
+
+    Private Keys werden verschlüsselt gespeichert (Fernet, KEK aus auth.actor_key_enc_key).
+    Kein eigenes Ablaufdatum – Rotation: arborpress federation keygen --force
+    Export/Backup: arborpress federation key-export <user>
+    """
+
+    __tablename__ = "actor_keypairs"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    # Schlüssel-ID-URL (z. B. https://example.com/ap/actor/alice#main-key)
+    key_id_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    # PEM-kodierter öffentlicher Schlüssel (RSA ≥ 2048 oder Ed25519)
+    public_key_pem: Mapped[str] = mapped_column(Text, nullable=False)
+    # Verschlüsselter privater Schlüssel (Bytes, Fernet-verschlüsselt)
+    private_key_enc: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    # Algorithmus: "ed25519" (Standard, breit unterstützt) oder "rsa-sha256" (Legacy)
+    algorithm: Mapped[str] = mapped_column(String(32), nullable=False, default="ed25519")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    rotated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="actor_keypair")
+
+
+class InstanceKeypair(Base):
+    """Ed25519-Schlüsselpaar des Blog-Actors (§5 – Instanzebene).
+
+    Die ArborPress-Instanz selbst ist der primäre ActivityPub-Actor
+    (vergleichbar mit dem WordPress-ActivityPub-Plugin). Dieser Schlüssel
+    steht unter `https://<base>/ap/actor#main-key`.
+
+    Singleton-Tabelle (id = 1 immer). Per-Account-Schlüssel →  ActorKeypair.
+    Verschlüsselung: Fernet, KEK aus auth.actor_key_enc_key.
+    Rotation: arborpress federation keygen --force
+    Backup:   arborpress federation key-export
+    """
+
+    __tablename__ = "instance_keypair"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    # Schlüssel-ID-URL  z. B. https://example.com/ap/actor#main-key
+    key_id_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    # PEM-kodierter öffentlicher Schlüssel
+    public_key_pem: Mapped[str] = mapped_column(Text, nullable=False)
+    # Fernet-verschlüsselter privater Schlüssel
+    private_key_enc: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    # "ed25519" (Standard) oder "rsa-sha256" (Legacy)
+    algorithm: Mapped[str] = mapped_column(String(32), nullable=False, default="ed25519")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    rotated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# §5 Federation – Follower / Following
+# ---------------------------------------------------------------------------
+
+
+class FollowerDirection(str, enum.Enum):
+    INBOUND  = "inbound"   # Jemand folgt diesem Account (Follower)
+    OUTBOUND = "outbound"  # Dieser Account folgt jemandem (Following)
+
+
+class FollowerState(str, enum.Enum):
+    PENDING  = "pending"   # Follow-Anfrage noch nicht bestätigt
+    ACCEPTED = "accepted"  # Follow aktiv
+    REJECTED = "rejected"  # Abgelehnt / blockiert
+    UNDONE   = "undone"    # Unfollow – historischer Eintrag behalten
+
+
+class Follower(Base):
+    """ActivityPub Follow-Beziehung (§5).
+
+    Speichert sowohl eingehende (jemand folgt uns) als auch
+    ausgehende (wir folgen jemandem) Follow-Beziehungen.
+
+    Für inbound:  local_user_id = der verfolgte lokale Account
+                  remote_actor_uri = URI des Followers
+    Für outbound: local_user_id = der folgende lokale Account
+                  remote_actor_uri = URI des gefolgten Accounts
+    """
+
+    __tablename__ = "ap_followers"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    local_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    # Vollständige URI des Remote-Actors (z. B. https://mastodon.social/users/bob)
+    remote_actor_uri: Mapped[str] = mapped_column(String(2048), nullable=False)
+    # Anzeigename (optional, aus Actor-Dokument gecacht)
+    remote_display_name: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    # Inbox-URI des Remote-Actors (für Sends)
+    remote_inbox_uri: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
+
+    direction: Mapped[FollowerDirection] = mapped_column(
+        Enum(FollowerDirection), nullable=False
+    )
+    state: Mapped[FollowerState] = mapped_column(
+        Enum(FollowerState), nullable=False, default=FollowerState.PENDING
+    )
+
+    # ID der Follow-Aktivität (für Undo/Accept-Referenz)
+    activity_id: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    local_user: Mapped["User"] = relationship(
+        "User",
+        primaryjoin="Follower.local_user_id == User.id",
+        overlaps="followers,following",
+    )
+
+    __table_args__ = (
+        # Ein Remote-Actor kann einem lokalen Account nur einmal pro Richtung folgen
+        UniqueConstraint(
+            "local_user_id", "remote_actor_uri", "direction",
+            name="uq_follower_local_remote_dir",
+        ),
     )

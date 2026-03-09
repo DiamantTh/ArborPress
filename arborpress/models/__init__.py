@@ -2,7 +2,12 @@
 # Alle ORM-Modelle importieren, damit SQLAlchemy metadata vollständig ist
 from arborpress.models.user import (  # noqa: F401
     AccountType,
+    ActorKeypair,
     BackupCode,
+    Follower,
+    FollowerDirection,
+    FollowerState,
+    InstanceKeypair,
     MFADevice,
     MFADeviceType,
     User,
