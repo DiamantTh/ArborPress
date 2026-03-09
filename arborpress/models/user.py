@@ -265,16 +265,13 @@ class UserPGPKey(Base):
 
 
 class ActorKeypair(Base):
-    """Ed25519-Schlüsselpaar für ActivityPub HTTP-Signatures (§5).
+    """Ed25519-Schlüsselpaar für ActivityPub HTTP-Signatures (§5) – per Account.
 
-    Default-Algorithmus: Ed25519 (RFC 8037, DataIntegrity / Cavage-httpsig).
-    Mastodon ≥ 4.x, Misskey, Pleroma, Pixelfed unterstützen Ed25519 vollständig.
-    RSA-SHA256 bleibt als Legacy-Option wählbar (--algo rsa-sha256) für ältere
-    Software, die noch kein Ed25519 akzeptiert.
-
-    Private Keys werden verschlüsselt gespeichert (Fernet, KEK aus auth.actor_key_enc_key).
-    Kein eigenes Ablaufdatum – Rotation: arborpress federation keygen --force
-    Export/Backup: arborpress federation key-export <user>
+    Nur relevant wenn allow_per_account_federation aktiviert ist. Wird automatisch
+    bei Bedarf durch die Web-App generiert – kein manueller Eingriff nötig.
+    Algorithmus: Ed25519 (Standard) oder rsa-sha256 (Legacy via Admin-UI).
+    Verschlüsselt mit Fernet, KEK aus auth.actor_key_enc_key.
+    Rotation: arborpress federation keygen (erzeugt neues Schlüsselpaar)
     """
 
     __tablename__ = "actor_keypairs"
@@ -307,10 +304,9 @@ class InstanceKeypair(Base):
     (vergleichbar mit dem WordPress-ActivityPub-Plugin). Dieser Schlüssel
     steht unter `https://<base>/ap/actor#main-key`.
 
-    Singleton-Tabelle (id = 1 immer). Per-Account-Schlüssel →  ActorKeypair.
+    Singleton-Tabelle (id = 1 immer). Per-Account-Schlüssel → ActorKeypair.
     Verschlüsselung: Fernet, KEK aus auth.actor_key_enc_key.
     Rotation: arborpress federation keygen --force
-    Backup:   arborpress federation key-export
     """
 
     __tablename__ = "instance_keypair"
