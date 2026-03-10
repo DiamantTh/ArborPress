@@ -6,6 +6,13 @@
 - no-store für Admin/Auth-Routen
 - korrekte Cache-Control für statische Medien
 - X-Permitted-Cross-Domain-Policies: none
+
+HSTS wird bewusst NICHT von der App gesetzt. ArborPress läuft hinter einem
+Reverse-Proxy (nginx/Apache/Traefik), der TLS terminiert. Nur der Proxy weiß,
+ob der Client tatsächlich HTTPS nutzt. Direktverbindungen über HTTP (z. B.
+lokale Entwicklung) dürfen keinen HSTS-Header erhalten – Browser würden ihn
+zwar ignorieren, das Konzept wäre aber falsch. → HSTS kommt vom Proxy.
+Siehe docs/proxy/*.conf.
 """
 
 from __future__ import annotations
@@ -118,9 +125,9 @@ class SecurityHeadersMiddleware:
             ("Content-Security-Policy", _CSP_DEFAULT),
             ("Permissions-Policy", "geolocation=(), camera=(), microphone=(), payment=()"),
             ("X-Permitted-Cross-Domain-Policies", "none"),
-            # HSTS: nur sinnvoll wenn HTTPS garantiert ist (liegt am Proxy).
-            # Als App-Header trotzdem setzen – Proxy forward ihn nur bei HTTPS.
-            ("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload"),
+            # HSTS wird NICHT hier gesetzt. ArborPress läuft hinter einem Proxy,
+            # der TLS terminiert. Nur der Proxy kennt das tatsächliche Transportprotokoll.
+            # HSTS muss ausschließlich vom Proxy kommen – siehe docs/proxy/*.conf.
         ]
 
         # §8 Admin/Auth: no-store + noindex
