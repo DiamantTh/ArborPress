@@ -26,10 +26,26 @@ from arborpress.auth.stepup import grant_stepup, revoke_stepup
 from arborpress.auth.webauthn import WebAuthnService
 from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
+from arborpress.web.security import validate_csrf
 
 log = logging.getLogger("arborpress.web.auth")
 
 auth_bp = Blueprint("auth", __name__, template_folder="../../templates")
+
+
+@auth_bp.before_request
+async def _auth_csrf_check() -> None:
+    """CSRF-Schutz für HTML-Form-POSTs (§10).
+
+    JSON-API-Requests (WebAuthn challenge/response) werden ausgenommen und
+    stattdessen durch den Origin/Referer-Check in _origin_check() gesichert.
+    """
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return
+    content_type = request.content_type or ""
+    if "application/json" in content_type:
+        return  # JSON-API: Origin/Referer-Check ist ausreichend
+    validate_csrf()
 
 
 def _get_webauthn() -> WebAuthnService:

@@ -3,6 +3,8 @@
 {% block body_class %}admin-page{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{# §10: CSRF-Token als Meta-Tag; wird vom externen app.js ausgelesen und in alle Formulare injiziert #}
+<meta name="csrf-token" content="{{ csrf_token() }}">
 {% block head_extra %}{% endblock %}
 {% endblock %}
 
@@ -18,6 +20,7 @@
 <a href="{{ url_for('admin.plugins_list') }}">{{ _('Plugins') }}</a>
 <a href="{{ url_for('admin.security') }}">{{ _('Sicherheit') }}</a>
 <form method="post" action="{{ url_for('auth.logout') }}" style="display:inline">
+  <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
   <button type="submit" class="btn btn--small">{{ _('Abmelden') }}</button>
 </form>
 {% endblock %}

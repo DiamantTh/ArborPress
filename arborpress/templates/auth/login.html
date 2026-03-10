@@ -28,6 +28,7 @@
   <details class="break-glass">
     <summary>{{ _('Notfall-Passwort-Login') }}</summary>
     <form method="post" action="{{ url_for('auth.breakglass_login') }}" class="auth-form">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
       <div class="form-group">
         <label>{{ _('Benutzername') }}</label>
         <input type="text" name="user_name" autocomplete="username" required maxlength="64">

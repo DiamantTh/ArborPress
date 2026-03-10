@@ -45,6 +45,11 @@ stepup_ttl              = 900
 admin_session_ttl       = 3600
 # Rate-Limit für Auth-Endpunkte
 auth_rate_limit         = "10/minute"
+# Dedizierter Key-Encryption-Key für ActivityPub Actor-Keypairs.
+# Getrennt von secret_key – erlaubt session-Key-Rotation ohne Verlust der AP-Schlüssel.
+# Erstmalig generieren mit: arborpress federation kek-init
+# Dann den ausgegebenen Wert hier eintragen:
+# actor_key_enc_key = "<base64url-32-byte-wert>"
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -64,3 +69,26 @@ audit_log  = true
 dirs = [
     # "/opt/arborpress/plugins",
 ]
+
+# ---------------------------------------------------------------------------
+# Cache
+# ---------------------------------------------------------------------------
+[cache]
+# Backend: memory (default) | redis | memcached | file | none
+backend = "memory"
+# Standard-TTL in Sekunden
+ttl     = 300
+# Key-Präfix
+prefix  = "ap:"
+
+# Redis (backend = "redis"):
+# redis_url = "redis://localhost:6379/0"
+# redis_url = "redis://:passwort@localhost:6379/0"
+# redis_url = "rediss://localhost:6380/0"   # TLS
+
+# Memcached (backend = "memcached"):
+# memcached_host = "localhost"
+# memcached_port = 11211
+
+# Dateibasiert (backend = "file") – kein externer Dienst, persistent über Neustarts:
+# file_dir = "/var/cache/arborpress"

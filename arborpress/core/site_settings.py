@@ -114,10 +114,35 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "instance_name":        "ArborPress",
         "instance_description": "",
         "contact_email":        "",
-        "allowlist_mode":       False,
+        # Sichtbarkeit
+        "followers_visible":           True,   # Follower-Liste öffentlich sichtbar
+        "following_visible":           True,   # Following-Liste öffentlich sichtbar
+        "allow_per_account_federation": True,  # Accounts können Fediverse-Opt-out nutzen
+        # Follow-Kontrolle
+        "require_approval_to_follow":  False,  # Follow-Anfragen manuell bestätigen
+        # Inhalte
+        "federate_tags":               True,   # Hashtag-Aktivitäten federieren
+        "federate_media":              False,  # Medien-Attachments in AP-Objekten senden
+        "max_note_length":             500,    # Zeichenlimit für AP-Notizen/Replies
+        # Sicherheit
+        "require_http_signature":      True,   # Unsigned Inbox-Requests ablehnen
+        "authorized_fetch":            False,  # Outbox/Actor nur mit Signatur abrufbar
+        "inbox_blocklist_domains":     [],     # Domains, von denen kein Inlet akzeptiert
+        "allowlist_mode":              False,  # Nur Allowlist-Domains akzeptiert
     },
     "search": {
-        "provider": "auto",   # auto|pg_fts|mariadb_fulltext|fallback
+        "provider": "auto",   # auto|pg_fts|mariadb_fulltext|sqlite_fts5|meilisearch|typesense|elasticsearch|manticore|fallback
+        # Meilisearch
+        "meilisearch_url":     "http://localhost:7700",
+        "meilisearch_api_key": "",
+        # Typesense
+        "typesense_host":    "localhost",
+        "typesense_port":    8108,
+        "typesense_api_key": "",
+        # Elasticsearch / OpenSearch
+        "elasticsearch_url": "http://localhost:9200",
+        # ManticoreSearch (MySQL-Protokoll)
+        "manticore_url":     "mysql://localhost:9306",
     },
     "demo": {
         "enabled":        False,   # Demo-Modus: Besucher können Theme wechseln

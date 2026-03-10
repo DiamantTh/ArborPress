@@ -28,10 +28,21 @@ else:
 
 
 class DatabaseSettings(BaseSettings):
-    """PostgreSQL / MariaDB Verbindungsparameter."""
+    """Datenbankverbindung.
+
+    Unterstützte URL-Schemata:
+      postgresql+asyncpg://...   – PostgreSQL (Prod-Default)
+      mysql+aiomysql://...       – MariaDB / MySQL
+      sqlite+aiosqlite:///...    – SQLite (Dev/Test; kein pool_size)
+      sqlite+aiosqlite:///:memory:  – In-Memory-SQLite (nur Tests)
+    """
     url: str = "postgresql+asyncpg://arborpress:changeme@localhost/arborpress"
     pool_size: int = 10
     echo: bool = False
+
+    @property
+    def is_sqlite(self) -> bool:
+        return self.url.startswith("sqlite")
 
 
 class WebSettings(BaseSettings):
@@ -53,6 +64,12 @@ class AuthSettings(BaseSettings):
     stepup_ttl: int = 900
     admin_session_ttl: int = 3600
     auth_rate_limit: str = "10/minute"
+    # Dedizierter Key-Encryption-Key für Actor-Keypairs (§5).
+    # Getrennt von web.secret_key, damit Session-Key-Rotation die
+    # AP-Schlüssel NICHT unbrauchbar macht.
+    # Generieren: arborpress federation kek-init
+    # Format: 32-Byte base64url-kodierter Wert (von Fernet erwartet)
+    actor_key_enc_key: SecretStr | None = None
 
 
 class LoggingSettings(BaseSettings):
@@ -61,6 +78,29 @@ class LoggingSettings(BaseSettings):
     access_log: bool = False
     audit_log: bool = True
     audit_file: Path | None = None
+
+
+class CacheSettings(BaseSettings):
+    """Cache-Backend-Konfiguration.
+
+    Backends: memory (default) | redis | memcached | file | none
+
+    memory:     In-Process-Dict mit TTL – kein externer Dienst nötig.
+    redis:      redis-py async. Zusatz-Dep: pip install 'redis[hiredis]'
+    memcached:  aiomcache. Zusatz-Dep: pip install aiomcache
+    file:       JSON-Dateien auf Disk – kein Rebuild nach Neustart.
+    none:       Cache deaktiviert (immer Cache-Miss).
+    """
+    backend: Literal["memory", "redis", "memcached", "file", "none"] = "memory"
+    ttl: int = 300           # Standard-TTL in Sekunden
+    prefix: str = "ap:"      # Key-Präfix
+    # Redis
+    redis_url: str = "redis://localhost:6379/0"
+    # Memcached
+    memcached_host: str = "localhost"
+    memcached_port: int = 11211
+    # File
+    file_dir: str = "/tmp/arborpress_cache"  # noqa: S108
 
 
 class PluginSettings(BaseSettings):
@@ -79,6 +119,7 @@ class Settings(BaseSettings):
     auth:    AuthSettings     = Field(default_factory=AuthSettings)
     logging: LoggingSettings  = Field(default_factory=LoggingSettings)
     plugins: PluginSettings   = Field(default_factory=PluginSettings)
+    cache:   CacheSettings    = Field(default_factory=CacheSettings)
 
     @classmethod
     def from_file(cls, path: Path) -> "Settings":

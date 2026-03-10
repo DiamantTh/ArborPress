@@ -53,9 +53,39 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "httpx>=0.27",
-    "aiosqlite>=0.20",   # In-Memory-DB für Tests
+    "aiosqlite>=0.20",   # In-Memory-DB für Tests + SQLite-Backend allgemein
     "ruff>=0.4",
     "mypy>=1.10",
+]
+# SQLite-Backend (Entwicklung / kleine Instanzen)
+sqlite = [
+    "aiosqlite>=0.20",
+]
+# Cache-Backends
+cache-redis = [
+    "redis[hiredis]>=5.0",
+]
+cache-memcached = [
+    "aiomcache>=0.8",
+]
+# Externe FTS-Engines (optional, je nach Deployment)
+search-meilisearch = [
+    "meilisearch-python-sdk>=3.0",
+]
+search-typesense = [
+    "typesense>=0.21",
+]
+search-elasticsearch = [
+    "elasticsearch[async]>=8.0",
+]
+# Alles auf einmal
+all = [
+    "aiosqlite>=0.20",
+    "redis[hiredis]>=5.0",
+    "aiomcache>=0.8",
+    "meilisearch-python-sdk>=3.0",
+    "typesense>=0.21",
+    "elasticsearch[async]>=8.0",
 ]
 
 [project.scripts]

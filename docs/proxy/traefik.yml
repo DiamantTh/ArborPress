@@ -1,0 +1,196 @@
+# =============================================================================
+#  ArborPress – Traefik v3 Reverse-Proxy-Konfiguration
+#  Gilt für: Traefik ≥ 3.0 (empfohlen für neue Deployments)
+# =============================================================================
+#
+#  Voraussetzungen
+#  ---------------
+#  - Traefik läuft als Binary oder Docker-Container
+#  - ACME / Let's Encrypt für automatische SSL-Zertifikate konfiguriert
+#  - ArborPress als lokaler ASGI-Prozess auf 127.0.0.1:5000
+#    (oder als Docker-Container im selben Network)
+#
+#  Konfigurationsdateien
+#  ----------------------
+#  Traefik trennt zwischen:
+#    - Statischer Config  (traefik.yml / CLI-Flags)  – Provider, EntryPoints, ACME
+#    - Dynamischer Config (dynamic/*.yml)             – Router, Middleware, Services
+#
+#  Schema: https://doc.traefik.io/traefik/
+#
+# =============================================================================
+
+
+# ---------------------------------------------------------------------------
+#  traefik.yml  –  Statische Konfiguration
+# ---------------------------------------------------------------------------
+#  Abgelegt unter: /etc/traefik/traefik.yml
+#  Oder übergeben als: --configFile=/etc/traefik/traefik.yml
+
+api:
+  dashboard: false   # Traefik-Dashboard im Produktivbetrieb deaktivieren
+
+entryPoints:
+  web:
+    address: ":80"
+    # Automatischer HTTP→HTTPS-Redirect für alle Requests
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: letsencrypt   # Automatisches Zertifikat (ACME)
+        domains:
+          - main: "blog.example.com"
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "admin@example.com"
+      storage: "/etc/traefik/acme.json"
+      httpChallenge:
+        entryPoint: web
+
+# Dynamische Konfiguration aus Verzeichnis laden (z.B. /etc/traefik/dynamic/)
+providers:
+  file:
+    directory: "/etc/traefik/dynamic"
+    watch: true   # Änderungen ohne Neustart übernehmen
+
+
+# ---------------------------------------------------------------------------
+#  dynamic/arborpress.yml  –  Dynamische Konfiguration
+# ---------------------------------------------------------------------------
+#  Abgelegt unter: /etc/traefik/dynamic/arborpress.yml
+#
+#  Enthält: Router, Middlewares, Services
+
+http:
+
+  # -------------------------------------------------------------------------
+  #  Services  –  Upstream-Prozesse
+  # -------------------------------------------------------------------------
+  services:
+    arborpress:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:5000"   # ArborPress ASGI-Prozess
+
+        # Gesundheitsprüfung (Traefik v3)
+        healthCheck:
+          path: "/health"          # ArborPress muss diesen Endpunkt anbieten
+          interval: "30s"
+          timeout: "5s"
+          status: 200
+
+  # -------------------------------------------------------------------------
+  #  Middlewares  –  Sicherheits- und Netzwerkregeln
+  # -------------------------------------------------------------------------
+  middlewares:
+
+    # Sicherheits-Header (Traefik ergänzt; ArborPress setzt CSP/X-Frame selbst)
+    arborpress-headers:
+      headers:
+        # HSTS: 2 Jahre; Proxy terminiert HTTPS, daher hier setzen
+        stsSeconds: 63072000
+        stsIncludeSubdomains: true
+        stsPreload: true
+
+        # Proxy-Flags (optional – ArborPress erkennt X-Forwarded-Proto)
+        # Hinweis: forceSTSHeader setzt HSTS auch für non-200-Responses
+        forceSTSHeader: true
+
+        # Verhindert Double-Header: nur wenn ArborPress den Header NICHT selbst setzt
+        # contentTypeNosniff und browserXssFilter werden von ArborPress als Middleware gesetzt;
+        # nur aktivieren wenn ArborPress-SecurityHeadersMiddleware deaktiviert ist:
+        # contentTypeNosniff: true
+        # browserXssFilter: true
+
+        # Für ActivityPub korrekte Weiterleitung der Trust-Proxy-Info
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"
+
+    # Rate-Limiting für Login / Auth-Endpunkte (§10 Brute-Force-Schutz)
+    arborpress-ratelimit:
+      rateLimit:
+        average: 10    # 10 Requests pro Periode erlaubt
+        period: "1m"   # Periode: 1 Minute
+        burst: 5       # Burst: bis zu 5 Requests momentan überschreitbar
+
+    # Maximale Request-Größe (Medien-Upload; muss mit config.toml übereinstimmen)
+    arborpress-bodylimit:
+      buffering:
+        maxRequestBodyBytes: 52428800   # 50 MB
+
+    # Komprimierung (gzip/br für Responses)
+    arborpress-compress:
+      compress: {}
+
+  # -------------------------------------------------------------------------
+  #  Router  –  URL-Matching → Middleware-Chain → Service
+  # -------------------------------------------------------------------------
+  routers:
+
+    # HTTP-Router: wird via entryPoints.web.http.redirections automatisch nach
+    # HTTPS redirected; kein expliziter HTTP-Router nötig.
+
+    # Auth-Endpunkte: mit Rate-Limiting
+    arborpress-auth:
+      entryPoints:
+        - websecure
+      rule: "Host(`blog.example.com`) && PathPrefix(`/auth/`)"
+      middlewares:
+        - arborpress-ratelimit
+        - arborpress-headers
+        - arborpress-compress
+      service: arborpress
+      tls:
+        certResolver: letsencrypt
+      priority: 20   # Höhere Priorität als Default-Router
+
+    # Standard-Router: alle anderen Anfragen
+    arborpress-default:
+      entryPoints:
+        - websecure
+      rule: "Host(`blog.example.com`)"
+      middlewares:
+        - arborpress-headers
+        - arborpress-bodylimit
+        - arborpress-compress
+      service: arborpress
+      tls:
+        certResolver: letsencrypt
+      priority: 10
+
+
+# ---------------------------------------------------------------------------
+#  Docker-Compose-Snippet  (falls Traefik als Container läuft)
+# ---------------------------------------------------------------------------
+#
+#  # docker-compose.yml
+#  services:
+#    traefik:
+#      image: traefik:v3
+#      ports:
+#        - "80:80"
+#        - "443:443"
+#      volumes:
+#        - /etc/traefik:/etc/traefik
+#        - /var/run/docker.sock:/var/run/docker.sock:ro
+#
+#    arborpress:
+#      build: .
+#      labels:
+#        - "traefik.enable=true"
+#        - "traefik.http.routers.arborpress.rule=Host(`blog.example.com`)"
+#        - "traefik.http.routers.arborpress.entrypoints=websecure"
+#        - "traefik.http.routers.arborpress.tls.certresolver=letsencrypt"
+#        - "traefik.http.services.arborpress.loadbalancer.server.port=5000"
+#        # Middleware auf Router anwenden:
+#        - "traefik.http.routers.arborpress.middlewares=arborpress-headers@file"

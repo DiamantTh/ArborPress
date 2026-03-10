@@ -20,6 +20,7 @@ from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
 from arborpress.core.markdown import render_md_async
 from arborpress.logging.config import get_audit_logger
+from arborpress.web.security import validate_csrf
 
 log = logging.getLogger("arborpress.web.admin")
 audit = get_audit_logger()
@@ -30,6 +31,13 @@ admin_bp = Blueprint("admin", __name__, template_folder="../../templates")
 def _require_session():
     if not session.get("user_id"):
         abort(redirect(url_for("auth.login_page")))
+
+
+@admin_bp.before_request
+async def _csrf_protect() -> None:
+    """CSRF-Schutz für alle state-ändernden Admin-Anfragen (§10)."""
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        validate_csrf()
 
 
 # ---------------------------------------------------------------------------
@@ -654,10 +662,25 @@ async def site_settings_save():
 
         elif section == "federation":
             current.update({
-                "mode":                 (form.get("mode") or "disabled").strip(),
-                "instance_name":        (form.get("instance_name") or "").strip(),
-                "instance_description": (form.get("instance_description") or "").strip(),
-                "contact_email":        (form.get("contact_email") or "").strip(),
+                "mode":                         (form.get("mode") or "disabled").strip(),
+                "instance_name":                (form.get("instance_name") or "").strip(),
+                "instance_description":         (form.get("instance_description") or "").strip(),
+                "contact_email":                (form.get("contact_email") or "").strip(),
+                "followers_visible":            form.get("followers_visible") == "1",
+                "following_visible":            form.get("following_visible") == "1",
+                "allow_per_account_federation": form.get("allow_per_account_federation") == "1",
+                "require_approval_to_follow":   form.get("require_approval_to_follow") == "1",
+                "federate_tags":                form.get("federate_tags") == "1",
+                "federate_media":               form.get("federate_media") == "1",
+                "max_note_length":              int(form.get("max_note_length") or 500),
+                "require_http_signature":       form.get("require_http_signature") == "1",
+                "authorized_fetch":             form.get("authorized_fetch") == "1",
+                "allowlist_mode":               form.get("allowlist_mode") == "1",
+                "inbox_blocklist_domains": [
+                    d.strip()
+                    for d in (form.get("inbox_blocklist_domains") or "").splitlines()
+                    if d.strip()
+                ],
             })
 
         elif section == "search":

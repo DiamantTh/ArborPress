@@ -1,30 +1,73 @@
-"""Security-Middleware (§10 – Security-First Design Principles).
+"""Security-Middleware + CSRF-Schutz (§10 – Security-First Design Principles).
 
-- Strict CSP defaults
-- frame-ancestors restricted
+- Strict CSP (keine remote-Includes, keine Inline-Scripts)
+- CSRF-Token für alle state-ändernden Admin/Auth-Formulare
+- frame-ancestors 'none'
 - no-store für Admin/Auth-Routen
 - korrekte Cache-Control für statische Medien
+- X-Permitted-Cross-Domain-Policies: none
 """
 
 from __future__ import annotations
 
-import re
+import secrets
 from collections.abc import Callable
 from typing import Any
 
+from quart import abort, request, session
+
 from arborpress.core.config import get_settings
 
-# §10 CSP Default – keine remote HTML-Includes
+# ---------------------------------------------------------------------------
+# CSRF (§10)
+# ---------------------------------------------------------------------------
+
+_CSRF_SESSION_KEY = "_csrf_token"
+CSRF_FORM_FIELD = "_csrf"  # hidden-input-Name in Templates
+
+
+def get_csrf_token() -> str:
+    """Gibt den CSRF-Token der aktuellen Session zurück; generiert ihn on-demand."""
+    if _CSRF_SESSION_KEY not in session:
+        session[_CSRF_SESSION_KEY] = secrets.token_hex(32)
+    return session[_CSRF_SESSION_KEY]
+
+
+def validate_csrf() -> None:
+    """Prüft CSRF-Token; bricht mit HTTP 403 ab wenn ungültig.
+
+    Akzeptiert Token aus:
+      1. HTML-Formularen  (POST-Body-Feld ``_csrf``)
+      2. AJAX/SPA-Requests (Header ``X-CSRF-Token``)
+    """
+    expected = session.get(_CSRF_SESSION_KEY)
+    submitted = (
+        request.form.get(CSRF_FORM_FIELD)
+        or request.headers.get("X-CSRF-Token", "")
+    )
+    if not expected or not submitted or not secrets.compare_digest(expected, submitted):
+        abort(403, "CSRF-Token ungültig oder fehlend")
+
+
+# ---------------------------------------------------------------------------
+# CSP / Security-Header (§10)
+# ---------------------------------------------------------------------------
+
+# Kein 'unsafe-inline' für scripts; 'unsafe-inline' für styles ist akzeptabel
+# (kein Script-Injection via CSS möglich), kann via Nonce später schärfer werden.
 _CSP_DEFAULT = (
     "default-src 'self'; "
     "script-src 'self'; "
     "style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data:; "
+    "img-src 'self' data: blob:; "
     "font-src 'self'; "
+    "connect-src 'self'; "
+    "media-src 'self'; "
     "frame-ancestors 'none'; "
     "object-src 'none'; "
     "base-uri 'self'; "
-    "form-action 'self';"
+    "form-action 'self'; "
+    "upgrade-insecure-requests;"
 )
 
 # §10 Admin/Auth: kein Caching
@@ -73,7 +116,11 @@ class SecurityHeadersMiddleware:
             ("X-Frame-Options", "DENY"),
             ("Referrer-Policy", "strict-origin-when-cross-origin"),
             ("Content-Security-Policy", _CSP_DEFAULT),
-            ("Permissions-Policy", "geolocation=(), camera=(), microphone=()"),
+            ("Permissions-Policy", "geolocation=(), camera=(), microphone=(), payment=()"),
+            ("X-Permitted-Cross-Domain-Policies", "none"),
+            # HSTS: nur sinnvoll wenn HTTPS garantiert ist (liegt am Proxy).
+            # Als App-Header trotzdem setzen – Proxy forward ihn nur bei HTTPS.
+            ("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload"),
         ]
 
         # §8 Admin/Auth: no-store + noindex

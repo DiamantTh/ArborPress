@@ -34,9 +34,22 @@ def create_app() -> Quart:
     )
     app.secret_key = cfg.web.secret_key.get_secret_value()
 
+    # §10 Session-Cookie-Härtung
+    # Secure=True: wird vom Proxy als HTTPS ausgeliefert; im lokalen Dev-Setup
+    # ggf. auf False setzen wenn kein HTTPS vorhanden.
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = cfg.web.base_url.startswith("https")
+    # Lebensdauer der Session: kein "permanent" – endet mit Browser-Close
+    app.config["PERMANENT_SESSION_LIFETIME"] = cfg.auth.admin_session_ttl
+
     # §7 I18N
     from arborpress.core.i18n import register_i18n
     register_i18n(app)
+
+    # §10 CSRF-Token-Funktion als Jinja2-Global
+    from arborpress.web.security import get_csrf_token
+    app.jinja_env.globals["csrf_token"] = get_csrf_token
 
     # Konfiguration + Session als Jinja2-Globals (für Templates)
     app.jinja_env.globals["config"] = cfg

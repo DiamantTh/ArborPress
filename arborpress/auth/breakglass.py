@@ -18,10 +18,12 @@ from arborpress.logging.config import get_audit_logger
 log = logging.getLogger("arborpress.auth.breakglass")
 audit = get_audit_logger()
 
+# OWASP 2024-Empfehlung Argon2id (interactive): t=3, m=64 MiB, p=4
+# https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
 _hasher = PasswordHasher(
     time_cost=3,
     memory_cost=65536,  # 64 MiB
-    parallelism=2,
+    parallelism=4,      # war 2 – auf OWASP-Empfehlung angehoben
     hash_len=32,
     salt_len=16,
 )
