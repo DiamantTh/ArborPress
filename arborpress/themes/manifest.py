@@ -24,12 +24,20 @@ Jedes Theme liegt in ``arborpress/themes/<id>/`` mit einer ``theme.toml``:
 
 from __future__ import annotations
 
-import tomllib
+import sys
 import logging
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    try:
+        import tomllib  # type: ignore[no-redef]
+    except ImportError:
+        import tomli as tomllib  # type: ignore[no-redef]
 
 log = logging.getLogger("arborpress.themes")
 
