@@ -1,0 +1,134 @@
+# ==============================================================================
+# ArborPress – Docker Compose  (MariaDB, Ubuntu LTS)
+#
+# Blog-App-Image: python:3.12-slim-noble  (Ubuntu 24.04 LTS)
+#   hub.docker.com/_/python  →  Tag: 3.12-slim-noble
+#
+# Datenbank-Image: mariadb:11.4  (offiziell, Docker Hub)
+#   hub.docker.com/_/mariadb
+#
+#   MariaDB-Versionen auf Docker Hub:
+#     11.4 (LTS) – Support bis Mai 2029            ← Standard in dieser Datei
+#     11.8        – aktuell latester Stable-Release (Kurz-Support ~1 Jahr)
+#       → Auf 11.8 wechseln: Image unten auf "mariadb:11.8" ändern.
+#   Hinweis: 10.11 (LTS) läuft im Compose für UBI9; bei Bedarf "mariadb:10.11"
+#
+# !! WICHTIGER HINWEIS – KEIN OS-/DISTRO-WECHSEL IM BETRIEB !!
+# ----------------------------------------------------------------
+# Es existiert auch eine UBI9-Variante (docker-compose.mariadb.yml).
+# Ein Wechsel des Basis-OS (UBI9 ↔ Ubuntu) auf einer laufenden Instanz
+# wird AUSDRÜCKLICH NICHT empfohlen – aus folgenden Gründen:
+#
+# 1) APP-VOLUMES: Die Pfade unterscheiden sich zwischen den Varianten:
+#      Ubuntu:  /app/media  /app/logs
+#      UBI9:    /opt/app-root/src/media  /opt/app-root/src/logs
+#    Eigentümer-UIDs weichen ebenfalls ab → Berechtigungsfehler möglich.
+#
+# 2) DATENBANKDATEN (kritisch!):
+#    MariaDB-Datendateien (InnoDB-Tablespace, ibdata, *.ibd) sind an
+#    die libc-Version und den Zeichensatz-Stack des Container-Images
+#    gebunden.  Ein roher Volume-Kopiervorgang
+#      UBI9/RHEL9-Container → Ubuntu-Container  (oder umgekehrt)
+#    kann zu Table-Korruption, fehlenden Tabellen oder Start-Fehlern
+#    führen, selbst wenn die MariaDB-Version identisch ist.
+#    Dies wurde nicht systematisch getestet – verlasse dich NICHT
+#    auf einen Volume-Copy als Migrationspfad!
+#
+# 3) MARIADB-VERSIONEN:
+#    11.8 (Stable, Kurz-Support) und 11.4 LTS speichern interne
+#    Systemtabellen unterschiedlich; ein unkontrolliertes Downgrade
+#    (z. B. Volume von 11.8 in 11.4 einhängen) führt zu Startfehlern.
+#
+# SICHERER MIGRATIONSPFAD (immer, ohne Ausnahme):
+#   mysqldump --single-transaction -u root -p <db>  →  mysql import
+#   im Ziel-Container.  Niemals rohe InnoDB-Volumes zwischen
+#   unterschiedlichen OS- oder Distro-Varianten kopieren.
+#
+# Verwendung:
+#   cp .env.example .env          # Werte anpassen!
+#   docker compose -f docker-compose.mariadb.ubuntu.yml up -d
+#   docker compose -f docker-compose.mariadb.ubuntu.yml logs -f app
+#
+# Voraussetzungen:
+#   - .env mit ARBORPRESS_WEB__SECRET_KEY, DB_PASSWORD, DB_ROOT_PASSWORD
+#   - Docker Compose v2 (docker compose, nicht docker-compose)
+# ==============================================================================
+
+services:
+
+  # ── MariaDB 11.4 LTS (offiziell, Docker Hub) ─────────────────────────────
+  #    Auf 11.8 (aktueller Stable) wechseln: Image auf "mariadb:11.8" ändern
+  db:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_USER:          "${DB_USER:-arborpress}"
+      MARIADB_PASSWORD:      "${DB_PASSWORD:?DB_PASSWORD muss in .env gesetzt sein}"
+      MARIADB_DATABASE:      "${DB_NAME:-arborpress}"
+      MARIADB_ROOT_PASSWORD: "${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD muss in .env gesetzt sein}"
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL",
+             "healthcheck.sh --connect --innodb_initialized"]
+      interval: 10s
+      timeout:  5s
+      retries:  6
+      start_period: 30s
+    expose:
+      - "3306"
+
+  # ── ArborPress (Ubuntu 24.04 LTS, Python 3.12) ────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.mariadb.ubuntu
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # ── Datenbank ──────────────────────────────────────────────────────────
+      ARBORPRESS_DB__URL: >-
+        mysql+aiomysql://${DB_USER:-arborpress}:${DB_PASSWORD}@db/${DB_NAME:-arborpress}
+      # ── Web / Sicherheit ───────────────────────────────────────────────────
+      ARBORPRESS_WEB__SECRET_KEY:      "${ARBORPRESS_WEB__SECRET_KEY:?SECRET_KEY muss in .env gesetzt sein}"
+      ARBORPRESS_WEB__BASE_URL:        "${ARBORPRESS_WEB__BASE_URL:-http://localhost:8080}"
+      ARBORPRESS_WEB__TRUSTED_PROXIES: "${ARBORPRESS_WEB__TRUSTED_PROXIES:-1}"
+      # ── Logging ────────────────────────────────────────────────────────────
+      ARBORPRESS_LOGGING__LEVEL:       "${ARBORPRESS_LOGGING__LEVEL:-INFO}"
+      # ── Worker-Anzahl ──────────────────────────────────────────────────────
+      ARBORPRESS_WORKERS:              "${ARBORPRESS_WORKERS:-2}"
+    volumes:
+      # Achtung: andere Volume-Pfade als in der UBI9-Variante!
+      - arborpress-media:/app/media
+      - arborpress-logs:/app/logs
+    networks:
+      - internal
+      - external
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL",
+             "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/_health')\""]
+      interval: 30s
+      timeout:  5s
+      retries:  3
+      start_period: 30s
+
+# ── Netzwerke ────────────────────────────────────────────────────────────────
+networks:
+  internal:
+    internal: true
+  external: {}
+
+# ── Volumes ──────────────────────────────────────────────────────────────────
+volumes:
+  mariadb-data:
+    driver: local
+  arborpress-media:
+    driver: local
+  arborpress-logs:
+    driver: local

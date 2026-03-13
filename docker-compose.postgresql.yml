@@ -1,0 +1,120 @@
+# ==============================================================================
+# ArborPress – Docker Compose  (PostgreSQL 16 / UBI9)
+#
+# Datenbank-Image: registry.access.redhat.com/rhel9/postgresql-16
+#   Red Hat Application Stream Container, UBI9-Basis, kostenlos nutzbar.
+#   catalog.redhat.com → rhel9/postgresql-16
+#
+# !! WICHTIGER HINWEIS – KEIN OS-/DISTRO-WECHSEL IM BETRIEB !!
+# ----------------------------------------------------------------
+# Es existiert auch eine Ubuntu-Variante (docker-compose.postgresql.ubuntu.yml).
+# Ein Wechsel des Basis-OS auf einer laufenden Instanz wird AUSDRÜCKLICH
+# NICHT empfohlen:
+#
+# 1) APP-VOLUMES: Pfade und UIDs unterscheiden sich zwischen Varianten.
+#      UBI9:    /opt/app-root/src/media  /opt/app-root/src/logs
+#      Ubuntu:  /app/media  /app/logs
+#
+# 2) DATENBANKDATEN (kritisch!):
+#    PostgreSQL-Datendateien sind an die libc/locale des Container-
+#    Images gebunden.  Ein roher Volume-Kopiervorgang zwischen
+#    UBI9- und Ubuntu-Containern kann zu Datenbankkorruption führen,
+#    auch bei identischer PostgreSQL-Version.  Nicht getestet!
+#
+# SICHERER MIGRATIONSPFAD (immer, ohne Ausnahme):
+#   pg_dump -Fc -U <user> <db>  →  pg_restore in den Ziel-Container
+#
+# Verwendung:
+#   cp .env.example .env          # Werte anpassen!
+#   docker compose -f docker-compose.postgresql.yml up -d
+#   docker compose -f docker-compose.postgresql.yml logs -f app
+#
+# Voraussetzungen:
+#   - .env mit ARBORPRESS_WEB__SECRET_KEY, DB_PASSWORD, DB_ADMIN_PASSWORD
+#   - Docker Compose v2 (docker compose, nicht docker-compose)
+# ==============================================================================
+
+services:
+
+  # ── PostgreSQL 16 (Red Hat UBI9) ─────────────────────────────────────────
+  db:
+    image: registry.access.redhat.com/rhel9/postgresql-16:latest
+    restart: unless-stopped
+    environment:
+      # Anwendungs-Benutzer (nicht superuser)
+      POSTGRESQL_USER:           "${DB_USER:-arborpress}"
+      POSTGRESQL_PASSWORD:       "${DB_PASSWORD:?DB_PASSWORD muss in .env gesetzt sein}"
+      POSTGRESQL_DATABASE:       "${DB_NAME:-arborpress}"
+      # Passwort des postgres-Superusers (für Admin-Aufgaben)
+      POSTGRESQL_ADMIN_PASSWORD: "${DB_ADMIN_PASSWORD:?DB_ADMIN_PASSWORD muss in .env gesetzt sein}"
+    volumes:
+      - postgres-data:/var/lib/pgsql/data
+    networks:
+      - internal
+    healthcheck:
+      # pg_isready ist im Red-Hat-PostgreSQL-Image enthalten
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRESQL_USER -d $$POSTGRESQL_DATABASE"]
+      interval: 10s
+      timeout:  5s
+      retries:  6
+      start_period: 30s
+    # Port nicht nach außen exponieren – nur intern erreichbar
+    expose:
+      - "5432"
+
+  # ── ArborPress (UBI9 Python 3.12) ─────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.postgresql
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # ── Datenbank ──────────────────────────────────────────────────────────
+      ARBORPRESS_DB__URL: >-
+        postgresql+asyncpg://${DB_USER:-arborpress}:${DB_PASSWORD}@db/${DB_NAME:-arborpress}
+      # ── Web / Sicherheit ───────────────────────────────────────────────────
+      ARBORPRESS_WEB__SECRET_KEY:      "${ARBORPRESS_WEB__SECRET_KEY:?SECRET_KEY muss in .env gesetzt sein}"
+      ARBORPRESS_WEB__BASE_URL:        "${ARBORPRESS_WEB__BASE_URL:-http://localhost:8080}"
+      ARBORPRESS_WEB__TRUSTED_PROXIES: "${ARBORPRESS_WEB__TRUSTED_PROXIES:-1}"
+      # ── Logging (stdout – von Container-Runtime abgefangen) ────────────────
+      ARBORPRESS_LOGGING__LEVEL:       "${ARBORPRESS_LOGGING__LEVEL:-INFO}"
+      # ── Worker-Anzahl ──────────────────────────────────────────────────────
+      ARBORPRESS_WORKERS:              "${ARBORPRESS_WORKERS:-2}"
+      # ── Cache (optional: redis) ────────────────────────────────────────────
+      # ARBORPRESS_CACHE__BACKEND:    "redis"
+      # ARBORPRESS_CACHE__REDIS_URL:  "redis://redis:6379/0"
+    volumes:
+      - arborpress-media:/opt/app-root/src/media
+      - arborpress-logs:/opt/app-root/src/logs
+    networks:
+      - internal
+      - external
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL",
+             "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/_health')\""]
+      interval: 30s
+      timeout:  5s
+      retries:  3
+      start_period: 30s
+
+# ── Netzwerke ────────────────────────────────────────────────────────────────
+networks:
+  # Internes Netz: App ↔ Datenbank (kein Außenzugriff)
+  internal:
+    internal: true
+  # Externes Netz: App ↔ Reverse-Proxy / Host
+  external: {}
+
+# ── Volumes ──────────────────────────────────────────────────────────────────
+volumes:
+  postgres-data:
+    driver: local
+  arborpress-media:
+    driver: local
+  arborpress-logs:
+    driver: local

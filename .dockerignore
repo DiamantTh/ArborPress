@@ -1,0 +1,66 @@
+# ==============================================================
+# .dockerignore – Dateien/Verzeichnisse vom Build-Context
+# ausschließen, die das Image unnötig vergrößern oder
+# sensible Daten enthalten.
+# ==============================================================
+
+# Virtuelle Python-Umgebungen
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Test- und Entwicklungs-Code
+tests/
+scripts/
+docs/
+future/
+frontend/
+themes/
+
+# Konfigurationsdateien mit Geheimnissen
+.env
+.env.*
+!.env.example
+config.toml
+
+# Container-Konfiguration (nicht im Image benötigt)
+docker-compose*.yml
+Dockerfile*
+
+# Laufzeit-Daten
+media/
+logs/
+*.log
+arborpress.db
+*.sqlite
+*.sqlite3
+
+# Versionskontrolle und IDE
+.git/
+.gitignore
+.gitattributes
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.drone.yml
+
+# Sonstiges
+*.md
+LICENSE
+Makefile
+*.egg-info/
+dist/
+build/
+htmlcov/
+.coverage
