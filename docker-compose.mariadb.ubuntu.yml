@@ -1,0 +1,89 @@
+# ======================================================================
+# ArborPress – Docker Compose  (Ubuntu 24.04 LTS + MariaDB 11.4 LTS)
+# ======================================================================
+#
+# Genutzte Images:
+#   App:  python:3.12-slim-noble  (Ubuntu 24.04 LTS "Noble Numbat")
+#   DB:   mariadb:11.4            (MariaDB 11.4 LTS, EOL: Mai 2029)
+#         Alternativ:  mariadb:11.8  (aktueller, non-LTS)
+#
+# Starten:    docker compose -f docker-compose.mariadb.ubuntu.yml up -d
+# Stoppen:    docker compose -f docker-compose.mariadb.ubuntu.yml down
+# Mit Daten:  docker compose -f docker-compose.mariadb.ubuntu.yml down -v
+#
+# !! WICHTIGER HINWEIS – KEIN OS-WECHSEL IM BETRIEB !!
+# -------------------------------------------------------
+# Es existiert auch eine UBI9-Variante (docker-compose.mariadb.yml).
+# Ein Wechsel zwischen Ubuntu und UBI9 auf einer laufenden Instanz
+# wird AUSDRÜCKLICH NICHT empfohlen:
+#
+# 1) APP-VOLUMES: Pfade und UIDs unterscheiden sich:
+#      Ubuntu:  /app/media  /app/logs                            (UID/GID 1001)
+#      UBI9:    /opt/app-root/src/media  /opt/app-root/src/logs  (UID 1001/GID 0)
+#
+# 2) MARIADB INNODB (kritisch!):
+#    InnoDB-Tablespaces und Systemtabellen sind an die libc des jeweiligen
+#    Container-Images gebunden. Ein roher Volume-Copy zwischen Ubuntu (glibc
+#    Noble) und UBI9 (glibc RHEL9) führt zu Datenbankkorruption – auch bei
+#    identischer MariaDB-Version.
+#    Nicht getestet; verlasse dich NICHT darauf.
+#
+# SICHERER MIGRATIONSPFAD (immer, ohne Ausnahme):
+#   mysqldump --single-transaction  →  mysql import
+# ======================================================================
+
+name: arborpress-mariadb-ubuntu
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ubuntu
+    image: arborpress:ubuntu
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ARBORPRESS_DB__URL: "mysql+aiomysql://${MARIADB_USER}:${MARIADB_PASSWORD}@db:3306/${MARIADB_DATABASE}"
+      DB_HOST: db
+      DB_PORT: "3306"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${ARBORPRESS_PORT:-8080}:8080"
+    volumes:
+      - app_media:/app/media
+      - app_logs:/app/logs
+    healthcheck:
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/_health')"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  db:
+    # Alternativ: mariadb:11.8
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_USER: "${MARIADB_USER}"
+      MARIADB_PASSWORD: "${MARIADB_PASSWORD}"
+      MARIADB_DATABASE: "${MARIADB_DATABASE}"
+      MARIADB_ROOT_PASSWORD: "${MARIADB_ROOT_PASSWORD}"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+volumes:
+  app_media:
+  app_logs:
+  mariadb_data:

@@ -15,17 +15,13 @@ Jedes Plugin liefert eine ``manifest.toml`` mit mindestens:
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from pydantic import BaseModel, field_validator
 
 from arborpress.plugins.capabilities import Capability
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomllib  # type: ignore[no-redef]
+import tomllib
 
 
 # Mindest-Core-Versionsformat: "MAJOR.MINOR.PATCH"

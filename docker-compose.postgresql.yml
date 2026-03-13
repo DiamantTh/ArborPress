@@ -1,0 +1,85 @@
+# ======================================================================
+# ArborPress – Docker Compose  (UBI9 + PostgreSQL 16 RHEL9)
+# ======================================================================
+#
+# Genutzte Images:
+#   App:  registry.access.redhat.com/ubi9/python-312   (kostenlos, kein Abo)
+#   DB:   registry.access.redhat.com/rhel9/postgresql-16
+#
+# Starten:    docker compose -f docker-compose.postgresql.yml up -d
+# Stoppen:    docker compose -f docker-compose.postgresql.yml down
+# Mit Daten:  docker compose -f docker-compose.postgresql.yml down -v
+#
+# !! WICHTIGER HINWEIS – KEIN OS-WECHSEL IM BETRIEB !!
+# -------------------------------------------------------
+# Es existiert auch eine Ubuntu-Variante (docker-compose.postgresql.ubuntu.yml).
+# Ein Wechsel zwischen UBI9 und Ubuntu auf einer laufenden Instanz
+# wird AUSDRÜCKLICH NICHT empfohlen:
+#
+# 1) APP-VOLUMES: Pfade und UIDs unterscheiden sich:
+#      UBI9:    /opt/app-root/src/media  /opt/app-root/src/logs  (UID 1001/GID 0)
+#      Ubuntu:  /app/media  /app/logs                            (UID/GID 1001)
+#
+# 2) POSTGRESQL PGDATA (kritisch!):
+#    PostgreSQL-PGDATA ist an die libc/locale des Container-Images gebunden.
+#    Ein roher Volume-Copy zwischen UBI9 (glibc RHEL9) und Ubuntu (glibc Noble)
+#    führt zu Datenbankkorruption – auch bei identischer PostgreSQL-Version.
+#    Nicht getestet; verlasse dich NICHT darauf.
+#
+# SICHERER MIGRATIONSPFAD (immer, ohne Ausnahme):
+#   pg_dump -Fc  →  pg_restore
+# ======================================================================
+
+name: arborpress-postgresql
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ubi9
+    image: arborpress:ubi9
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ARBORPRESS_DB__URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
+      DB_HOST: db
+      DB_PORT: "5432"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${ARBORPRESS_PORT:-8080}:8080"
+    volumes:
+      - app_media:/opt/app-root/src/media
+      - app_logs:/opt/app-root/src/logs
+    healthcheck:
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/_health')"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  db:
+    image: registry.access.redhat.com/rhel9/postgresql-16:latest
+    restart: unless-stopped
+    environment:
+      POSTGRESQL_USER: "${POSTGRES_USER}"
+      POSTGRESQL_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRESQL_DATABASE: "${POSTGRES_DB}"
+    volumes:
+      - pg_data:/var/lib/pgsql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+
+volumes:
+  app_media:
+  app_logs:
+  pg_data:

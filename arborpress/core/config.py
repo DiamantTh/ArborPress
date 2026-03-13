@@ -14,17 +14,13 @@ aus der Datenbank gelesen und im Admin-Interface unter /admin/settings gepflegt.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomllib  # type: ignore[no-redef]
+import tomllib
 
 
 class DatabaseSettings(BaseSettings):

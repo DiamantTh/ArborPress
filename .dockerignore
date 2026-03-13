@@ -1,0 +1,62 @@
+# Python-Cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Laufzeit / Editor
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Tests / Coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Docs / Frontend (werden im Image nicht benötigt)
+docs/
+frontend/
+scripts/
+tests/
+themes/
+plugins/
+future/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI / Tooling
+.github/
+Makefile
+*.toml
+!pyproject.toml
+
+# Compose-Dateien (nicht ins Image)
+docker-compose*.yml
+
+# README
+README.md
+LICENSE

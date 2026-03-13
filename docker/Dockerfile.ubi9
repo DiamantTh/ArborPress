@@ -1,0 +1,111 @@
+# syntax=docker/dockerfile:1
+# ======================================================================
+# ArborPress – Produktions-Image  (Red Hat UBI9)
+# Basis: registry.access.redhat.com/ubi9/python-312
+#        Kostenlos, kein Red-Hat-Abonnement erforderlich.
+#        Kommerzielle gehärtete Alternative (Subscription vorausgesetzt):
+#          hub.docker.com/hardened-images/catalog/dhi/python
+#
+# Python-Versionsstatus (Stand März 2026):
+#   3.10  EOL: Oktober 2026  ← veraltet – nicht mehr verwenden!
+#   3.11  EOL: Oktober 2027
+#   3.12  EOL: Oktober 2028  ← diese Basis  ✓
+#   3.13  EOL: Oktober 2029
+#
+# Dieses Image ist DATENBANK-AGNOSTISCH.
+# Es enthält beide Treiber (asyncpg für PostgreSQL und aiomysql für
+# MariaDB) – welche Datenbank genutzt wird, entscheidet ausschliesslich
+# die Umgebungsvariable ARBORPRESS_DB__URL zur Laufzeit.
+# Die Compose-Datei setzt diesen Wert; das Image selbst weiss nichts
+# von der Datenbankwahl.
+# ======================================================================
+
+# ── Stage 1: Builder ───────────────────────────────────────────────────
+FROM registry.access.redhat.com/ubi9/python-312:latest AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+USER root
+
+# Build-Werkzeuge für C-Erweiterungen:
+#   pillow (Bilder), cryptography, argon2-cffi
+#   asyncpg und aiomysql bringen eigene C-Teile mit bzw. sind pure Python
+RUN microdnf install -y \
+        gcc \
+        python3-devel \
+        libffi-devel \
+        libjpeg-turbo-devel \
+        libpng-devel \
+        zlib-devel \
+    && microdnf clean all
+
+# Isolierte Python-Umgebung (vom Runtime-Image getrennt)
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /build
+
+# Paket inkl. aller Abhängigkeiten installieren.
+# cache-redis: optionaler Redis-Cache-Backend-Support.
+COPY pyproject.toml ./
+COPY arborpress/ ./arborpress/
+RUN pip install --no-cache-dir ".[cache-redis]"
+
+# ── Stage 2: Runtime ───────────────────────────────────────────────────
+FROM registry.access.redhat.com/ubi9/python-312:latest AS runtime
+
+LABEL org.opencontainers.image.title="ArborPress" \
+      org.opencontainers.image.description="ArborPress Blog-Plattform (UBI9)" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    # Host muss im Container auf 0.0.0.0 gebunden werden.
+    ARBORPRESS_WEB__HOST="0.0.0.0" \
+    ARBORPRESS_WEB__PORT="8080" \
+    # 1 = ein vorgelagerter Reverse-Proxy (nginx/Traefik/Caddy).
+    # 0 setzen, wenn ArborPress direkt erreichbar ist (kein Proxy).
+    ARBORPRESS_WEB__TRUSTED_PROXIES="1" \
+    ARBORPRESS_LOGGING__LEVEL="INFO"
+
+USER root
+
+# Nur Laufzeit-Bibliotheken – keine Build-Werkzeuge im finalen Image
+RUN microdnf install -y \
+        libjpeg-turbo \
+        libpng \
+        zlib \
+    && microdnf clean all \
+    # Verzeichnisse anlegen (OpenShift-kompatibel: group 0 = root)
+    && install -d -m 0775 -o 1001 -g 0 \
+        /opt/app-root/src/media \
+        /opt/app-root/src/logs \
+    && chown -R 1001:0 /opt/app-root \
+    && chmod -R g=u /opt/app-root
+
+WORKDIR /opt/app-root/src
+
+# Virtualenv aus Builder übernehmen
+COPY --from=builder --chown=1001:0 /opt/venv /opt/venv
+
+# Entrypoint-Skript
+COPY --chown=1001:0 docker/entrypoint.sh /opt/app-root/entrypoint.sh
+RUN chmod +x /opt/app-root/entrypoint.sh
+
+# Nicht-privilegierter Benutzer (UID 1001)
+USER 1001
+
+VOLUME ["/opt/app-root/src/media", "/opt/app-root/src/logs"]
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD python3 -c \
+        "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/_health')" \
+        || exit 1
+
+ENTRYPOINT ["/opt/app-root/entrypoint.sh"]
