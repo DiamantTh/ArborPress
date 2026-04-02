@@ -23,14 +23,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from arborpress.core.db import Base
 
 
-class AccountType(str, enum.Enum):
+class AccountType(enum.StrEnum):
     """§4 – zwei klar getrennte Identitätstypen."""
 
     PUBLIC = "public"       # Federated / Public Account (WebFinger, ActivityPub)
     OPERATIONAL = "operational"  # Admin/Moderation – nicht extern auffindbar
 
 
-class UserRole(str, enum.Enum):
+class UserRole(enum.StrEnum):
     ADMIN = "admin"
     EDITOR = "editor"
     AUTHOR = "author"
@@ -120,7 +120,7 @@ class User(Base):
         return f"<User {self.username!r} [{self.account_type.value}/{self.role.value}]>"
 
 
-class CredentialTransport(str, enum.Enum):
+class CredentialTransport(enum.StrEnum):
     USB = "usb"
     NFC = "nfc"
     BLE = "ble"
@@ -156,7 +156,7 @@ class WebAuthnCredential(Base):
     __table_args__ = (UniqueConstraint("user_id", "label", name="uq_user_credential_label"),)
 
 
-class MFADeviceType(str, enum.Enum):
+class MFADeviceType(enum.StrEnum):
     TOTP = "totp"
     HOTP = "hotp"
     PLUGIN = "plugin"
@@ -329,12 +329,12 @@ class InstanceKeypair(Base):
 # ---------------------------------------------------------------------------
 
 
-class FollowerDirection(str, enum.Enum):
+class FollowerDirection(enum.StrEnum):
     INBOUND  = "inbound"   # Jemand folgt diesem Account (Follower)
     OUTBOUND = "outbound"  # Dieser Account folgt jemandem (Following)
 
 
-class FollowerState(str, enum.Enum):
+class FollowerState(enum.StrEnum):
     PENDING  = "pending"   # Follow-Anfrage noch nicht bestätigt
     ACCEPTED = "accepted"  # Follow aktiv
     REJECTED = "rejected"  # Abgelehnt / blockiert

@@ -48,14 +48,14 @@ post_tags = Table(
 )
 
 
-class PostStatus(str, enum.Enum):
+class PostStatus(enum.StrEnum):
     DRAFT = "draft"
     PUBLISHED = "published"
     SCHEDULED = "scheduled"
     ARCHIVED = "archived"
 
 
-class PostVisibility(str, enum.Enum):
+class PostVisibility(enum.StrEnum):
     """Sichtbarkeitsstufe eines Beitrags oder einer Seite.
 
     public  – in Listen/Suche/Tags sichtbar (Standard)
@@ -150,7 +150,7 @@ class Post(Base):
         return max(1, round(minutes))
 
 
-class PageType(str, enum.Enum):
+class PageType(enum.StrEnum):
     CUSTOM = "custom"
     IMPRESSUM = "impressum"   # §1 system pages
     PRIVACY = "privacy"
@@ -195,7 +195,7 @@ class Page(Base):
     )
 
 
-class CommentStatus(str, enum.Enum):
+class CommentStatus(enum.StrEnum):
     PENDING    = "pending"     # eingereicht, noch nicht per E-Mail bestätigt
     CONFIRMED  = "confirmed"   # E-Mail-Bestätigung erfolgt, wartet auf Freischaltung
     APPROVED   = "approved"    # vom Admin freigeschaltet – öffentlich sichtbar

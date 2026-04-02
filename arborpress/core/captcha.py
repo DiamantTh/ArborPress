@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 # CaptchaType – hierher verschoben (war in config.py)
 # ---------------------------------------------------------------------------
 
-class CaptchaType(str, enum.Enum):
+class CaptchaType(enum.StrEnum):
     NONE             = "none"
     MATH             = "math"
     CUSTOM           = "custom"

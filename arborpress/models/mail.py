@@ -12,7 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from arborpress.core.db import Base
 
 
-class MailStatus(str, enum.Enum):
+class MailStatus(enum.StrEnum):
     PENDING = "pending"
     SENT = "sent"
     FAILED = "failed"
