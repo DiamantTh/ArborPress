@@ -13,7 +13,6 @@ Routen:
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import secrets
 
@@ -129,7 +128,8 @@ async def sso_callback(provider: str) -> tuple:
             headers={"Authorization": f"Bearer {access_token}"},
         )
         userinfo_resp.raise_for_status()
-        userinfo = userinfo_resp.json()
+        # TODO: §11 Claims aus userinfo für rollenbasierte Zuordnung nutzen
+        _userinfo: dict = userinfo_resp.json()
 
     # §11: Claims → interne Rolle (kein automatischer Privileg-Eskalation)
     role_mapping: dict = provider_cfg.get("role_mapping", {})

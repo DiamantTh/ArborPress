@@ -14,13 +14,12 @@ aus der Datenbank gelesen und im Admin-Interface unter /admin/settings gepflegt.
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-import tomllib
 
 
 class DatabaseSettings(BaseSettings):
@@ -118,7 +117,7 @@ class Settings(BaseSettings):
     cache:   CacheSettings    = Field(default_factory=CacheSettings)
 
     @classmethod
-    def from_file(cls, path: Path) -> "Settings":
+    def from_file(cls, path: Path) -> Settings:
         with open(path, "rb") as fh:
             data = tomllib.load(fh)
         return cls.model_validate(data)

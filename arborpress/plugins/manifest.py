@@ -15,14 +15,12 @@ Jedes Plugin liefert eine ``manifest.toml`` mit mindestens:
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 from pydantic import BaseModel, field_validator
 
 from arborpress.plugins.capabilities import Capability
-
-import tomllib
-
 
 # Mindest-Core-Versionsformat: "MAJOR.MINOR.PATCH"
 _SEMVER_RE = r"^\d+\.\d+\.\d+$"
@@ -74,7 +72,7 @@ class PluginManifest(BaseModel):
     entry_points: EntryPoints = EntryPoints()
 
     @classmethod
-    def from_file(cls, path: Path) -> "PluginManifest":
+    def from_file(cls, path: Path) -> PluginManifest:
         with open(path, "rb") as fh:
             data = tomllib.load(fh)
         return cls.model_validate(data)

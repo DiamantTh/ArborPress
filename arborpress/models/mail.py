@@ -5,9 +5,8 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Enum, Integer, LargeBinary, String, Text, func
+from sqlalchemy import Boolean, DateTime, Enum, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from arborpress.core.db import Base
@@ -38,7 +37,7 @@ class MailQueue(Base):
     subject: Mapped[str] = mapped_column(String(512), nullable=False)
     # Text-Body (PGP-verschlüsselt wenn recipient.pgp_encrypt_mail)
     body_text: Mapped[str] = mapped_column(Text, nullable=False)
-    body_html: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     # OpenPGP §13 – verschlüsselter Payload nur wenn aktiviert
     pgp_encrypted: Mapped[bool] = mapped_column(Boolean, default=False)
     # Kein sensibles Logging – nur Metadaten
@@ -46,8 +45,8 @@ class MailQueue(Base):
         Enum(MailStatus), nullable=False, default=MailStatus.PENDING
     )
     attempts: Mapped[int] = mapped_column(Integer, default=0)
-    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    last_error: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

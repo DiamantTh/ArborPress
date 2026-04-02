@@ -202,7 +202,7 @@ async def render_md_async(text: str, db=None) -> str:
     ]
     results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
-    for key, result in zip(placeholder_map, results):
+    for key, result in zip(placeholder_map, results, strict=False):
         url = placeholder_map[key]
         if isinstance(result, str) and result:
             embed_block = (

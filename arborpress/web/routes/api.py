@@ -12,17 +12,25 @@ CSRF-Hinweis (§8 / §10):
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import uuid as _uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-import aiofiles
-from quart import Blueprint, jsonify, request, abort, session
-from quart import current_app  # noqa: F401
+from quart import (
+    Blueprint,
+    abort,
+    current_app,  # noqa: F401
+    jsonify,
+    request,
+    session,
+)
 
 from arborpress.core.config import get_settings
 from arborpress.core.markdown import render_md_async
+
+log = logging.getLogger("arborpress.web.api")
 
 # ---------------------------------------------------------------------------
 # Blueprints
@@ -43,6 +51,9 @@ def _origin_check() -> None:
     origin = request.headers.get("Origin") or request.headers.get("Referer", "")
     if origin and not origin.startswith(cfg.web.base_url):
         abort(403, "Cross-origin request rejected")
+
+
+_ADMIN_ROLES: frozenset[str] = frozenset({"admin", "editor", "author", "moderator"})
 
 
 # ---------------------------------------------------------------------------
@@ -126,15 +137,18 @@ async def api_search():
 
 
 def _require_admin_session() -> None:
-    """Prüft Admin-Session. Wirft 401 wenn nicht authentifiziert (§2)."""
-    # TODO: Session-Check via auth-Modul
-    pass
+    """Prüft Admin-Session. Wirft 401/403 wenn nicht authentifiziert (§2)."""
+    if not session.get("user_id"):
+        abort(401, "Authentifizierung erforderlich")
+    if session.get("user_role", "") not in _ADMIN_ROLES:
+        abort(403, "Unzureichende Berechtigungen")
 
 
 def _require_stepup(operation: str) -> None:
     """Prüft Step-up-Session für sensible Operationen (§2)."""
-    from arborpress.auth.stepup import assert_stepup
     from quart import session
+
+    from arborpress.auth.stepup import assert_stepup
     try:
         assert_stepup(session, session.get("user_id"), operation)
     except PermissionError as exc:
@@ -272,7 +286,7 @@ async def media_upload():
         abort(413, "Datei überschreitet 20-MiB-Limit")
 
     cfg = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     yyyy = now.year
     mm = now.month
 
@@ -294,11 +308,12 @@ async def media_upload():
     if mime_base not in ("image/svg+xml",):
         try:
             from io import BytesIO
+
             from PIL import Image
             img = Image.open(BytesIO(data))
             width, height = img.size
         except Exception:
-            pass
+            log.debug("Pillow konnte Bilddimensionen nicht lesen", exc_info=True)
 
     # Datei asynchron schreiben
     await asyncio.to_thread(_write_upload, dest_dir, dest_path, data)

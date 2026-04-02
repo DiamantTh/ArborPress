@@ -25,10 +25,9 @@ Jedes Theme liegt in ``arborpress/themes/<id>/`` mit einer ``theme.toml``:
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import Any
-
 import tomllib
+from pathlib import Path
+
 from pydantic import BaseModel, Field, field_validator
 
 log = logging.getLogger("arborpress.themes")
@@ -99,7 +98,7 @@ class ThemeManifest(BaseModel):
     _path: Path | None = None
 
     @classmethod
-    def from_file(cls, path: Path) -> "ThemeManifest":
+    def from_file(cls, path: Path) -> ThemeManifest:
         with open(path, "rb") as fh:
             data = tomllib.load(fh)
         obj = cls.model_validate(data)

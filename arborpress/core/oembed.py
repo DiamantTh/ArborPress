@@ -40,7 +40,7 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 from urllib.parse import urlencode, urlparse
 
@@ -167,14 +167,14 @@ async def get_embed_html(
         HTML-Fragment als String, oder ``None`` wenn kein Anbieter passt
         oder der Fetch fehlschlägt.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # ── DB-Cache-Lookup ────────────────────────────────────────────────────
     stmt = select(OEmbedCache).where(OEmbedCache.url == url)
     result = await db.execute(stmt)
     cached: OEmbedCache | None = result.scalar_one_or_none()
 
-    if cached is not None and cached.expires_at.replace(tzinfo=timezone.utc) > now:
+    if cached is not None and cached.expires_at.replace(tzinfo=UTC) > now:
         log.debug("oEmbed DB-Cache-Hit: %s", url)
         return cached.html
 

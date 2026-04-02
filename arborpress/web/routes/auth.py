@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from base64 import urlsafe_b64encode
+from datetime import UTC
 
-from quart import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
+from quart import Blueprint, abort, jsonify, render_template, request, session
 from sqlalchemy import select
 
 from arborpress.auth.stepup import grant_stepup, revoke_stepup
@@ -52,8 +52,16 @@ def _get_webauthn() -> WebAuthnService:
     cfg = get_settings()
     from urllib.parse import urlparse
     parsed = urlparse(cfg.web.base_url)
+    _host = parsed.hostname or "localhost"
+    # WebAuthn-Spec: rp_id muss ASCII/Punycode – kein Unicode für IDN-Domains
+    if _host not in ("localhost", "127.0.0.1", "::1"):
+        try:
+            import idna as _idna  # idna>=3.7 (IDNA 2008)
+            _host = _idna.encode(_host, alg="TRANSITIONAL").decode("ascii")
+        except Exception:
+            _host = _host.encode("idna").decode("ascii")
     return WebAuthnService(
-        rp_id=parsed.hostname or "localhost",
+        rp_id=_host,
         rp_name="ArborPress",
         origin=cfg.web.base_url,
     )
@@ -138,7 +146,6 @@ async def register_begin():
 @auth_bp.post("/register/complete")
 async def register_complete():
     """Schließt die WebAuthn-Registrierung ab und speichert Credential (§2)."""
-    from webauthn import base64url_to_bytes
     from webauthn.helpers.structs import RegistrationCredential
 
     raw = await request.get_json()
@@ -235,9 +242,11 @@ async def login_complete():
     credential_id: bytes = bytes.fromhex(raw.get("id", "").replace("-", ""))
 
     async for db in get_db_session():
-        from arborpress.models.user import User, WebAuthnCredential
+        from datetime import datetime
+
         from sqlalchemy import update
-        from datetime import datetime, timezone
+
+        from arborpress.models.user import User, WebAuthnCredential
 
         # Credential in DB suchen
         stmt = select(WebAuthnCredential).where(
@@ -271,7 +280,7 @@ async def login_complete():
             .where(WebAuthnCredential.id == db_cred.id)
             .values(
                 sign_count=verification.new_sign_count,
-                last_used_at=datetime.now(timezone.utc),
+                last_used_at=datetime.now(UTC),
             )
         )
         await db.commit()

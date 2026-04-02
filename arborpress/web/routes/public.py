@@ -14,22 +14,20 @@ Kanonische URL-Hierarchie:
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import mimetypes
 import os
-from pathlib import Path
-
-import datetime as dt
 from email.utils import formatdate as _rfc822
 
 from quart import (
     Blueprint,
+    Response,
     abort,
     redirect,
     render_template,
     request,
     url_for,
-    Response,
 )
 from slugify import slugify
 from sqlalchemy import select
@@ -64,7 +62,7 @@ async def _get_footer_pages() -> list:
         async for db in get_db_session():
             stmt = select(Page).where(
                 Page.page_type.in_([
-                    PageType.impressum, PageType.privacy, PageType.rules,
+                    PageType.IMPRESSUM, PageType.PRIVACY, PageType.RULES,
                 ]),
                 Page.is_published == True,  # noqa: E712
                 Page.visibility == PostVisibility.PUBLIC,
@@ -100,7 +98,7 @@ async def index():
             stmt = (
                 select(Post)
                 .where(
-                    Post.status == PostStatus.published,
+                    Post.status == PostStatus.PUBLISHED,
                     Post.visibility == PostVisibility.PUBLIC,
                 )
                 .order_by(Post.published_at.desc())
@@ -109,7 +107,7 @@ async def index():
                 stmt = stmt.where(Post.lang == lang)
 
             total_stmt = select(Post).where(
-                Post.status == PostStatus.published,
+                Post.status == PostStatus.PUBLISHED,
                 Post.visibility == PostVisibility.PUBLIC,
             )
             total_result = await db.execute(total_stmt)
@@ -152,7 +150,7 @@ async def post_detail(slug: str):
         # Post laden (status=published reicht; visibility wird separat geprüft)
         stmt = select(Post).where(
             Post.slug == canonical,
-            Post.status == PostStatus.published,
+            Post.status == PostStatus.PUBLISHED,
         )
         result = await db.execute(stmt)
         post = result.scalar_one_or_none()
@@ -180,6 +178,7 @@ async def post_detail(slug: str):
         post_tag_ids = [t.id for t in (post.tags or [])]
         if post_tag_ids:
             from sqlalchemy import func
+
             from arborpress.models.content import post_tags as _post_tags_table
 
             overlap_subq = (
@@ -198,7 +197,7 @@ async def post_detail(slug: str):
                 select(Post, overlap_subq.c.overlap)
                 .join(overlap_subq, Post.id == overlap_subq.c.post_id)
                 .where(
-                    Post.status     == PostStatus.published,
+                    Post.status     == PostStatus.PUBLISHED,
                     Post.visibility == PostVisibility.PUBLIC,
                 )
                 .order_by(overlap_subq.c.overlap.desc(), Post.published_at.desc())
@@ -219,8 +218,6 @@ async def post_detail(slug: str):
 @public_bp.get("/o/<short_id>")
 async def shortlink(short_id: str):
     """ActivityPub / Kurz-Link → 301 zum kanonischen Slug (§6)."""
-    from arborpress.models.content import Post
-
     from arborpress.models.content import Post, PostVisibility
 
     async for db in get_db_session():
@@ -294,7 +291,7 @@ async def tag_archive(tag: str):
         posts_stmt = (
             select(Post)
             .where(
-                Post.status == PostStatus.published,
+                Post.status == PostStatus.PUBLISHED,
                 Post.visibility == PostVisibility.PUBLIC,
                 Post.tags.contains(tag_obj),
             )
@@ -303,7 +300,7 @@ async def tag_archive(tag: str):
         posts_result = await db.execute(posts_stmt)
         posts = posts_result.scalars().all()
 
-    return await _render("tag.html", tag=tag_obj.name, posts=posts)
+    return await _render("tag.html", tag=tag_obj.label, posts=posts)
 
 
 # ---------------------------------------------------------------------------
@@ -330,11 +327,11 @@ async def search():
                     stmt = (
                         select(Post)
                         .where(
-                            Post.status == PostStatus.published,
+                            Post.status == PostStatus.PUBLISHED,
                             Post.visibility == PostVisibility.PUBLIC,
                         )
                         .where(
-                            func.to_tsvector("simple", Post.title + " " + Post.body_raw)
+                            func.to_tsvector("simple", Post.title + " " + Post.body_md)
                             .op("@@")(func.plainto_tsquery("simple", q))
                         )
                         .limit(50)
@@ -344,10 +341,10 @@ async def search():
                     stmt = (
                         select(Post)
                         .where(
-                            Post.status == PostStatus.published,
+                            Post.status == PostStatus.PUBLISHED,
                             Post.visibility == PostVisibility.PUBLIC,
                         )
-                        .where(text("MATCH(title, body_raw) AGAINST(:q IN BOOLEAN MODE)"))
+                        .where(text("MATCH(title, body_md) AGAINST(:q IN BOOLEAN MODE)"))
                         .params(q=q)
                         .limit(50)
                     )
@@ -357,7 +354,7 @@ async def search():
                     stmt = (
                         select(Post)
                         .where(
-                            Post.status == PostStatus.published,
+                            Post.status == PostStatus.PUBLISHED,
                             Post.visibility == PostVisibility.PUBLIC,
                         )
                         .where(Post.title.ilike(f"%{q}%"))
@@ -428,7 +425,7 @@ async def media_serve(yyyy: int, mm: int, filename: str):
 @public_bp.get("/@<handle>")
 async def author_profile(handle: str):
     """Öffentliches Profil – nur PUBLIC-Konten (§4 Sicherheitstrennung)."""
-    from arborpress.models.user import User, AccountType
+    from arborpress.models.user import AccountType, User
 
     async for db in get_db_session():
         stmt = select(User).where(
@@ -449,7 +446,7 @@ async def author_profile(handle: str):
             select(Post)
             .where(
                 Post.author_id == user.id,
-                Post.status == PostStatus.published,
+                Post.status == PostStatus.PUBLISHED,
                 Post.visibility == PostVisibility.PUBLIC,
             )
             .order_by(Post.published_at.desc())
@@ -469,7 +466,7 @@ async def author_post(handle: str, slug: str):
         return redirect(url_for("public.author_post", handle=handle, slug=canonical), 301)
 
     from arborpress.models.content import Post, PostStatus
-    from arborpress.models.user import User, AccountType
+    from arborpress.models.user import AccountType, User
 
     async for db in get_db_session():
         author_stmt = select(User).where(
@@ -484,7 +481,7 @@ async def author_post(handle: str, slug: str):
         post_stmt = select(Post).where(
             Post.slug == canonical,
             Post.author_id == author.id,
-            Post.status == PostStatus.published,
+            Post.status == PostStatus.PUBLISHED,
         )
         post_result = await db.execute(post_stmt)
         post = post_result.scalar_one_or_none()
@@ -528,7 +525,7 @@ async def post_comment_submit(slug: str):
     async for db in get_db_session():
         stmt = select(Post).where(
             Post.slug == canonical,
-            Post.status == PostStatus.published,
+            Post.status == PostStatus.PUBLISHED,
         )
         result = await db.execute(stmt)
         post = result.scalar_one_or_none()
@@ -583,6 +580,7 @@ async def post_comment_submit(slug: str):
         rate_limit = comments_section.get("rate_limit_per_hour", 10)
         if rate_limit > 0:
             from datetime import timedelta
+
             from sqlalchemy import and_
             one_hour_ago = dt.utcnow() - timedelta(hours=1)
             ip = request.remote_addr or ""
@@ -743,7 +741,7 @@ async def _feed_posts():
         stmt = (
             select(Post)
             .where(
-                Post.status     == PostStatus.published,
+                Post.status     == PostStatus.PUBLISHED,
                 Post.visibility == PostVisibility.PUBLIC,
             )
             .order_by(Post.published_at.desc())
@@ -846,7 +844,7 @@ async def atom_feed():
             f"    <link href=\"{link}\"/>\n"
             f"    <updated>{_rfc3339(p.published_at)}</updated>\n"
             + (f"    <summary>{excerpt}</summary>\n" if excerpt else "")
-            + f"  </entry>"
+            + "  </entry>"
         )
 
     xml = (

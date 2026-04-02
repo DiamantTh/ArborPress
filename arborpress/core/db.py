@@ -47,7 +47,7 @@ def get_engine() -> AsyncEngine:
         if cfg.db.is_sqlite:
             # SQLite: kein Connection-Pool, WAL + FK via connect_args/event
             from sqlalchemy import event as sa_event
-            from sqlalchemy.pool import StaticPool, NullPool
+            from sqlalchemy.pool import NullPool, StaticPool
 
             is_memory = ":memory:" in url
             pool_cls = StaticPool if is_memory else NullPool
@@ -64,7 +64,6 @@ def get_engine() -> AsyncEngine:
             )
 
             # WAL-Modus und Foreign-Key-Enforcement für SQLite aktivieren
-            from sqlalchemy import text as sa_text
 
             @sa_event.listens_for(_engine.sync_engine, "connect")
             def _sqlite_pragmas(dbapi_conn: object, _: object) -> None:

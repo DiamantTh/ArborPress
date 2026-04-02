@@ -7,10 +7,10 @@ import enum
 import re
 import uuid
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import (
     Boolean,
+    Column,
     DateTime,
     Enum,
     ForeignKey,
@@ -18,13 +18,11 @@ from sqlalchemy import (
     String,
     Table,
     Text,
-    Column,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from arborpress.core.db import Base
-
 
 # ---------------------------------------------------------------------------
 # Tags (§1, §6 /tag/{tag})
@@ -38,7 +36,7 @@ class Tag(Base):
     slug: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     label: Mapped[str] = mapped_column(String(128), nullable=False)
     # §7 optional language tag
-    lang: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    lang: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
 
 # Many-to-many: posts ↔ tags
@@ -87,11 +85,11 @@ class Post(Base):
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     slug: Mapped[str] = mapped_column(String(256), nullable=False)
-    slug_old: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    slug_old: Mapped[str | None] = mapped_column(String(256), nullable=True)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     body_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
     body_html: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    excerpt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[PostStatus] = mapped_column(
         Enum(PostStatus), nullable=False, default=PostStatus.DRAFT
     )
@@ -100,13 +98,13 @@ class Post(Base):
         Enum(PostVisibility), nullable=False, default=PostVisibility.PUBLIC
     )
     # §7 language
-    lang: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    lang: Mapped[str | None] = mapped_column(String(8), nullable=True)
     # §5 ActivityPub object ID (set when federated)
-    ap_object_id: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    ap_object_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     # Captcha-Typ für Kommentarformular (NULL = globalen Standard aus config verwenden)
     # Erlaubte Werte: none|math|custom|hcaptcha|friendly_captcha|altcha|mcaptcha|mosparo|turnstile
-    captcha_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    captcha_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # Sichtbarkeit in Listen
     is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -121,7 +119,7 @@ class Post(Base):
     # Lesedauer: beim Speichern berechnet (Markdown-Wörter / 200 wpm; min. 1)
     reading_time_min: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
-    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
@@ -171,14 +169,14 @@ class Page(Base):
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     slug: Mapped[str] = mapped_column(String(256), nullable=False)
-    slug_old: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    slug_old: Mapped[str | None] = mapped_column(String(256), nullable=True)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     body_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
     body_html: Mapped[str] = mapped_column(Text, nullable=False, default="")
     page_type: Mapped[PageType] = mapped_column(
         Enum(PageType), nullable=False, default=PageType.CUSTOM
     )
-    lang: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    lang: Mapped[str | None] = mapped_column(String(8), nullable=True)
     is_published: Mapped[bool] = mapped_column(Boolean, default=False)
     # Sichtbarkeit: public | hidden | private
     # Bei Systemseiten (IMPRESSUM/PRIVACY/RULES) löst private/hidden eine
@@ -225,7 +223,7 @@ class Comment(Base):
     # Autor-Angaben (kein Account erforderlich)
     author_name: Mapped[str]  = mapped_column(String(128), nullable=False)
     author_email: Mapped[str] = mapped_column(String(256), nullable=False)
-    author_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    author_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     body: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -236,28 +234,28 @@ class Comment(Base):
     confirmation_token: Mapped[str] = mapped_column(
         String(64), nullable=False, default=lambda: str(uuid.uuid4())
     )
-    confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    approved_at:  Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Zitat-Referenz: flache Kommentarstruktur statt tiefem Nesting
     # Zeigt auf den kommentierten Kommentar (derselbe Post).
-    quote_of_id: Mapped[Optional[str]] = mapped_column(
+    quote_of_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("comments.id", ondelete="SET NULL"), nullable=True
     )
 
     # Moderationsnotiz des Admins (intern)
-    mod_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    mod_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    ip_address: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    user_agent:  Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent:  Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
-    post: Mapped["Post"] = relationship("Post", back_populates="comments", lazy="selectin")
+    post: Mapped[Post] = relationship("Post", back_populates="comments", lazy="selectin")
 
     # Zitierter Kommentar (flache Struktur statt tiefem Nesting)
     # foreign() markiert die FK-Seite; rechts steht die remote (Parent-) Seite.
-    quoted: Mapped[Optional["Comment"]] = relationship(
+    quoted: Mapped[Comment | None] = relationship(
         "Comment",
         primaryjoin="foreign(Comment.quote_of_id) == Comment.id",
         uselist=False,
@@ -286,7 +284,7 @@ class Media(Base):
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    uploader_id: Mapped[Optional[str]] = mapped_column(
+    uploader_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     filename: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -294,11 +292,11 @@ class Media(Base):
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Pfad relativ zu MEDIA_ROOT: yyyy/mm/filename
     storage_path: Mapped[str] = mapped_column(String(512), nullable=False)
-    alt_text: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
-    width: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    alt_text: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Externes Original-URL (gesetzt wenn das Bild automatisch heruntergeladen wurde)
-    original_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True, index=True)
+    original_url: Mapped[str | None] = mapped_column(String(1024), nullable=True, index=True)
 
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -317,7 +315,7 @@ class OEmbedCache(Base):
     )
     # Original Post-URL (eindeutiger Schlüssel)
     url: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
-    provider_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    provider_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # Bereinigtes HTML ohne <script>-Tags
     html: Mapped[str] = mapped_column(Text, nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -355,23 +353,23 @@ class Category(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     slug: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     label: Mapped[str] = mapped_column(String(128), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Hierarchie: NULL = Root-Kategorie
-    parent_id: Mapped[Optional[int]] = mapped_column(
+    parent_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True
     )
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    lang: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    lang: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
     # Eltern-Kategorie
-    parent: Mapped[Optional["Category"]] = relationship(
+    parent: Mapped[Category | None] = relationship(
         "Category",
         foreign_keys=[parent_id],
         back_populates="children",
         remote_side="Category.id",
     )
     # Kind-Kategorien
-    children: Mapped[list["Category"]] = relationship(
+    children: Mapped[list[Category]] = relationship(
         "Category",
         foreign_keys=[parent_id],
         back_populates="parent",
@@ -416,13 +414,13 @@ class PostRevision(Base):
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     body_md: Mapped[str] = mapped_column(Text, nullable=False)
     # Unified diff zum vorherigen Stand (NULL bei Revision 1)
-    diff_to_prev: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    diff_to_prev: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Wer hat die Änderung gespeichert (NULL = System/Import)
-    changed_by_id: Mapped[Optional[str]] = mapped_column(
+    changed_by_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     # Optionale Zusammenfassung der Änderung ("Tippfehler bereinigt")
-    change_summary: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    change_summary: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -476,10 +474,10 @@ class PostAccessToken(Base):
     # Argon2/bcrypt-Hash des Klartext-Tokens
     token_hash: Mapped[str] = mapped_column(String(256), nullable=False)
     # Nutzungslimit: NULL = unlimitiert
-    max_uses: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    max_uses: Mapped[int | None] = mapped_column(Integer, nullable=True)
     use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Ablaufdatum: NULL = kein Ablauf
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

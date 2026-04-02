@@ -26,7 +26,6 @@ import hashlib
 import hmac
 import json
 import logging
-import random
 import secrets
 
 log = logging.getLogger(__name__)
@@ -84,7 +83,7 @@ def _random_question(captcha_section: dict) -> tuple[int, dict]:
     questions = captcha_section.get("custom_questions", [])
     if not questions:
         raise ValueError("Keine Custom-Fragen konfiguriert.")
-    idx = random.randrange(len(questions))
+    idx = secrets.randbelow(len(questions))
     return idx, questions[idx]
 
 
@@ -101,8 +100,8 @@ def get_captcha_challenge(captcha_type: CaptchaType, captcha_section: dict) -> d
     ctx: dict = {"type": captcha_type.value}
 
     if captcha_type == CaptchaType.MATH:
-        a = random.randint(1, 9)
-        b = random.randint(1, 9)
+        a = secrets.randbelow(9) + 1
+        b = secrets.randbelow(9) + 1
         ctx.update({"math_a": a, "math_b": b})
 
     elif captcha_type == CaptchaType.CUSTOM:
@@ -224,7 +223,7 @@ def _altcha_create_challenge(captcha_section: dict) -> dict:
     algorithm  = captcha_section.get("altcha_algorithm", "SHA-256")
     hmac_key   = captcha_section.get("altcha_hmac_key", "")
     salt      = secrets.token_hex(12)
-    number    = random.randint(1, max_number)
+    number    = secrets.randbelow(max_number) + 1
     challenge = hashlib.sha256(f"{salt}{number}".encode()).hexdigest()
     key       = hmac_key.encode()
     signature = hmac.new(

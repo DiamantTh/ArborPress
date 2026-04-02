@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 log = logging.getLogger("arborpress.scheduler")
 
@@ -36,7 +36,7 @@ async def _publish_scheduled() -> int:
     from arborpress.core.events import emit
     from arborpress.models.content import Post, PostStatus
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None)  # DB speichert UTC ohne tz
+    now = datetime.now(UTC).replace(tzinfo=None)  # DB speichert UTC ohne tz
     published_count = 0
 
     try:

@@ -40,6 +40,12 @@ async def _csrf_protect() -> None:
         validate_csrf()
 
 
+@admin_bp.before_request
+async def _session_guard() -> None:
+    """Erzwingt Auth-Session für alle Admin-Routen (§2)."""
+    _require_session()
+
+
 # ---------------------------------------------------------------------------
 # Dashboard (§8)
 # ---------------------------------------------------------------------------
@@ -56,7 +62,7 @@ async def _get_stats() -> dict:
     """Sammelt Dashboard-Statistiken."""
     stats: dict = {}
     try:
-        from arborpress.models.content import Post, Page, Media
+        from arborpress.models.content import Media, Page, Post
         from arborpress.models.mail import MailQueue, MailStatus
         from arborpress.models.user import User
         from arborpress.plugins.registry import get_registry
@@ -115,7 +121,8 @@ async def post_new():
 async def post_new_save():
     _require_session()
     import uuid as _uuid
-    from arborpress.models.content import Post, PostRevision, PostStatus, PostVisibility, Tag
+
+    from arborpress.models.content import Post, PostRevision, PostStatus, PostVisibility
     form = await request.form
     title        = (form.get("title") or "").strip()
     slug         = (form.get("slug") or "").strip() or None
@@ -201,7 +208,7 @@ async def post_edit(slug: str):
 async def post_edit_save(slug: str):
     _require_session()
     import uuid as _uuid
-    from arborpress.core.captcha import CaptchaType
+
     from arborpress.models.content import Post, PostRevision, PostStatus, PostVisibility
     form = await request.form
     action = form.get("action", "save")
@@ -237,7 +244,6 @@ async def post_edit_save(slug: str):
 
         # Snapshot vor Änderung für Diff
         old_body_md = post.body_md or ""
-        old_title   = post.title
 
         if title:
             post.title = title

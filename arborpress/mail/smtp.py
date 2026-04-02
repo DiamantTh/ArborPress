@@ -11,11 +11,28 @@ from __future__ import annotations
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Optional
 
 import aiosmtplib
 
 log = logging.getLogger("arborpress.mail")
+
+
+def _to_ascii_hostname(host: str) -> str:
+    """Konvertiert IDN-Hostnamen zu IDNA-ASCII/Punycode (§13, RFC 5321)."""
+    if not host or host in ("localhost", "127.0.0.1", "::1"):
+        return host
+    # Reine IPv4-Adressen unverändert lassen
+    import re
+    if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host):
+        return host
+    try:
+        import idna as _idna  # idna>=3.7 (IDNA 2008)
+        return _idna.encode(host, alg="TRANSITIONAL").decode("ascii")
+    except Exception:
+        try:
+            return host.encode("idna").decode("ascii")
+        except UnicodeError:
+            return host
 
 
 class MailMessage:
@@ -26,8 +43,8 @@ class MailMessage:
         to: str,
         subject: str,
         body_text: str,
-        body_html: Optional[str] = None,
-        idempotency_key: Optional[str] = None,
+        body_html: str | None = None,
+        idempotency_key: str | None = None,
     ) -> None:
         self.to = to
         self.subject = subject
@@ -57,7 +74,7 @@ class SMTPBackend:
 
         await aiosmtplib.send(
             mime,
-            hostname=mail_section.get("smtp_host", "localhost"),
+            hostname=_to_ascii_hostname(mail_section.get("smtp_host", "localhost")),
             port=smtp_port,
             username=mail_section.get("smtp_user") or None,
             password=mail_section.get("smtp_password", "") or None,

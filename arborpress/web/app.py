@@ -10,13 +10,13 @@ from arborpress.core.config import get_settings
 from arborpress.logging.config import setup_logging
 from arborpress.plugins.registry import get_registry
 from arborpress.web.middleware import ReverseProxyMiddleware
-from arborpress.web.security import SecurityHeadersMiddleware
+from arborpress.web.routes.api import api_admin_bp, api_v1_bp
 from arborpress.web.routes.auth import auth_bp
+from arborpress.web.routes.federation import federation_bp, wellknown_bp
 from arborpress.web.routes.health import health_bp
 from arborpress.web.routes.public import public_bp
-from arborpress.web.routes.federation import wellknown_bp, federation_bp
 from arborpress.web.routes.sso import sso_bp
-from arborpress.web.routes.api import api_v1_bp, api_admin_bp
+from arborpress.web.security import SecurityHeadersMiddleware
 
 # Paket-Root = arborpress/
 _PKG_ROOT = Path(__file__).parent.parent
@@ -56,8 +56,8 @@ def create_app() -> Quart:
     app.jinja_env.globals["demo_mode"] = False  # Überschrieben per Context-Processor je Request
 
     # Aktives Theme laden und als Jinja2-Global bereitstellen
-    from arborpress.themes.manifest import get_active_theme, get_theme_registry
     from arborpress.core.site_settings import get_cached, get_defaults
+    from arborpress.themes.manifest import get_active_theme, get_theme_registry
     active_theme = get_active_theme()
     app.jinja_env.globals["theme"] = active_theme
 
@@ -94,7 +94,6 @@ def create_app() -> Quart:
         reg = get_theme_registry()
         all_t = reg.all()
         # Haupt-Themes (kein light_companion → keine reinen Dark-Only-Companions)
-        allow_all = bool(_demo_cfg.get("allow_all_themes", True))
         demo_light = [t for t in all_t if t.theme.light_companion is None]
         demo_map   = {t.theme.id: t for t in all_t}
 
@@ -117,7 +116,7 @@ def create_app() -> Quart:
         return ctx
     # Theme-Templates (überschreiben Kern-Templates; §9)
     if active_theme.template_dir:
-        from jinja2 import FileSystemLoader, ChoiceLoader
+        from jinja2 import ChoiceLoader, FileSystemLoader
         existing = app.jinja_env.loader
         app.jinja_env.loader = ChoiceLoader([
             FileSystemLoader(str(active_theme.template_dir)),
@@ -156,7 +155,9 @@ def create_app() -> Quart:
     # §9 Theme-Static-Files (GET /static/themes/<id>/css/style.css)
     @app.route("/static/themes/<theme_id>/<path:filename>")
     async def theme_static(theme_id: str, filename: str):  # type: ignore[return]
-        from quart import send_from_directory, abort as _abort
+        from quart import abort as _abort
+        from quart import send_from_directory
+
         from arborpress.themes.manifest import get_theme_registry
         t = get_theme_registry().get(theme_id)
         if t is None or t.static_dir is None or not t.static_dir.exists():
@@ -176,6 +177,7 @@ def create_app() -> Quart:
     @app.before_serving
     async def _on_startup() -> None:
         import asyncio
+
         from arborpress.core.db import get_engine
         from arborpress.core.db_capabilities import detect_capabilities, set_capabilities
         from arborpress.core.scheduler import run_scheduler

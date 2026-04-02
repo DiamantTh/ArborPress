@@ -193,6 +193,7 @@ async def get_section(section: str, db: Any) -> dict[str, Any]:
 
     try:
         from sqlalchemy import select
+
         from arborpress.models.settings import SiteSetting
 
         result = await db.execute(
@@ -221,6 +222,7 @@ async def save_section(
     Leert den Cache für diese Sektion nach dem Speichern.
     """
     from sqlalchemy import select
+
     from arborpress.models.settings import SiteSetting
 
     try:

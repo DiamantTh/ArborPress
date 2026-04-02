@@ -10,13 +10,16 @@ Aufruf:  arborpress --help
 from __future__ import annotations
 
 import asyncio
-import sys
+from datetime import UTC
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
 
 import typer
 
-from arborpress.core.config import get_settings, Settings
+from arborpress.core.config import Settings, get_settings
+
+if TYPE_CHECKING:
+    from cryptography.fernet import Fernet
 
 # ---------------------------------------------------------------------------
 # App-Instanz + Sub-Apps
@@ -56,7 +59,7 @@ app.add_typer(plugin_app, name="plugin")
 
 @app.callback()
 def main_callback(
-    config: Optional[Path] = typer.Option(
+    config: Path | None = typer.Option(  # noqa: B008
         None, "--config", "-c", help="Pfad zur config.toml"
     ),
 ) -> None:
@@ -140,7 +143,7 @@ def healthcheck() -> None:
             typer.echo("Status: OK")
         except Exception as exc:
             typer.echo(f"DB-Fehler: {exc}", err=True)
-            raise typer.Exit(1)
+            raise typer.Exit(1) from exc
 
     asyncio.run(_check())
 
@@ -196,8 +199,8 @@ def user_add(
     username: str = typer.Argument(..., help="Benutzername"),
     role: str = typer.Option("viewer", "--role", "-r", help="Rolle (admin/editor/author/moderator/viewer)"),
     operational: bool = typer.Option(False, "--operational", help="Operationales Admin-Konto (§4)"),
-    email: Optional[str] = typer.Option(None, "--email", "-e"),
-    display_name: Optional[str] = typer.Option(None, "--display-name", "-n"),
+    email: str | None = typer.Option(None, "--email", "-e"),
+    display_name: str | None = typer.Option(None, "--display-name", "-n"),
 ) -> None:
     """Legt einen neuen Benutzer an (§14 user management)."""
     from arborpress.models.user import AccountType, User, UserRole
@@ -206,7 +209,7 @@ def user_add(
         role_enum = UserRole(role)
     except ValueError:
         typer.echo(f"Ungültige Rolle: {role}. Erlaubt: {[r.value for r in UserRole]}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     account_type = AccountType.OPERATIONAL if operational else AccountType.PUBLIC
 
@@ -242,6 +245,7 @@ def user_disable(
 
     async def _disable() -> None:
         from sqlalchemy import select
+
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
         async for db in get_db_session():
@@ -271,12 +275,13 @@ def user_roles(
         role_enum = UserRole(role)
     except ValueError:
         typer.echo(f"Ungültige Rolle: {role}. Erlaubt: {[r.value for r in UserRole]}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     typer.echo(f"HINWEIS: 'change_roles' ist eine Step-up-Operation ({STEPUP_REQUIRED_OPERATIONS}).")
 
     async def _set_role() -> None:
         from sqlalchemy import select
+
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
         async for db in get_db_session():
@@ -301,6 +306,7 @@ def user_list(
     """Listet alle Benutzer auf."""
     async def _list() -> None:
         from sqlalchemy import select
+
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
         async for db in get_db_session():
@@ -331,6 +337,7 @@ def user_password_status(
     """Zeigt Passwort-Status eines Accounts (Warnung wenn aktiv)."""
     async def _check() -> None:
         from sqlalchemy import select
+
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
         async for db in get_db_session():
@@ -372,6 +379,7 @@ def user_password_disable(
 
     async def _disable_pw() -> None:
         from sqlalchemy import select
+
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
         async for db in get_db_session():
@@ -408,8 +416,9 @@ def user_federation_status(
     """Zeigt Federation-Status eines Accounts (Opt-out, Schlüsselpaar)."""
     async def _show() -> None:
         from sqlalchemy import select
+
         from arborpress.core.db import get_db_session
-        from arborpress.models.user import User, ActorKeypair
+        from arborpress.models.user import ActorKeypair, User
         async for db in get_db_session():
             result = await db.execute(select(User).where(User.username == username))
             user = result.scalar_one_or_none()
@@ -439,7 +448,7 @@ def user_federation_status(
 
 @user_app.command("auth-policy")
 def auth_policy_status(
-    username: Optional[str] = typer.Argument(None, help="Benutzer (leer = global)"),
+    username: str | None = typer.Argument(None, help="Benutzer (leer = global)"),
 ) -> None:
     """Zeigt Auth-Policy-Status (§2, §14 auth policy status)."""
     cfg = get_settings()
@@ -462,9 +471,10 @@ def mfa_list(
     """Listet alle MFA-Geräte eines Benutzers auf."""
     async def _list() -> None:
         from sqlalchemy import select
-        from arborpress.core.db import get_db_session
-        from arborpress.models.user import User, MFADevice
+
         from arborpress.auth.mfa import MFA_MAX_DEVICES
+        from arborpress.core.db import get_db_session
+        from arborpress.models.user import MFADevice, User
         async for db in get_db_session():
             result = await db.execute(select(User).where(User.username == username))
             user = result.scalar_one_or_none()
@@ -498,19 +508,20 @@ def mfa_add(
     device_type: str = typer.Option("totp", "--type", "-t", help="Gerätetyp: totp|hotp"),
 ) -> None:
     """Fügt ein neues TOTP/HOTP-Gerät hinzu und gibt den QR-URI aus."""
-    from arborpress.auth.mfa import TOTPService, HOTPService, MFA_MAX_DEVICES
+    from arborpress.auth.mfa import MFA_MAX_DEVICES, HOTPService, TOTPService
     from arborpress.models.user import MFADeviceType
 
     try:
         dtype = MFADeviceType(device_type.lower())
     except ValueError:
         typer.echo(f"Ungültiger Typ {device_type!r}. Erlaubt: totp, hotp", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     async def _add() -> None:
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
+
         from arborpress.core.db import get_db_session
-        from arborpress.models.user import User, MFADevice
+        from arborpress.models.user import MFADevice, User
         async for db in get_db_session():
             result = await db.execute(select(User).where(User.username == username))
             user = result.scalar_one_or_none()
@@ -539,8 +550,10 @@ def mfa_add(
 
             cfg = get_settings()
             # Einfache Verschlüsselung via Fernet (Secret-Key aus config)
+            import base64
+            import hashlib
+
             from cryptography.fernet import Fernet
-            import base64, hashlib
             key = base64.urlsafe_b64encode(
                 hashlib.sha256(cfg.web.secret_key.get_secret_value().encode()).digest()
             )
@@ -577,8 +590,9 @@ def mfa_remove(
 
     async def _remove() -> None:
         from sqlalchemy import select
+
         from arborpress.core.db import get_db_session
-        from arborpress.models.user import User, MFADevice
+        from arborpress.models.user import MFADevice, User
         async for db in get_db_session():
             result = await db.execute(select(User).where(User.username == username))
             user = result.scalar_one_or_none()
@@ -611,8 +625,9 @@ def mfa_rename(
     """Benennt ein MFA-Gerät um."""
     async def _rename() -> None:
         from sqlalchemy import select
+
         from arborpress.core.db import get_db_session
-        from arborpress.models.user import User, MFADevice
+        from arborpress.models.user import MFADevice, User
         async for db in get_db_session():
             result = await db.execute(select(User).where(User.username == username))
             user = result.scalar_one_or_none()
@@ -653,7 +668,7 @@ def key_generate(
 
 @key_app.command("import")
 def key_import(
-    file: Path = typer.Argument(..., help="Pfad zum Schlüssel (RSA >= 4096 oder ECC)"),
+    file: Path = typer.Argument(..., help="Pfad zum Schlüssel (RSA >= 4096 oder ECC)"),  # noqa: B008
 ) -> None:
     """Importiert einen bestehenden Schlüssel (§13 RSA-Import)."""
     typer.echo(f"Importiere Schlüssel aus {file} (TODO).")
@@ -664,8 +679,7 @@ def key_rotate(
     name: str = typer.Argument(..., help="Schlüssel-ID / Name"),
 ) -> None:
     """Rotiert einen Schlüssel – Step-up-Operation (§2, §14 key rotation)."""
-    from arborpress.auth.stepup import STEPUP_REQUIRED_OPERATIONS
-    typer.echo(f"HINWEIS: 'rotate_key' erfordert Step-up (via Web-Admin).")
+    typer.echo("HINWEIS: 'rotate_key' erfordert Step-up (via Web-Admin).")
     typer.echo(f"Rotiere {name!r} (TODO).")
 
 
@@ -682,7 +696,7 @@ def key_status() -> None:
 
 @search_app.command("reindex")
 def search_reindex(
-    provider: Optional[str] = typer.Option(None, "--provider", help="Explizit: pg_fts/mariadb_fulltext/sqlite_fts5/meilisearch/typesense/elasticsearch/fallback"),
+    provider: str | None = typer.Option(None, "--provider", help="Explizit: pg_fts/mariadb_fulltext/sqlite_fts5/meilisearch/typesense/elasticsearch/fallback"),
 ) -> None:
     """Baut den Suchindex neu auf (§12 FTS, §14 search reindex)."""
     from arborpress.core.site_settings import get_defaults
@@ -715,7 +729,7 @@ def cache_status() -> None:
 @cache_app.command("purge")
 def cache_purge() -> None:
     """Leert den gesamten Cache (§14 cache purge)."""
-    from arborpress.core.cache import cache_flush, cache_backend_info
+    from arborpress.core.cache import cache_backend_info, cache_flush
     asyncio.run(cache_flush())
     typer.echo(f"Cache geleert. Backend: {cache_backend_info()}")
     # Auch Site-Settings-Cache leeren
@@ -769,6 +783,7 @@ def federation_status() -> None:
     """Zeigt Federation-Konfiguration und Instanzschlüssel-Status aus der DB (§5)."""
     async def _show() -> None:
         from sqlalchemy import select
+
         from arborpress.core.db import get_db_session
         from arborpress.core.site_settings import get_section
         from arborpress.models.user import InstanceKeypair
@@ -811,17 +826,18 @@ def federation_kek_init() -> None:
     Den Wert in config.toml unter [auth] actor_key_enc_key eintragen.
     Danach vorhandene Schlüsselpaare mit --force neu verschlüsseln.
     """
-    import base64, os
+    import base64
+    import os
     kek = base64.urlsafe_b64encode(os.urandom(32)).decode()
     typer.echo("Neuer Actor-KEK generiert:")
     typer.echo(f"\n  {kek}\n")
     typer.echo("In config.toml eintragen:")
-    typer.echo(f"  [auth]")
+    typer.echo("  [auth]")
     typer.echo(f'  actor_key_enc_key = "{kek}"')
     typer.echo("\nDen Key sicher aufbewahren – Verlust macht alle Actor-Keypairs unbrauchbar.")
 
 
-def _get_actor_fernet() -> "Fernet":  # type: ignore[name-defined]
+def _get_actor_fernet() -> Fernet:  # type: ignore[name-defined]
     """Gibt das Fernet-Objekt mit dem Actor-KEK zurück.
 
     Bricht ab, wenn kein KEK konfiguriert ist.
@@ -859,12 +875,14 @@ def federation_keygen(
     fernet = _get_actor_fernet()
 
     async def _gen() -> None:
+        from datetime import datetime
+
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
         from sqlalchemy import select
+
         from arborpress.core.db import get_db_session
         from arborpress.models.user import InstanceKeypair
-        from cryptography.hazmat.primitives.asymmetric import rsa, ed25519
-        from cryptography.hazmat.primitives import serialization
-        from datetime import datetime, timezone
 
         async for db in get_db_session():
             existing = await db.execute(select(InstanceKeypair).where(InstanceKeypair.id == 1))
@@ -910,7 +928,7 @@ def federation_keygen(
                 ikp.key_id_url = key_id_url
                 ikp.public_key_pem = public_pem
                 ikp.private_key_enc = enc
-                ikp.rotated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                ikp.rotated_at = datetime.now(UTC).replace(tzinfo=None)
                 db.add(ikp)
                 action = "rotiert"
             else:
@@ -936,13 +954,14 @@ def federation_follower_list(
     """Listet Follower (inbound) oder Following (outbound) eines Accounts."""
     async def _list() -> None:
         from sqlalchemy import select
+
         from arborpress.core.db import get_db_session
-        from arborpress.models.user import User, Follower, FollowerDirection
+        from arborpress.models.user import Follower, FollowerDirection, User
         try:
             dir_enum = FollowerDirection(direction)
         except ValueError:
             typer.echo("Ungültige Richtung. Erlaubt: inbound, outbound", err=True)
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
         async for db in get_db_session():
             result = await db.execute(select(User).where(User.username == username))
             user = result.scalar_one_or_none()
@@ -1022,7 +1041,7 @@ def plugin_list() -> None:
 
 @plugin_app.command("validate")
 def plugin_validate(
-    path: Path = typer.Argument(..., help="Pfad zum Plugin-Verzeichnis"),
+    path: Path = typer.Argument(..., help="Pfad zum Plugin-Verzeichnis"),  # noqa: B008
 ) -> None:
     """Validiert das Manifest eines Plugins (§15)."""
     from arborpress.plugins.manifest import PluginManifest
@@ -1044,7 +1063,7 @@ def plugin_validate(
         )
     except Exception as exc:
         typer.echo(f"Fehler: {exc}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -1078,6 +1097,7 @@ def _bootstrap_plugins() -> None:
 def _load_plugin_cli_extensions() -> None:
     """§15 – Plugins können Typer-Sub-Apps registrieren."""
     import importlib
+
     from arborpress.plugins.registry import get_registry
 
     for plugin in get_registry().all():

@@ -15,6 +15,7 @@ async def ready() -> tuple:
     """Readiness-Check: prüft DB-Verbindung (§12)."""
     try:
         from sqlalchemy import text
+
         from arborpress.core.db import get_engine
         engine = get_engine()
         async with engine.connect() as conn:

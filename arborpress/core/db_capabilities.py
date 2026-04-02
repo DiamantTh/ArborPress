@@ -136,7 +136,7 @@ async def detect_capabilities(engine: AsyncEngine) -> DBCapabilities:
                 await conn.execute(sa_text("DROP TABLE IF EXISTS _fts5_check"))
                 fts5_available = True
             except Exception:
-                pass
+                log.debug("SQLite FTS5 nicht verfügbar", exc_info=True)
 
             caps.fts_available = fts5_available
             caps.fts_provider = "sqlite_fts5" if fts5_available else "fallback"

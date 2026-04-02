@@ -17,9 +17,8 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from quart import request, g
+from quart import g, request
 
 log = logging.getLogger("arborpress.i18n")
 

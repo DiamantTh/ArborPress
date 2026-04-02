@@ -25,7 +25,7 @@ import logging
 import mimetypes
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -74,6 +74,7 @@ async def download_and_store(
         Lokale URL (``/media/…``) oder ``None`` bei Fehler.
     """
     from sqlalchemy import select
+
     from arborpress.core.config import get_settings
     from arborpress.models.content import Media
 
@@ -118,11 +119,12 @@ async def download_and_store(
     if mime != "image/svg+xml":
         try:
             from io import BytesIO
+
             from PIL import Image
             img = Image.open(BytesIO(data))
             width, height = img.size
         except Exception:
-            pass
+            log.debug("Pillow konnte Bilddimensionen nicht lesen (url=%s)", url, exc_info=True)
 
     # ── Stabiler Dateiname: SHA-256 des URL + Erweiterung ─────────────
     digest = hashlib.sha256(url.encode()).hexdigest()
@@ -137,7 +139,7 @@ async def download_and_store(
         url_path = PurePosixPath(urlparse(url).path)
         ext = url_path.suffix[:6] if url_path.suffix else ".bin"
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     yyyy, mm = now.year, now.month
     filename = f"{digest[:24]}{ext}"   # 24 Hex-Zeichen reichen für Eindeutigkeit
     storage_path = f"{yyyy}/{mm:02d}/{filename}"

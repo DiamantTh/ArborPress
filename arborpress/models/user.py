@@ -5,7 +5,6 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import (
     Boolean,
@@ -53,7 +52,7 @@ class User(Base):
     )
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    email: Mapped[Optional[str]] = mapped_column(String(254), unique=True, nullable=True)
+    email: Mapped[str | None] = mapped_column(String(254), unique=True, nullable=True)
     account_type: Mapped[AccountType] = mapped_column(
         Enum(AccountType), nullable=False, default=AccountType.PUBLIC
     )
@@ -62,7 +61,7 @@ class User(Base):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # §2 Break-Glass – nur wenn explizit aktiviert
-    legacy_password_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    legacy_password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     legacy_password_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # §4 Rol-Policy-Flags
     require_uv: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -72,40 +71,40 @@ class User(Base):
     federation_opt_out: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Öffentliches Profil (§4 PUBLIC-Konten, optional)
-    bio: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    website: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    website: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
-    credentials: Mapped[list["WebAuthnCredential"]] = relationship(
+    credentials: Mapped[list[WebAuthnCredential]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-    mfa_devices: Mapped[list["MFADevice"]] = relationship(
+    mfa_devices: Mapped[list[MFADevice]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-    backup_codes: Mapped[list["BackupCode"]] = relationship(
+    backup_codes: Mapped[list[BackupCode]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
     # OpenPGP §13 – mehrere Schlüssel pro Nutzer möglich
-    pgp_keys: Mapped[list["UserPGPKey"]] = relationship(
+    pgp_keys: Mapped[list[UserPGPKey]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
     # §5 Federation – Schlüsselpaar für HTTP-Signatures, max. 1 pro Nutzer
-    actor_keypair: Mapped[Optional["ActorKeypair"]] = relationship(
+    actor_keypair: Mapped[ActorKeypair | None] = relationship(
         back_populates="user", cascade="all, delete-orphan", uselist=False
     )
     # §5 Federation – Follower/Following-Beziehungen
-    followers: Mapped[list["Follower"]] = relationship(
+    followers: Mapped[list[Follower]] = relationship(
         "Follower",
         primaryjoin="and_(Follower.local_user_id == User.id, Follower.direction == 'inbound')",
         back_populates="local_user",
         cascade="all, delete-orphan",
         overlaps="following",
     )
-    following: Mapped[list["Follower"]] = relationship(
+    following: Mapped[list[Follower]] = relationship(
         "Follower",
         primaryjoin="and_(Follower.local_user_id == User.id, Follower.direction == 'outbound')",
         back_populates="local_user",
@@ -145,14 +144,14 @@ class WebAuthnCredential(Base):
     public_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     sign_count: Mapped[int] = mapped_column(Integer, default=0)
     # Metadata §2
-    transport: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
-    is_platform: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    transport: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    is_platform: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     uv_capable: Mapped[bool] = mapped_column(Boolean, default=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="credentials")
+    user: Mapped[User] = relationship(back_populates="credentials")
 
     __table_args__ = (UniqueConstraint("user_id", "label", name="uq_user_credential_label"),)
 
@@ -180,12 +179,12 @@ class MFADevice(Base):
     secret_enc: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Plugin-Provider-ID (wenn device_type == PLUGIN)
-    plugin_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    plugin_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="mfa_devices")
+    user: Mapped[User] = relationship(back_populates="mfa_devices")
 
     # Jedes Label muss pro Nutzer eindeutig sein
     __table_args__ = (UniqueConstraint("user_id", "label", name="uq_user_mfa_label"),)
@@ -204,10 +203,10 @@ class BackupCode(Base):
     )
     code_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, default=False)
-    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
-    user: Mapped["User"] = relationship(back_populates="backup_codes")
+    user: Mapped[User] = relationship(back_populates="backup_codes")
 
 
 class UserPGPKey(Base):
@@ -246,12 +245,12 @@ class UserPGPKey(Base):
     # Nur ein Schlüssel kann pro Nutzer der primäre Signierschlüssel sein
     is_primary_signing: Mapped[bool] = mapped_column(Boolean, default=False)
     # Ablaufdatum (aus dem Schlüssel gelesen – optional)
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="pgp_keys")
+    user: Mapped[User] = relationship(back_populates="pgp_keys")
 
     __table_args__ = (
         # Pro Nutzer darf ein Fingerprint nur einmal vorkommen
@@ -292,9 +291,9 @@ class ActorKeypair(Base):
     algorithm: Mapped[str] = mapped_column(String(32), nullable=False, default="ed25519")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    rotated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    rotated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="actor_keypair")
+    user: Mapped[User] = relationship(back_populates="actor_keypair")
 
 
 class InstanceKeypair(Base):
@@ -322,7 +321,7 @@ class InstanceKeypair(Base):
     algorithm: Mapped[str] = mapped_column(String(32), nullable=False, default="ed25519")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    rotated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    rotated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -365,9 +364,9 @@ class Follower(Base):
     # Vollständige URI des Remote-Actors (z. B. https://mastodon.social/users/bob)
     remote_actor_uri: Mapped[str] = mapped_column(String(2048), nullable=False)
     # Anzeigename (optional, aus Actor-Dokument gecacht)
-    remote_display_name: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    remote_display_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # Inbox-URI des Remote-Actors (für Sends)
-    remote_inbox_uri: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
+    remote_inbox_uri: Mapped[str | None] = mapped_column(String(2048), nullable=True)
 
     direction: Mapped[FollowerDirection] = mapped_column(
         Enum(FollowerDirection), nullable=False
@@ -377,14 +376,14 @@ class Follower(Base):
     )
 
     # ID der Follow-Aktivität (für Undo/Accept-Referenz)
-    activity_id: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    activity_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
-    local_user: Mapped["User"] = relationship(
+    local_user: Mapped[User] = relationship(
         "User",
         primaryjoin="Follower.local_user_id == User.id",
         overlaps="followers,following",

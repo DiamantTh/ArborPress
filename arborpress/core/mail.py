@@ -117,7 +117,7 @@ async def _send(
 # Kommentar-Bestätigungs-E-Mail (an Autor)
 # ---------------------------------------------------------------------------
 
-async def send_comment_confirmation(comment: "Comment", post: "Post") -> bool:
+async def send_comment_confirmation(comment: Comment, post: Post) -> bool:
     """Sendet den Bestätigungs-Link an den Kommentar-Autor.
 
     Der Nutzer muss auf diesen Link klicken, damit der Kommentar
@@ -184,7 +184,7 @@ async def send_comment_confirmation(comment: "Comment", post: "Post") -> bool:
 # Admin-Benachrichtigung (neuer bestätigter Kommentar)
 # ---------------------------------------------------------------------------
 
-async def send_comment_notification(comment: "Comment", post: "Post") -> bool:
+async def send_comment_notification(comment: Comment, post: Post) -> bool:
     """Benachrichtigt den Admin über einen neuen (bestätigten) Kommentar.
 
     Wird versandt, nachdem der Autor per E-Mail bestätigt hat.
