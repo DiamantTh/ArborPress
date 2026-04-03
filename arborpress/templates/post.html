@@ -160,6 +160,8 @@
           action="{{ url_for('public.post_comment_submit', slug=post.slug) }}"
           class="comment-form"
           id="comment-form-element">
+      {# §10 CSRF-Schutz #}
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
       {# Verstecktes Feld für die Zitat-Referenz #}
       <input type="hidden" name="quote_of_id" id="quote_of_id" value="">
 

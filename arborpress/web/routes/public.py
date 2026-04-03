@@ -34,6 +34,7 @@ from sqlalchemy import select
 
 from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
+from arborpress.web.security import validate_csrf
 
 log = logging.getLogger("arborpress.web.public")
 
@@ -505,12 +506,14 @@ async def post_comment_submit(slug: str):
     """Kommentar einreichen.
 
     Ablauf:
-      1. Captcha prüfen (Typ richtet sich nach Post-Override oder globalem Standard)
-      2. Formular validieren
-      3. Comment(status=PENDING) in DB anlegen
-      4. Bestätigungs-E-Mail an Autor senden
-      5. Weiterleitung zum Artikel mit Hinweis-Flash
+      1. CSRF-Token prüfen (§10)
+      2. Captcha prüfen (Typ richtet sich nach Post-Override oder globalem Standard)
+      3. Formular validieren
+      4. Comment(status=PENDING) in DB anlegen
+      5. Bestätigungs-E-Mail an Autor senden
+      6. Weiterleitung zum Artikel mit Hinweis-Flash
     """
+    validate_csrf()
     from datetime import datetime as dt
 
     from quart import flash
