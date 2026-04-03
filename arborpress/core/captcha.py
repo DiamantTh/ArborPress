@@ -373,7 +373,8 @@ async def _verify_mosparo(form: dict, captcha_section: dict) -> tuple[bool, str]
             f"{submit_token}:{validation_token}".encode(),
             hashlib.sha256,
         ).hexdigest()
-        verify_url = captcha_section.get("mosparo_url", "").rstrip("/") + f"/api/v1/verification/verify/{submit_token}"
+        mosparo_base = captcha_section.get("mosparo_url", "").rstrip("/")
+        verify_url = mosparo_base + f"/api/v1/verification/verify/{submit_token}"
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 verify_url,

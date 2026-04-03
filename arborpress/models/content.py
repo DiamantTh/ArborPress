@@ -335,7 +335,10 @@ post_categories = Table(
     "post_categories",
     Base.metadata,
     Column("post_id", String(36), ForeignKey("posts.id", ondelete="CASCADE"), primary_key=True),
-    Column("category_id", Integer, ForeignKey("categories.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "category_id", Integer,
+        ForeignKey("categories.id", ondelete="CASCADE"), primary_key=True,
+    ),
 )
 
 

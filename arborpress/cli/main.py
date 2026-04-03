@@ -76,8 +76,13 @@ def main_callback(
 
 @app.command("init")
 def init(
-    force: bool = typer.Option(False, "--force", help="Bereits initialisierte Instanz überschreiben"),
-    seed:  bool = typer.Option(True,  "--seed/--no-seed", help="Beispielinhalte (Posts, Seiten, Impressum, Datenschutz) einfügen"),
+    force: bool = typer.Option(
+        False, "--force", help="Bereits initialisierte Instanz überschreiben"
+    ),
+    seed: bool = typer.Option(
+        True, "--seed/--no-seed",
+        help="Beispielinhalte (Posts, Seiten, Impressum, Datenschutz) einfügen",
+    ),
 ) -> None:
     """Initialisiert eine neue ArborPress-Instanz (§14 install/init).
 
@@ -197,7 +202,9 @@ def db_capabilities() -> None:
 @user_app.command("add")
 def user_add(
     username: str = typer.Argument(..., help="Benutzername"),
-    role: str = typer.Option("viewer", "--role", "-r", help="Rolle (admin/editor/author/moderator/viewer)"),
+    role: str = typer.Option(
+        "viewer", "--role", "-r", help="Rolle (admin/editor/author/moderator/viewer)"
+    ),
     operational: bool = typer.Option(False, "--operational", help="Operationales Admin-Konto (§4)"),
     email: str | None = typer.Option(None, "--email", "-e"),
     display_name: str | None = typer.Option(None, "--display-name", "-n"),
@@ -277,7 +284,9 @@ def user_roles(
         typer.echo(f"Ungültige Rolle: {role}. Erlaubt: {[r.value for r in UserRole]}", err=True)
         raise typer.Exit(1) from None
 
-    typer.echo(f"HINWEIS: 'change_roles' ist eine Step-up-Operation ({STEPUP_REQUIRED_OPERATIONS}).")
+    typer.echo(
+        f"HINWEIS: 'change_roles' ist eine Step-up-Operation ({STEPUP_REQUIRED_OPERATIONS})."
+    )
 
     async def _set_role() -> None:
         from sqlalchemy import select
@@ -348,8 +357,10 @@ def user_password_status(
                 raise typer.Exit(1)
             if user.legacy_password_enabled:
                 typer.echo(
-                    f"WARNUNG: Account {username!r} hat ein aktives Passwort (legacy_password_enabled=True).\n"
-                    f"  Das Passwort ist ein Fallback (Break-Glass §2) und sollte deaktiviert werden,\n"
+                    f"WARNUNG: Account {username!r} hat ein aktives Passwort"
+                    " (legacy_password_enabled=True).\n"
+                    f"  Das Passwort ist ein Fallback (Break-Glass §2)"
+                    " und sollte deaktiviert werden,\n"
                     f"  sobald WebAuthn/MFA eingerichtet ist.\n"
                     f"  Deaktivieren: arborpress user password-disable {username}"
                 )
@@ -441,7 +452,10 @@ def user_federation_status(
                 if keypair.rotated_at:
                     typer.echo(f"  Zuletzt rotiert: {keypair.rotated_at}")
             else:
-                typer.echo("Actor-Schlüssel:  NICHT VORHANDEN – arborpress federation keygen ausführen")
+                typer.echo(
+                    "Actor-Schlüssel:  NICHT VORHANDEN"
+                    " – arborpress federation keygen ausführen"
+                )
 
     asyncio.run(_show())
 
@@ -696,7 +710,14 @@ def key_status() -> None:
 
 @search_app.command("reindex")
 def search_reindex(
-    provider: str | None = typer.Option(None, "--provider", help="Explizit: pg_fts/mariadb_fulltext/sqlite_fts5/meilisearch/typesense/elasticsearch/fallback"),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help=(
+            "Explizit: pg_fts/mariadb_fulltext/sqlite_fts5"
+            "/meilisearch/typesense/elasticsearch/fallback"
+        ),
+    ),
 ) -> None:
     """Baut den Suchindex neu auf (§12 FTS, §14 search reindex)."""
     from arborpress.core.site_settings import get_defaults
@@ -814,7 +835,8 @@ def federation_status() -> None:
             typer.echo("Instanzschlüssel:           KEINER  → arborpress federation keygen")
         cfg = get_settings()
         kek_ok = cfg.auth.actor_key_enc_key is not None
-        typer.echo(f"Actor-KEK konfiguriert:     {'ja ✓' if kek_ok else 'NEIN ✗  → arborpress federation kek-init'}")
+        kek_hint = "ja ✓" if kek_ok else "NEIN ✗  → arborpress federation kek-init"
+        typer.echo(f"Actor-KEK konfiguriert:     {kek_hint}")
 
     asyncio.run(_show())
 
@@ -858,8 +880,12 @@ def _get_actor_fernet() -> Fernet:  # type: ignore[name-defined]
 
 @federation_app.command("keygen")
 def federation_keygen(
-    algorithm: str = typer.Option("ed25519", "--algo", help="ed25519 (Standard) | rsa-sha256 (Legacy)"),
-    force: bool = typer.Option(False, "--force", help="Bestehendes Schlüsselpaar überschreiben (Rotation)"),
+    algorithm: str = typer.Option(
+        "ed25519", "--algo", help="ed25519 (Standard) | rsa-sha256 (Legacy)"
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Bestehendes Schlüsselpaar überschreiben (Rotation)"
+    ),
 ) -> None:
     """Generiert das Instanz-Schlüsselpaar für HTTP-Signatures (§5).
 
@@ -983,7 +1009,9 @@ def federation_follower_list(
             typer.echo("  " + "-" * 80)
             for fol in followers:
                 typer.echo(
-                    f"  {fol.state.value:<12} {(fol.remote_display_name or ''):<30} {fol.remote_actor_uri}"
+                    f"  {fol.state.value:<12}"
+                    f" {(fol.remote_display_name or ''):<30}"
+                    f" {fol.remote_actor_uri}"
                 )
 
 

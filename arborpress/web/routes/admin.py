@@ -160,8 +160,16 @@ async def post_new_save():
             slug=slug,
             body_md=body_md,
             body_html=await render_md_async(body_md, db=db),
-            status=PostStatus(status_val) if status_val in PostStatus.__members__ else PostStatus.DRAFT,
-            visibility=PostVisibility(visibility_val) if visibility_val in PostVisibility.__members__ else PostVisibility.PUBLIC,
+            status=(
+                PostStatus(status_val)
+                if status_val in PostStatus.__members__
+                else PostStatus.DRAFT
+            ),
+            visibility=(
+                PostVisibility(visibility_val)
+                if visibility_val in PostVisibility.__members__
+                else PostVisibility.PUBLIC
+            ),
             captcha_type=captcha_type,
             reading_time_min=Post.calc_reading_time(body_md),
             published_at=published_at,
@@ -183,7 +191,10 @@ async def post_new_save():
         db.add(rev)
         await db.commit()
 
-    audit.info("POST created | slug=%s visibility=%s user=%s", slug, visibility_val, session.get("user_id", ""))
+    audit.info(
+        "POST created | slug=%s visibility=%s user=%s",
+        slug, visibility_val, session.get("user_id", ""),
+    )
     return redirect(url_for("admin.posts"))
 
 
@@ -631,10 +642,14 @@ async def site_settings_save():
 
         if section == "general":
             current.update({
-                "site_title":    (form.get("site_title") or "").strip() or current.get("site_title", ""),
+                "site_title": (
+                    (form.get("site_title") or "").strip() or current.get("site_title", "")
+                ),
                 "tagline":       (form.get("tagline") or "").strip(),
                 "language":      (form.get("language") or "de").strip(),
-                "posts_per_page": int(form.get("posts_per_page") or current.get("posts_per_page", 10)),
+                "posts_per_page": int(
+                    form.get("posts_per_page") or current.get("posts_per_page", 10)
+                ),
                 "timezone":      (form.get("timezone") or "UTC").strip(),
             })
 

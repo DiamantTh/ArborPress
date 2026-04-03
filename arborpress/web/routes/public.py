@@ -782,13 +782,16 @@ async def rss_feed():
     for p in posts:
         link    = _post_url(base_url, p)
         excerpt = _xml_esc((p.excerpt or "").strip())
+        desc_elem = (
+            f"<description>{excerpt}</description>" if excerpt else "<description/>"
+        )
         items.append(
             f"    <item>\n"
             f"      <title>{_xml_esc(p.title)}</title>\n"
             f"      <link>{link}</link>\n"
             f"      <guid isPermaLink=\"true\">{link}</guid>\n"
             f"      <pubDate>{_rfc822_ts(p.published_at)}</pubDate>\n"
-            f"      {'<description>' + excerpt + '</description>' if excerpt else '<description/>'}\n"
+            f"      {desc_elem}\n"
             f"    </item>"
         )
 

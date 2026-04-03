@@ -59,7 +59,9 @@ class SMTPBackend:
     async def send(self, msg: MailMessage, mail_section: dict) -> None:
         """Sendet eine E-Mail über SMTP. Erhält Mail-Einstellungen als dict."""
         mime = MIMEMultipart("alternative") if msg.body_html else MIMEText(msg.body_text, "plain")
-        mime["From"] = f"{mail_section.get('from_name', '')} <{mail_section.get('from_address', '')}>"
+        mime["From"] = (
+            f"{mail_section.get('from_name', '')} <{mail_section.get('from_address', '')}>"
+        )
         mime["To"] = msg.to
         mime["Subject"] = msg.subject
 

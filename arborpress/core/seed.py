@@ -312,7 +312,8 @@ async def seed_database(db: AsyncSession, *, force: bool = False) -> dict[str, i
     await db.flush()
 
     # ---- Posts ----
-    if force or not (await db.execute(select(Post).where(Post.slug == _POST_1_SLUG))).scalar_one_or_none():
+    _q1 = await db.execute(select(Post).where(Post.slug == _POST_1_SLUG))
+    if force or not _q1.scalar_one_or_none():
         post1 = Post(
             id=_uid(),
             short_id=_short_id(),
@@ -331,7 +332,8 @@ async def seed_database(db: AsyncSession, *, force: bool = False) -> dict[str, i
         db.add(post1)
         inserted["posts"] += 1
 
-    if force or not (await db.execute(select(Post).where(Post.slug == _POST_2_SLUG))).scalar_one_or_none():
+    _q2 = await db.execute(select(Post).where(Post.slug == _POST_2_SLUG))
+    if force or not _q2.scalar_one_or_none():
         post2 = Post(
             id=_uid(),
             short_id=_short_id(),
@@ -378,8 +380,12 @@ async def seed_database(db: AsyncSession, *, force: bool = False) -> dict[str, i
             db.add(page)
             inserted["pages"] += 1
 
-    await _upsert_page(_IMPRESSUM_SLUG, _IMPRESSUM_TITLE, _IMPRESSUM_MD, PageType.IMPRESSUM)  # /page/imprint
-    await _upsert_page(_PRIVACY_SLUG,   _PRIVACY_TITLE,   _PRIVACY_MD,  PageType.PRIVACY)    # /page/privacy
+    await _upsert_page(
+        _IMPRESSUM_SLUG, _IMPRESSUM_TITLE, _IMPRESSUM_MD, PageType.IMPRESSUM  # /page/imprint
+    )
+    await _upsert_page(
+        _PRIVACY_SLUG, _PRIVACY_TITLE, _PRIVACY_MD, PageType.PRIVACY  # /page/privacy
+    )
 
     await db.commit()
     log.info("Seed abgeschlossen: %s", inserted)

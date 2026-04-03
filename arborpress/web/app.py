@@ -187,7 +187,9 @@ def create_app() -> Quart:
             set_capabilities(caps)
         except Exception as exc:
             import logging
-            logging.getLogger("arborpress").warning("DB-Capability-Detection fehlgeschlagen: %s", exc)
+            logging.getLogger("arborpress").warning(
+                "DB-Capability-Detection fehlgeschlagen: %s", exc
+            )
 
         # Scheduled-Publishing-Worker starten
         asyncio.ensure_future(run_scheduler())

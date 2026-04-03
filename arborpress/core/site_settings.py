@@ -131,7 +131,9 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "allowlist_mode":              False,  # Nur Allowlist-Domains akzeptiert
     },
     "search": {
-        "provider": "auto",   # auto|pg_fts|mariadb_fulltext|sqlite_fts5|meilisearch|typesense|elasticsearch|manticore|fallback
+        # Provider: auto|pg_fts|mariadb_fulltext|sqlite_fts5
+        #   |meilisearch|typesense|elasticsearch|manticore|fallback
+        "provider": "auto",
         # Meilisearch
         "meilisearch_url":     "http://localhost:7700",
         "meilisearch_api_key": "",
