@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Boolean,
@@ -110,6 +110,10 @@ class User(Base):
         back_populates="local_user",
         cascade="all, delete-orphan",
         overlaps="followers",
+    )
+    # §2 DB-backed Sessions
+    sessions: Mapped[list[UserSession]] = relationship(
+        "UserSession", back_populates="user", cascade="all, delete-orphan"
     )
 
     @property
@@ -396,3 +400,49 @@ class Follower(Base):
             name="uq_follower_local_remote_dir",
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# §2 DB-backed Sessions
+# ---------------------------------------------------------------------------
+
+
+class UserSession(Base):
+    """Server-seitige Sitzung – ergänzt das signierte Quart-Cookie.
+
+    Das Cookie enthält nur die ``session_id`` (UUID). Alle Metadaten
+    (IP, User-Agent, TLS, Ablaufzeit) werden hier gespeichert.
+    Invalidierung: ``is_valid = False`` + Session-Cookie leeren.
+    """
+
+    __tablename__ = "user_sessions"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    client_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    # TLS-Status: True wenn X-Forwarded-Proto == "https" oder direktes HTTPS
+    is_tls: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # CLI-Sitzung: gesetzt wenn via arborpress-CLI angelegt
+    is_cli: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Kann durch Admin oder Nutzer widerrufen werden
+    is_valid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    user: Mapped[User] = relationship(back_populates="sessions")
+
+    @property
+    def is_expired(self) -> bool:
+        return datetime.now(UTC) > self.expires_at.replace(
+            tzinfo=UTC if self.expires_at.tzinfo is None else self.expires_at.tzinfo
+        )
+

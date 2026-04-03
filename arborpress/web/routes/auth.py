@@ -17,10 +17,10 @@ from __future__ import annotations
 import json
 import logging
 from base64 import urlsafe_b64encode
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 
 from quart import Blueprint, abort, jsonify, render_template, request, session
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from arborpress.auth.stepup import grant_stepup, revoke_stepup
 from arborpress.auth.webauthn import WebAuthnService
@@ -242,7 +242,6 @@ async def login_complete():
     credential_id: bytes = bytes.fromhex(raw.get("id", "").replace("-", ""))
 
     async for db in get_db_session():
-        from datetime import datetime
 
         from sqlalchemy import update
 
@@ -292,6 +291,31 @@ async def login_complete():
         session["user_role"] = user.role.value
         session["account_type"] = user.account_type.value
 
+        # DB-Session anlegen
+        cfg = get_settings()
+        ttl: timedelta = cfg.auth.admin_session_ttl
+        now = datetime.now(UTC)
+        # TLS-Erkennung via Reverse-Proxy-Header (§10)
+        proto = (
+            request.headers.get("X-Forwarded-Proto", "")
+            or request.headers.get("X-Forwarded-Ssl", "")
+        )
+        is_tls = proto.lower() in ("https", "on") or request.url.startswith("https")
+        raw_ua = request.headers.get("User-Agent", "")
+        from arborpress.models.user import UserSession
+        db_sess = UserSession(
+            user_id=str(user.id),
+            expires_at=now + ttl,
+            last_seen_at=now,
+            client_ip=request.remote_addr,
+            user_agent=raw_ua[:512] if raw_ua else None,
+            is_tls=is_tls,
+            is_cli=False,
+        )
+        db.add(db_sess)
+        await db.commit()
+        session["session_id"] = db_sess.id
+
     from arborpress.core.events import emit
     await emit("auth.login_success", user_id=str(user.id))
 
@@ -311,7 +335,17 @@ async def emit_fail(user_id: object) -> None:
 @auth_bp.post("/logout")
 async def logout():
     user_id = session.get("user_id")
+    session_id = session.get("session_id")
     session.clear()
+    if session_id:
+        from arborpress.models.user import UserSession
+        async for db in get_db_session():
+            await db.execute(
+                update(UserSession)
+                .where(UserSession.id == session_id)
+                .values(is_valid=False)
+            )
+            await db.commit()
     if user_id:
         from arborpress.core.events import emit
         await emit("auth.logout", user_id=user_id)

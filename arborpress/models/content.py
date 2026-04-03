@@ -149,6 +149,10 @@ class Post(Base):
         minutes = words / 200 + len(code_blocks) * 0.5
         return max(1, round(minutes))
 
+    @property
+    def rendered_html(self) -> str:
+        return self.body_html
+
 
 class PageType(enum.StrEnum):
     CUSTOM = "custom"
@@ -193,6 +197,10 @@ class Page(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+
+    @property
+    def rendered_html(self) -> str:
+        return self.body_html
 
 
 class CommentStatus(enum.StrEnum):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 from pathlib import Path
 
 from quart import Quart
@@ -50,6 +51,10 @@ def create_app() -> Quart:
     # §10 CSRF-Token-Funktion als Jinja2-Global
     from arborpress.web.security import get_csrf_token
     app.jinja_env.globals["csrf_token"] = get_csrf_token
+
+    # Hilfsfunktion für Template-Zeitvergleiche (z. B. Ablauf-Check in sessions.html)
+    from datetime import datetime as _dt
+    app.jinja_env.globals["now"] = lambda: _dt.now(UTC)
 
     # Konfiguration + Session als Jinja2-Globals (für Templates)
     app.jinja_env.globals["config"] = cfg

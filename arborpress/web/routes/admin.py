@@ -733,3 +733,54 @@ async def site_settings_save():
     from quart import flash
     await flash("Einstellungen gespeichert.", "success")
     return redirect(url_for("admin.site_settings_page"))
+
+
+# ---------------------------------------------------------------------------
+# Session-Verwaltung §2
+# ---------------------------------------------------------------------------
+
+
+@admin_bp.get("/sessions")
+async def sessions_list():
+    """Alle aktiven Sitzungen aller Benutzer (§2)."""
+    _require_session()
+    from arborpress.models.user import User, UserSession
+
+    async for db in get_db_session():
+        result = await db.execute(
+            select(UserSession, User.username)
+            .join(User, UserSession.user_id == User.id)
+            .order_by(UserSession.created_at.desc())
+            .limit(500)
+        )
+        rows = result.all()
+
+    current_session_id = session.get("session_id")
+    return await render_template(
+        "admin/sessions.html",
+        rows=rows,
+        current_session_id=current_session_id,
+        noindex=True,
+    )
+
+
+@admin_bp.post("/sessions/<session_id>/revoke")
+async def session_revoke(session_id: str):
+    """Einzelne Sitzung widerrufen (§2)."""
+    _require_session()
+
+    from arborpress.models.user import UserSession
+
+    async for db in get_db_session():
+        result = await db.execute(
+            select(UserSession).where(UserSession.id == session_id)
+        )
+        us = result.scalar_one_or_none()
+        if us is None:
+            abort(404)
+        us.is_valid = False
+        await db.commit()
+
+    audit.info("SESSION revoked | session=%s by user=%s", session_id, session.get("user_id", ""))
+    return redirect(url_for("admin.sessions_list"))
+

@@ -1,0 +1,127 @@
+{% extends "admin/_base.html" %}
+{% block title %}Sitzungen – ArborPress Admin{% endblock %}
+
+{% block admin_content %}
+<div class="admin-page-header">
+  <h2>Aktive Sitzungen</h2>
+  <p class="admin-page-subtitle">Alle gespeicherten Benutzersitzungen. Abgelaufene oder
+  widerrufene Sitzungen sind ausgegraut.</p>
+</div>
+
+<table class="admin-table sessions-table">
+  <thead>
+    <tr>
+      <th title="Session-ID">ID</th>
+      <th title="Sitzung gültig?">Gültig</th>
+      <th title="TLS-Verbindung beim Login?">TLS</th>
+      <th title="Gerät (aus User-Agent)"></th>
+      <th title="CLI-Sitzung"></th>
+      <th title="Benutzer">Benutzer</th>
+      <th title="Anmeldung">Anmeldung</th>
+      <th title="Gültig bis">Gültig bis</th>
+      <th title="Client-IP">Client-IP</th>
+      <th title="User-Agent">User-Agent</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for sess, username in rows %}
+    {%- set expired = sess.expires_at and sess.expires_at < now() -%}
+    {%- set inactive = not sess.is_valid or expired -%}
+    <tr class="{% if inactive %}session-row--inactive{% elif sess.id == current_session_id %}session-row--current{% endif %}">
+
+      {# ID kurz anzeigen #}
+      <td><code class="session-id" title="{{ sess.id | e }}">{{ sess.id[:8] | e }}</code></td>
+
+      {# Gültig #}
+      <td class="text-center">
+        {% if sess.is_valid and not expired %}
+          <span class="status-icon status-icon--ok" title="Gültig">✓</span>
+        {% else %}
+          <span class="status-icon status-icon--fail" title="{% if not sess.is_valid %}Widerrufen{% else %}Abgelaufen{% endif %}">✗</span>
+        {% endif %}
+      </td>
+
+      {# TLS #}
+      <td class="text-center">
+        {% if sess.is_tls %}
+          <span class="status-icon status-icon--ok" title="TLS">✓</span>
+        {% else %}
+          <span class="status-icon status-icon--fail" title="Kein TLS">✗</span>
+        {% endif %}
+      </td>
+
+      {# Gerät-Icon aus User-Agent #}
+      <td class="text-center">
+        {%- set ua = (sess.user_agent or '') | lower -%}
+        {%- if 'mobile' in ua or 'android' in ua or 'iphone' in ua -%}
+          <span title="Mobiles Gerät">📱</span>
+        {%- elif 'tablet' in ua or 'ipad' in ua -%}
+          <span title="Tablet">📱</span>
+        {%- else -%}
+          <span title="Desktop">🖥️</span>
+        {%- endif -%}
+      </td>
+
+      {# CLI-Icon #}
+      <td class="text-center">
+        {% if sess.is_cli %}
+          <span title="CLI-Sitzung">⌨️</span>
+        {% else %}
+          <span class="text-muted">–</span>
+        {% endif %}
+      </td>
+
+      {# Benutzer #}
+      <td>
+        <code>{{ username | e }}</code>
+        {% if sess.id == current_session_id %}
+          <span class="badge badge-current" title="Ihre aktuelle Sitzung">Ich</span>
+        {% endif %}
+      </td>
+
+      {# Anmeldezeitpunkt #}
+      <td>
+        <time datetime="{{ sess.created_at.isoformat() if sess.created_at else '' }}"
+              title="{{ sess.created_at.strftime('%d.%m.%Y %H:%M:%S') if sess.created_at else '' }}">
+          {{ sess.created_at.strftime('%d.%m.%Y %H:%M') if sess.created_at else '–' }}
+        </time>
+      </td>
+
+      {# Ablaufzeit #}
+      <td>
+        <time datetime="{{ sess.expires_at.isoformat() if sess.expires_at else '' }}"
+              title="{{ sess.expires_at.strftime('%d.%m.%Y %H:%M:%S') if sess.expires_at else '' }}">
+          {{ sess.expires_at.strftime('%d.%m.%Y %H:%M') if sess.expires_at else '–' }}
+        </time>
+      </td>
+
+      {# Client-IP #}
+      <td><code>{{ sess.client_ip | default('–') | e }}</code></td>
+
+      {# User-Agent (abgekürzt) #}
+      <td class="ua-cell" title="{{ sess.user_agent | default('') | e }}">
+        {{ (sess.user_agent or '–')[:60] | e }}{% if sess.user_agent and sess.user_agent | length > 60 %}…{% endif %}
+      </td>
+
+      {# Widerrufen-Button #}
+      <td>
+        {% if sess.is_valid and not expired %}
+        <form method="post"
+              action="{{ url_for('admin.session_revoke', session_id=sess.id) }}"
+              onsubmit="return confirm('Sitzung {{ sess.id[:8] | e }} widerrufen?')">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn--small btn--danger">Widerrufen</button>
+        </form>
+        {% else %}
+          <span class="text-muted">–</span>
+        {% endif %}
+      </td>
+
+    </tr>
+    {% else %}
+    <tr><td colspan="11" class="empty-state">Keine Sitzungen gefunden.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
