@@ -27,6 +27,7 @@ from quart import (
     session,
 )
 
+from arborpress.auth.roles import require_role
 from arborpress.core.config import get_settings
 from arborpress.core.markdown import render_md_async
 
@@ -184,13 +185,15 @@ async def admin_api_post_update(slug: str):
 
 @api_admin_bp.delete("/posts/<slug>")
 async def admin_api_post_delete(slug: str):
-    """Admin: Post löschen (§8)."""
+    """Admin: Post löschen (§8) – mindestens Editor."""
+    require_role("editor")
     return jsonify({"status": "deleted", "slug": slug})
 
 
 @api_admin_bp.post("/users/<username>/roles")
 async def admin_api_user_set_role(username: str):
-    """Admin: Benutzerrolle setzen – Step-up-Operation (§2, §8)."""
+    """Admin: Benutzerrolle setzen – nur Admins (§2, §8)."""
+    require_role("admin")
     _require_stepup("change_roles")
     data = await request.get_json()
     # TODO: DB-Update
@@ -199,7 +202,8 @@ async def admin_api_user_set_role(username: str):
 
 @api_admin_bp.post("/auth/policy")
 async def admin_api_set_auth_policy():
-    """Admin: Auth-Policy setzen – Step-up-Operation (§2, §8)."""
+    """Admin: Auth-Policy setzen – nur Admins (§2, §8)."""
+    require_role("admin")
     _require_stepup("modify_auth_policy")
     data = await request.get_json()
     return jsonify({"status": "policy_updated", "data": data})
@@ -207,7 +211,8 @@ async def admin_api_set_auth_policy():
 
 @api_admin_bp.post("/plugins/<plugin_id>/enable")
 async def admin_api_plugin_enable(plugin_id: str):
-    """Admin: Plugin aktivieren – Step-up-Operation (§15, §2)."""
+    """Admin: Plugin aktivieren – nur Admins (§15, §2)."""
+    require_role("admin")
     _require_stepup("install_plugin")
     # TODO: Plugin-Registry
     return jsonify({"status": "enabled", "plugin_id": plugin_id})
@@ -215,7 +220,8 @@ async def admin_api_plugin_enable(plugin_id: str):
 
 @api_admin_bp.post("/plugins/<plugin_id>/disable")
 async def admin_api_plugin_disable(plugin_id: str):
-    """Admin: Plugin deaktivieren (§15)."""
+    """Admin: Plugin deaktivieren – nur Admins (§15)."""
+    require_role("admin")
     return jsonify({"status": "disabled", "plugin_id": plugin_id})
 
 

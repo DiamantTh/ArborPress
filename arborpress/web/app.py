@@ -49,8 +49,10 @@ def create_app() -> Quart:
     register_i18n(app)
 
     # §10 CSRF-Token-Funktion als Jinja2-Global
+    from arborpress.auth.roles import has_min_role
     from arborpress.web.security import get_csrf_token
     app.jinja_env.globals["csrf_token"] = get_csrf_token
+    app.jinja_env.globals["has_role"] = has_min_role
 
     # Hilfsfunktion für Template-Zeitvergleiche (z. B. Ablauf-Check in sessions.html)
     from datetime import datetime as _dt

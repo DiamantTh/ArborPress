@@ -11,15 +11,21 @@
 {% block nav %}
 <a href="{{ url_for('admin.dashboard') }}">{{ _('Dashboard') }}</a>
 <a href="{{ url_for('admin.posts') }}">{{ _('Beiträge') }}</a>
+{% if has_role('editor') %}
 <a href="{{ url_for('admin.pages_list') }}">{{ _('Seiten') }}</a>
+{% endif %}
 <a href="{{ url_for('admin.media_list') }}">{{ _('Medien') }}</a>
+{% if has_role('editor') %}
+<a href="{{ url_for('admin.comments_list') }}">{{ _('Kommentare') }}</a>
+{% endif %}
+{% if has_role('admin') %}
 <a href="{{ url_for('admin.users') }}">{{ _('Benutzer') }}</a>
 <a href="{{ url_for('admin.sessions_list') }}">{{ _('Sitzungen') }}</a>
-<a href="{{ url_for('admin.comments_list') }}">{{ _('Kommentare') }}</a>
 <a href="{{ url_for('admin.captcha_settings') }}">{{ _('Captcha') }}</a>
 <a href="{{ url_for('admin.site_settings_page') }}">{{ _('Einstellungen') }}</a>
 <a href="{{ url_for('admin.plugins_list') }}">{{ _('Plugins') }}</a>
 <a href="{{ url_for('admin.security') }}">{{ _('Sicherheit') }}</a>
+{% endif %}
 <form method="post" action="{{ url_for('auth.logout') }}" style="display:inline">
   <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
   <button type="submit" class="btn btn--small">{{ _('Abmelden') }}</button>

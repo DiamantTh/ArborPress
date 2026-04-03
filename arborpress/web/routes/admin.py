@@ -15,6 +15,7 @@ import logging
 from quart import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import func, select
 
+from arborpress.auth.roles import require_role
 from arborpress.auth.stepup import assert_stepup, is_stepup_active
 from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
@@ -42,8 +43,16 @@ async def _csrf_protect() -> None:
 
 @admin_bp.before_request
 async def _session_guard() -> None:
-    """Erzwingt Auth-Session für alle Admin-Routen (§2)."""
+    """Erzwingt Auth-Session + Mindestrole 'author' für alle Admin-Routen (§2, §4)."""
     _require_session()
+    require_role("author")
+
+
+@admin_bp.context_processor
+async def _role_context() -> dict:
+    """Stellt user_role und has_role für alle Admin-Templates bereit."""
+    from arborpress.auth.roles import has_min_role
+    return {"user_role": session.get("user_role", "viewer"), "has_role": has_min_role}
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +322,7 @@ async def post_edit_save(slug: str):
 @admin_bp.get("/pages")
 async def pages_list():
     _require_session()
+    require_role("editor")
     from arborpress.models.content import Page, PageType, PostVisibility
     async for db in get_db_session():
         result = await db.execute(select(Page).order_by(Page.title))
@@ -357,6 +367,7 @@ async def media_list():
 @admin_bp.get("/users")
 async def users():
     _require_session()
+    require_role("admin")
     from arborpress.models.user import User
     async for db in get_db_session():
         result = await db.execute(select(User).order_by(User.username))
@@ -372,6 +383,7 @@ async def users():
 @admin_bp.get("/plugins")
 async def plugins_list():
     _require_session()
+    require_role("admin")
     from arborpress.plugins.registry import get_registry
     plugins = get_registry().all()
     return await render_template("admin/plugins.html", plugins=plugins, noindex=True)
@@ -380,6 +392,7 @@ async def plugins_list():
 @admin_bp.post("/plugins/<plugin_id>/enable")
 async def plugin_enable(plugin_id: str):
     _require_session()
+    require_role("admin")
     user_id = session.get("user_id", "")
     try:
         assert_stepup(session, user_id, "enable_plugin")
@@ -392,6 +405,7 @@ async def plugin_enable(plugin_id: str):
 @admin_bp.post("/plugins/<plugin_id>/disable")
 async def plugin_disable(plugin_id: str):
     _require_session()
+    require_role("admin")
     user_id = session.get("user_id", "")
     audit.info("PLUGIN disabled | plugin=%s user=%s", plugin_id, user_id)
     return jsonify({"status": "ok"}), 200
@@ -405,6 +419,7 @@ async def plugin_disable(plugin_id: str):
 @admin_bp.get("/security")
 async def security():
     _require_session()
+    require_role("admin")
     user_id = session.get("user_id", "")
     stepup_active = is_stepup_active(session, user_id)
     cfg = get_settings()
@@ -419,6 +434,7 @@ async def security():
 @admin_bp.post("/security")
 async def security_update():
     _require_session()
+    require_role("admin")
     user_id = session.get("user_id", "")
     try:
         assert_stepup(session, user_id, "change_security_settings")
@@ -448,6 +464,7 @@ async def stepup_status():
 @admin_bp.get("/comments")
 async def comments_list():
     _require_session()
+    require_role("editor")
     """Alle Kommentare die auf Freischaltung warten (status=CONFIRMED)."""
     from arborpress.models.content import Comment, CommentStatus
 
@@ -475,6 +492,7 @@ async def comments_list():
 @admin_bp.post("/comments/<comment_id>/approve")
 async def comment_approve(comment_id: str):
     _require_session()
+    require_role("editor")
     """Kommentar freischalten."""
     from datetime import datetime as dt
 
@@ -496,6 +514,7 @@ async def comment_approve(comment_id: str):
 @admin_bp.post("/comments/<comment_id>/reject")
 async def comment_reject(comment_id: str):
     _require_session()
+    require_role("editor")
     """Kommentar ablehnen."""
     from arborpress.models.content import Comment, CommentStatus
 
@@ -514,6 +533,7 @@ async def comment_reject(comment_id: str):
 @admin_bp.post("/comments/<comment_id>/spam")
 async def comment_spam(comment_id: str):
     _require_session()
+    require_role("editor")
     """Kommentar als Spam markieren."""
     from arborpress.models.content import Comment, CommentStatus
 
@@ -537,6 +557,7 @@ async def comment_spam(comment_id: str):
 @admin_bp.get("/captcha")
 async def captcha_settings():
     _require_session()
+    require_role("admin")
     from arborpress.core.captcha import CaptchaType
     from arborpress.core.site_settings import get_section
     async for db in get_db_session():
@@ -554,6 +575,7 @@ async def captcha_settings():
 async def captcha_settings_save():
     """Speichert den Fragenkatalog in der Datenbank (SiteSettings)."""
     _require_session()
+    require_role("admin")
     from arborpress.core.site_settings import get_section, save_section
 
     form = await request.form
@@ -593,6 +615,7 @@ _SETTINGS_SECTIONS = ("general", "mail", "comments", "federation", "search", "th
 async def site_settings_page():
     """Übersichtsseite der Website-Einstellungen (alle Sektionen)."""
     _require_session()
+    require_role("admin")
     from arborpress.core.site_settings import get_section
     from arborpress.themes.manifest import get_theme_registry
     from arborpress.themes.patterns import PATTERN_LABELS, PATTERN_ORDER
@@ -628,6 +651,7 @@ async def site_settings_page():
 async def site_settings_save():
     """Speichert eine einzelne Einstellungs-Sektion (via ?section=...)."""
     _require_session()
+    require_role("admin")
     from arborpress.core.site_settings import get_section, save_section
 
     form = await request.form
@@ -744,6 +768,7 @@ async def site_settings_save():
 async def sessions_list():
     """Alle aktiven Sitzungen aller Benutzer (§2)."""
     _require_session()
+    require_role("admin")
     from arborpress.models.user import User, UserSession
 
     async for db in get_db_session():
@@ -768,6 +793,7 @@ async def sessions_list():
 async def session_revoke(session_id: str):
     """Einzelne Sitzung widerrufen (§2)."""
     _require_session()
+    require_role("admin")
 
     from arborpress.models.user import UserSession
 
