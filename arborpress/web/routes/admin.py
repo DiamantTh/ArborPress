@@ -43,9 +43,32 @@ async def _csrf_protect() -> None:
 
 @admin_bp.before_request
 async def _session_guard() -> None:
-    """Erzwingt Auth-Session + Mindestrole 'author' für alle Admin-Routen (§2, §4)."""
+    """Erzwingt Auth-Session + Mindestrole 'author' + DB-Session-Gültigkeit (§2, §4)."""
     _require_session()
     require_role("author")
+
+    # DB-Session auf Gültigkeit und Ablauf prüfen; last_seen_at aktualisieren
+    session_id = session.get("session_id")
+    if not session_id:
+        return
+
+    from datetime import UTC, datetime
+
+    from sqlalchemy import update as sa_update
+
+    from arborpress.models.user import UserSession
+
+    async for db in get_db_session():
+        db_sess = await db.get(UserSession, session_id)
+        if db_sess is None or not db_sess.is_valid or db_sess.is_expired:
+            session.clear()
+            abort(redirect(url_for("auth.login_page")))
+        await db.execute(
+            sa_update(UserSession)
+            .where(UserSession.id == session_id)
+            .values(last_seen_at=datetime.now(UTC))
+        )
+        await db.commit()
 
 
 @admin_bp.context_processor

@@ -260,7 +260,10 @@ _ALLOWED_UPLOAD_TYPES = frozenset(
         "image/gif",
         "image/webp",
         "image/avif",
-        "image/svg+xml",
+        # image/svg+xml bewusst ausgeschlossen: SVG-Dateien können eingebettetes
+        # JavaScript enthalten (<script>, onload-Handler u.ä.). Selbst mit dem
+        # strikten CSP dieser Anwendung besteht ein XSS-Risiko, wenn der Browser
+        # eine hochgeladene SVG-Datei direkt als Top-Level-Dokument aufruft.
     }
 )
 _MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20 MiB

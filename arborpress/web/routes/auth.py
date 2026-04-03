@@ -48,6 +48,38 @@ async def _auth_csrf_check() -> None:
     validate_csrf()
 
 
+# Auth-Endpunkte, die dem IP-basierten Rate-Limit unterliegen (§10)
+_RATE_LIMITED_PATHS = frozenset({
+    "/auth/login/begin",
+    "/auth/login/complete",
+    "/auth/register/begin",
+})
+
+
+@auth_bp.before_request
+async def _rate_limit_auth():
+    """IP-basiertes Rate-Limiting für sensible Auth-Endpunkte (§10).
+
+    Nutzt ``AuthSettings.auth_rate_limit`` (Standard: ``"10/minute"``).
+    Gibt HTTP 429 + ``Retry-After: 60`` zurück wenn das Limit überschritten wird.
+    """
+    if request.method != "POST" or request.path not in _RATE_LIMITED_PATHS:
+        return
+
+    from arborpress.web.ratelimit import check_rate_limit
+
+    cfg = get_settings()
+    ip = request.remote_addr or "unknown"
+    if not check_rate_limit(f"auth:{ip}", cfg.auth.auth_rate_limit):
+        from quart import Response
+
+        return Response(
+            '{"error": "Zu viele Anfragen \u2013 bitte warten"}',
+            status=429,
+            headers={"Content-Type": "application/json", "Retry-After": "60"},
+        )
+
+
 def _get_webauthn() -> WebAuthnService:
     cfg = get_settings()
     from urllib.parse import urlparse
