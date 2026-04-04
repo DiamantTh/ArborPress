@@ -52,6 +52,9 @@ services:
     volumes:
       - app_media:/opt/app-root/src/media
       - app_logs:/opt/app-root/src/logs
+      # Konfiguration einbinden (Verzeichnis oder Einzeldatei):
+      # - ./config:/opt/app-root/src/config:ro
+      # - ./config.toml:/opt/app-root/src/config.toml:ro
     healthcheck:
       test:
         - "CMD"

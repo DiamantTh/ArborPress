@@ -10,32 +10,39 @@
 # ---------------------------------------------------------------------------
 # ArborPress unterstützt drei Layouts:
 #
-#  1. Einzelne Datei (Standard):
+#  1. Einzelne Datei (Standard / Standalone):
 #       config.toml
 #
-#  2. Verzeichnis (empfohlen für Produktion):
+#  2. Verzeichnis (Standalone mit getrennten Secrets):
 #       config/
-#         10-base.toml       ← allgemeine Einstellungen
-#         20-secrets.toml    ← Passwörter, Secret-Keys  (chmod 600)
+#         10-base.toml       ← allgemeine Einstellungen  (kann in Git)
+#         20-secrets.toml    ← Passwörter, Secret-Keys   (chmod 600, .gitignore)
 #         30-cache.toml      ← Cache/Redis-Konfig
 #       → alle *.toml werden alphabetisch sortiert und tief gemergt
 #
-#  3. Einzelne Datei mit includes:
+#  3. Einzelne Datei mit includes (Standalone):
 #       config.toml
-#         include = ["secrets.toml"]   ← relative zum Verzeichnis der Datei
+#         include = ["secrets.toml"]
 #
-#  Aufruf mit explizitem Pfad:
-#    arborpress --config /etc/arborpress/config/ serve
-#    arborpress --config /etc/arborpress/config.toml serve
+#  Docker (empfohlen):
+#       Volume /app/config/ mounten – alle *.toml werden geladen.
+#       Oder einzelne Datei: /app/config.toml per Bind-Mount.
+#
+#       docker-compose.yml:
+#         volumes:
+#           - ./config:/app/config:ro
 #
 #  Auto-Discover (ohne --config):
-#    Sucht erst config/ im cwd, dann config.toml im cwd.
+#    Sucht erst config/ im cwd/WORKDIR, dann config.toml im cwd/WORKDIR.
+#
+#  Expliziter Pfad:
+#    arborpress --config ./config/ serve
+#    arborpress --config ./config.toml serve
 #
 # ---------------------------------------------------------------------------
 # include-Direktive
 # ---------------------------------------------------------------------------
-# include = ["secrets.toml"]              # relativ zu dieser Datei
-# include = ["/etc/arborpress/db.toml"]   # absoluter Pfad
+# include = ["secrets.toml"]    # relativ zu dieser Datei
 #
 # Includes können selbst wieder include-Direktiven enthalten (rekursiv).
 # Später geladene Werte überschreiben frühere (Dict-Tabellen werden gemergt).

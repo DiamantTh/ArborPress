@@ -13,8 +13,8 @@ aus der Datenbank gelesen und im Admin-Interface unter /admin/settings gepflegt.
 
 Konfigurationsquellen (Ladereihenfolge, spätere überschreiben frühere):
   1.  --config /pfad/zu/config.toml  – einzelne Datei
-  2.  --config /pfad/zu/config/       – alle *.toml im Verzeichnis (sortiert)
-  3.  config/                          – lokales Verzeichnis (auto-discover)
+  2.  --config ./config/            – alle *.toml im Verzeichnis (sortiert)
+  3.  config/                       – lokales Verzeichnis (auto-discover)
   4.  config.toml                     – einzelne Datei (auto-discover)
   5.  Defaults + Umgebungsvariablen   – ARBORPRESS_SECTION__KEY=value
 
