@@ -55,7 +55,7 @@ Makefile
 !pyproject.toml
 
 # Compose-Dateien (nicht ins Image)
-docker-compose*.yml
+container/compose*.yml
 
 # README
 README.md

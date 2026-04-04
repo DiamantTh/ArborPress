@@ -22,7 +22,7 @@
 #
 # !! WICHTIGER HINWEIS – KEIN OS-WECHSEL IM BETRIEB !!
 # -------------------------------------------------------
-# Es existiert auch eine UBI9-Variante (Dockerfile.ubi9).
+# Es existiert auch eine UBI9-Variante (Containerfile.ubi9).
 # Ein Wechsel des Basis-OS (UBI9 ↔ Ubuntu) auf einer laufenden Instanz
 # wird AUSDRÜCKLICH NICHT empfohlen:
 #
@@ -115,7 +115,7 @@ WORKDIR /app
 COPY --from=builder --chown=arborpress:arborpress /opt/venv /opt/venv
 
 # Entrypoint-Skript
-COPY --chown=arborpress:arborpress docker/entrypoint.sh /entrypoint.sh
+COPY --chown=arborpress:arborpress container/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Nicht-privilegierter Benutzer

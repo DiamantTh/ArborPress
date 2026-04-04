@@ -19,8 +19,8 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
 # Konfiguration
-cp config.example.toml config.toml
-# Datenbankverbindung + Geheimnisse in config.toml eintragen
+cp config/config.example.toml config/config.toml
+# Datenbankverbindung + Geheimnisse in config/config.toml eintragen
 
 # DB-Schema anlegen
 arborpress db migrate
@@ -48,11 +48,21 @@ arborpress/               Python-Paket (Backend)
     security.py           CSP + Security-Headers Middleware
     app.py                App-Factory (create_app)
   cli/                    Typer-CLI (§14 alle Admin-Befehle)
+config/                   Konfigurationsverzeichnis
+  config.example.toml     Beispielkonfiguration (→ config.toml kopieren)
+container/                Container-Dateien (OCI – Docker/Podman)
+  Containerfile.ubi9      Produktions-Image auf UBI9-Basis (RHEL9)
+  Containerfile.ubuntu    Produktions-Image auf Ubuntu 24.04 LTS
+  entrypoint.sh           Container-Entrypoint
+  compose.postgresql.yml  Compose: UBI9 + PostgreSQL (RHEL9-Images)
+  compose.postgresql.ubuntu.yml  Compose: Ubuntu + PostgreSQL
+  compose.mariadb.yml     Compose: UBI9 + MariaDB (RHEL9-Images)
+  compose.mariadb.ubuntu.yml     Compose: Ubuntu + MariaDB
+docs/                     Proxy-Konfigurationen + Spezifikation (§0–§17)
 frontend/                 SvelteKit-Frontend (Build-Zeit, §9)
 plugins/                  Manuell installierte Plugins
 themes/
   default/                Standard-Theme (theme.toml)
-docs/                     Spezifikation (§0–§17 + Anhang A)
 ```
 
 ## CLI-Referenz (§14)
@@ -116,7 +126,7 @@ arborpress plugin validate <pfad>    Plugin-Manifest prüfen
 Plugins werden ausschließlich manuell installiert – kein automatisches Update:
 
 ```bash
-# 1. Plugin-Verzeichnis in config.toml eintragen:
+# 1. Plugin-Verzeichnis in config/config.toml eintragen:
 [plugins]
 dirs = ["/opt/arborpress/plugins"]
 

@@ -18,5 +18,5 @@ lint: ## Code-Qualität prüfen (ruff)
 db-upgrade: ## Datenbank auf neueste Migration bringen
 	alembic upgrade head
 
-run: ## Entwicklungsserver starten  (config.toml wird benötigt)
-	python -m arborpress.cli.main dev
+run: ## Entwicklungsserver starten  (config/config.toml wird benötigt)
+	python -m arborpress.cli.main serve --dev

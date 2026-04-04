@@ -6,13 +6,13 @@
 #   App:  registry.access.redhat.com/ubi9/python-312   (kostenlos, kein Abo)
 #   DB:   registry.access.redhat.com/rhel9/postgresql-16
 #
-# Starten:    docker compose -f docker-compose.postgresql.yml up -d
-# Stoppen:    docker compose -f docker-compose.postgresql.yml down
-# Mit Daten:  docker compose -f docker-compose.postgresql.yml down -v
+# Starten:    docker compose -f container/compose.postgresql.yml up -d
+# Stoppen:    docker compose -f container/compose.postgresql.yml down
+# Mit Daten:  docker compose -f container/compose.postgresql.yml down -v
 #
 # !! WICHTIGER HINWEIS – KEIN OS-WECHSEL IM BETRIEB !!
 # -------------------------------------------------------
-# Es existiert auch eine Ubuntu-Variante (docker-compose.postgresql.ubuntu.yml).
+# Es existiert auch eine Ubuntu-Variante (compose.postgresql.ubuntu.yml).
 # Ein Wechsel zwischen UBI9 und Ubuntu auf einer laufenden Instanz
 # wird AUSDRÜCKLICH NICHT empfohlen:
 #
@@ -35,11 +35,11 @@ name: arborpress-postgresql
 services:
   app:
     build:
-      context: .
-      dockerfile: docker/Dockerfile.ubi9
+      context: ..
+      dockerfile: container/Containerfile.ubi9
     image: arborpress:ubi9
     restart: unless-stopped
-    env_file: .env
+    env_file: ../.env
     environment:
       ARBORPRESS_DB__URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
       DB_HOST: db
@@ -53,8 +53,7 @@ services:
       - app_media:/opt/app-root/src/media
       - app_logs:/opt/app-root/src/logs
       # Konfiguration einbinden (Verzeichnis oder Einzeldatei):
-      # - ./config:/opt/app-root/src/config:ro
-      # - ./config.toml:/opt/app-root/src/config.toml:ro
+      # - ../config:/opt/app-root/src/config:ro
     healthcheck:
       test:
         - "CMD"

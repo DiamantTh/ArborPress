@@ -7,13 +7,13 @@
 #   DB:   postgres:17             (offizielles PostgreSQL-Image)
 #         Alternativ:  postgres:16  (falls SQL-Kompatibilität mit PG 16 benötigt)
 #
-# Starten:    docker compose -f docker-compose.postgresql.ubuntu.yml up -d
-# Stoppen:    docker compose -f docker-compose.postgresql.ubuntu.yml down
-# Mit Daten:  docker compose -f docker-compose.postgresql.ubuntu.yml down -v
+# Starten:    docker compose -f container/compose.postgresql.ubuntu.yml up -d
+# Stoppen:    docker compose -f container/compose.postgresql.ubuntu.yml down
+# Mit Daten:  docker compose -f container/compose.postgresql.ubuntu.yml down -v
 #
 # !! WICHTIGER HINWEIS – KEIN OS-WECHSEL IM BETRIEB !!
 # -------------------------------------------------------
-# Es existiert auch eine UBI9-Variante (docker-compose.postgresql.yml).
+# Es existiert auch eine UBI9-Variante (compose.postgresql.yml).
 # Ein Wechsel zwischen Ubuntu und UBI9 auf einer laufenden Instanz
 # wird AUSDRÜCKLICH NICHT empfohlen:
 #
@@ -36,11 +36,11 @@ name: arborpress-postgresql-ubuntu
 services:
   app:
     build:
-      context: .
-      dockerfile: docker/Dockerfile.ubuntu
+      context: ..
+      dockerfile: container/Containerfile.ubuntu
     image: arborpress:ubuntu
     restart: unless-stopped
-    env_file: .env
+    env_file: ../.env
     environment:
       ARBORPRESS_DB__URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
       DB_HOST: db
@@ -54,8 +54,7 @@ services:
       - app_media:/app/media
       - app_logs:/app/logs
       # Konfiguration einbinden (Verzeichnis oder Einzeldatei):
-      # - ./config:/app/config:ro
-      # - ./config.toml:/app/config.toml:ro
+      # - ../config:/app/config:ro
     healthcheck:
       test:
         - "CMD"
