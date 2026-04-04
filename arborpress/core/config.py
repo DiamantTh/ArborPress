@@ -246,7 +246,7 @@ def get_settings(config_path: Path | None = None) -> Settings:
     global _settings
     if _settings is None:
         if config_path is None:
-            if Path("config").is_dir():
+            if (Path("config") / "config.toml").is_file():
                 config_path = Path("config")
             else:
                 config_path = Path("config.toml")

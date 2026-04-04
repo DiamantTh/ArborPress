@@ -730,9 +730,121 @@ def key_rotate(
 
 
 @key_app.command("status")
-def key_status() -> None:
-    """Zeigt Schlüssel-Status (§13, §14)."""
-    typer.echo("Schlüssel-Status (TODO).")
+def key_status(
+    username: str | None = typer.Argument(None, help="Benutzername (leer = Instanz-Schlüssel)"),
+) -> None:
+    """Zeigt Schlüssel-Status (§13, §14).
+
+    Ohne Argument: Instanz-Schlüsselpaar (HTTP-Signatures) + alle Actor-Schlüssel.
+    Mit Benutzername: OpenPGP-Schlüssel + Actor-Schlüssel dieses Accounts.
+    """
+    async def _show() -> None:
+        from datetime import UTC, datetime
+
+        from sqlalchemy import func, select
+
+        from arborpress.core.db import get_db_session
+        from arborpress.models.user import ActorKeypair, InstanceKeypair, User, UserPGPKey
+
+        now = datetime.now(UTC).replace(tzinfo=None)
+
+        async for db in get_db_session():
+            if username is None:
+                # ---- Instanz-Schlüsselpaar ----
+                inst = (await db.execute(select(InstanceKeypair))).scalar_one_or_none()
+                if inst:
+                    age_days = (now - inst.created_at).days
+                    typer.echo("Instanz-Schlüsselpaar:")
+                    typer.echo(f"  Algorithmus: {inst.algorithm}")
+                    typer.echo(f"  Key-ID:      {inst.key_id_url}")
+                    typer.echo(f"  Erstellt:    {inst.created_at.date()} ({age_days} Tage alt)")
+                    if inst.rotated_at:
+                        typer.echo(f"  Rotiert:     {inst.rotated_at.date()}")
+                else:
+                    typer.echo(
+                        "Instanz-Schlüsselpaar: NICHT VORHANDEN"
+                        " – arborpress federation keygen ausführen"
+                    )
+
+                # ---- Actor-Schlüssel (alle Accounts) ----
+                rows = (await db.execute(
+                    select(ActorKeypair, User.username)
+                    .join(User, User.id == ActorKeypair.user_id)
+                    .order_by(User.username)
+                )).all()
+                typer.echo(f"\nActor-Schlüssel ({len(rows)}):")
+                if rows:
+                    typer.echo(f"  {'Benutzer':<20} {'Algo':<10} {'Erstellt':<12} Rotiert")
+                    typer.echo("  " + "-" * 62)
+                    for kp, uname in rows:
+                        rotated = str(kp.rotated_at.date()) if kp.rotated_at else "–"
+                        typer.echo(
+                            f"  {uname:<20} {kp.algorithm:<10}"
+                            f" {str(kp.created_at.date()):<12} {rotated}"
+                        )
+
+                # ---- PGP-Schlüssel (Gesamtübersicht) ----
+                pgp_count = (await db.execute(
+                    select(func.count()).select_from(UserPGPKey)
+                )).scalar_one()
+                typer.echo(f"\nOpenPGP-Schlüssel gesamt: {pgp_count}")
+                return
+
+            # ---- Benutzerspezifisch ----
+            user_row = (
+                await db.execute(select(User).where(User.username == username))
+            ).scalar_one_or_none()
+            if not user_row:
+                typer.echo(f"Benutzer {username!r} nicht gefunden.", err=True)
+                raise typer.Exit(1)
+
+            typer.echo(f"Schlüssel-Status für {username!r}:")
+
+            # Actor-Schlüssel
+            kp = (await db.execute(
+                select(ActorKeypair).where(ActorKeypair.user_id == str(user_row.id))
+            )).scalar_one_or_none()
+            typer.echo("\nActor-Schlüssel (HTTP-Signatures):")
+            if kp:
+                typer.echo(f"  Algorithmus: {kp.algorithm}")
+                typer.echo(f"  Key-ID:      {kp.key_id_url}")
+                typer.echo(f"  Erstellt:    {kp.created_at.date()}"
+                           f" ({(now - kp.created_at).days} Tage alt)")
+                if kp.rotated_at:
+                    typer.echo(f"  Rotiert:     {kp.rotated_at.date()}")
+            else:
+                typer.echo("  NICHT VORHANDEN")
+
+            # PGP-Schlüssel
+            pgp_rows = (await db.execute(
+                select(UserPGPKey)
+                .where(UserPGPKey.user_id == str(user_row.id))
+                .order_by(UserPGPKey.is_primary_signing.desc(), UserPGPKey.created_at)
+            )).scalars().all()
+            typer.echo(f"\nOpenPGP-Schlüssel ({len(pgp_rows)}):")
+            if pgp_rows:
+                typer.echo(
+                    f"  {'Label':<20} {'Fingerprint':<42}"
+                    f" {'Sign':<5} {'Enc':<5} {'Prim':<5} Ablauf"
+                )
+                typer.echo("  " + "-" * 90)
+                for pk in pgp_rows:
+                    expired = ""
+                    if pk.expires_at and pk.expires_at < now:
+                        expired = " [ABGELAUFEN]"
+                    elif pk.expires_at:
+                        expired = f" (bis {pk.expires_at.date()})"
+                    typer.echo(
+                        f"  {pk.label:<20} {pk.fingerprint:<42}"
+                        f" {'✓' if pk.use_for_signing else '–':<5}"
+                        f" {'✓' if pk.use_for_encryption else '–':<5}"
+                        f" {'★' if pk.is_primary_signing else ' ':<5}"
+                        f"{expired}"
+                    )
+            else:
+                typer.echo("  keine")
+
+    asyncio.run(_show())
 
 
 # ---------------------------------------------------------------------------
