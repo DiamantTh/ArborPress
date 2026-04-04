@@ -13,8 +13,8 @@ aus der Datenbank gelesen und im Admin-Interface unter /admin/settings gepflegt.
 
 Konfigurationsquellen (Ladereihenfolge, spätere überschreiben frühere):
   1.  --config /pfad/zu/config.toml  – einzelne Datei
-  2.  --config /pfad/zu/conf.d/      – alle *.toml im Verzeichnis (sortiert)
-  3.  conf.d/                         – lokales Verzeichnis (auto-discover)
+  2.  --config /pfad/zu/config/       – alle *.toml im Verzeichnis (sortiert)
+  3.  config/                          – lokales Verzeichnis (auto-discover)
   4.  config.toml                     – einzelne Datei (auto-discover)
   5.  Defaults + Umgebungsvariablen   – ARBORPRESS_SECTION__KEY=value
 
@@ -246,16 +246,16 @@ _settings: Settings | None = None
 
 
 def get_settings(config_path: Path | None = None) -> Settings:
-    """Singleton – Ladereihenfolge: conf.d/ → config.toml → Env-Vars → Defaults.
+    """Singleton – Ladereihenfolge: config/ → config.toml → Env-Vars → Defaults.
 
     ``config_path`` kann eine Datei oder ein Verzeichnis sein.
-    Auto-Discover (wenn None): erst ``conf.d/``, dann ``config.toml``.
+    Auto-Discover (wenn None): erst ``config/``, dann ``config.toml``.
     """
     global _settings
     if _settings is None:
         if config_path is None:
-            if Path("conf.d").is_dir():
-                config_path = Path("conf.d")
+            if Path("config").is_dir():
+                config_path = Path("config")
             else:
                 config_path = Path("config.toml")
         if config_path.exists():

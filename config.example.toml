@@ -14,7 +14,7 @@
 #       config.toml
 #
 #  2. Verzeichnis (empfohlen für Produktion):
-#       conf.d/
+#       config/
 #         10-base.toml       ← allgemeine Einstellungen
 #         20-secrets.toml    ← Passwörter, Secret-Keys  (chmod 600)
 #         30-cache.toml      ← Cache/Redis-Konfig
@@ -25,11 +25,11 @@
 #         include = ["secrets.toml"]   ← relative zum Verzeichnis der Datei
 #
 #  Aufruf mit explizitem Pfad:
-#    arborpress --config /etc/arborpress/conf.d/ serve
+#    arborpress --config /etc/arborpress/config/ serve
 #    arborpress --config /etc/arborpress/config.toml serve
 #
 #  Auto-Discover (ohne --config):
-#    Sucht erst conf.d/ im cwd, dann config.toml im cwd.
+#    Sucht erst config/ im cwd, dann config.toml im cwd.
 #
 # ---------------------------------------------------------------------------
 # include-Direktive

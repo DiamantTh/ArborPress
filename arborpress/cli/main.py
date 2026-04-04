@@ -61,7 +61,7 @@ app.add_typer(plugin_app, name="plugin")
 def main_callback(
     config: Path | None = typer.Option(  # noqa: B008
         None, "--config", "-c",
-        help="Pfad zur config.toml oder zu einem conf.d/-Verzeichnis",
+        help="Pfad zur config.toml oder zu einem config/-Verzeichnis",
     ),
 ) -> None:
     """Gemeinsamer Einstiegspunkt. Lädt Konfiguration."""
