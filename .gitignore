@@ -21,6 +21,11 @@ config.toml
 *.sql
 *.dump
 
+# Lokale SQLite-Entwicklungsdatenbank
+*.db
+*.db-shm
+*.db-wal
+
 # Logs (lokal erzeugte Dateien)
 *.log
 logs/

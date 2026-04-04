@@ -1148,7 +1148,7 @@ def _bootstrap_plugins() -> None:
     cfg = get_settings()
     from arborpress.plugins.registry import get_registry
     reg = get_registry()
-    for d in cfg.plugins.dirs:
+    for d in cfg.plugin_dirs():
         reg.load_directory(d)
     _load_plugin_cli_extensions()
 

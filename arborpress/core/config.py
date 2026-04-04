@@ -101,6 +101,18 @@ class CacheSettings(BaseSettings):
 class PluginSettings(BaseSettings):
     dirs: list[Path] = Field(default_factory=list)
 
+    def resolved_dirs(self, config_file: Path) -> list[Path]:
+        """Gibt alle dirs als absolute Pfade zurück.
+
+        Relative Pfade werden relativ zum Verzeichnis der Config-Datei
+        aufgelöst (nicht relativ zum cwd).
+        """
+        base = config_file.parent
+        return [
+            d if d.is_absolute() else (base / d).resolve()
+            for d in self.dirs
+        ]
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -120,7 +132,20 @@ class Settings(BaseSettings):
     def from_file(cls, path: Path) -> Settings:
         with open(path, "rb") as fh:
             data = tomllib.load(fh)
-        return cls.model_validate(data)
+        obj = cls.model_validate(data)
+        obj._config_file = path.resolve()
+        return obj
+
+    def plugin_dirs(self) -> list[Path]:
+        """Plugin-Verzeichnisse als aufgelöste absolute Pfade.
+
+        Relative Pfade werden relativ zur Config-Datei aufgelöst,
+        nicht relativ zum Arbeitsverzeichnis.
+        """
+        cfg = getattr(self, "_config_file", None)
+        if cfg is not None:
+            return self.plugins.resolved_dirs(cfg)
+        return [d.resolve() for d in self.plugins.dirs]
 
 
 _settings: Settings | None = None
