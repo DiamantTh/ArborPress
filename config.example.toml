@@ -1,51 +1,38 @@
 # ArborPress – Infrastruktur-Konfiguration
-# Kopieren nach config.toml und anpassen.  Geheimnisse NIE committen!
+# Kopieren nach config/config.toml (empfohlen) oder config.toml
+# und anpassen.  Geheimnisse NIE committen!
 #
 # Alle weiteren Einstellungen (Mail, Captcha, Kommentare, Federation,
 # Suche, Theme) werden im Admin-Bereich unter /admin/settings verwaltet
 # und in der Datenbank gespeichert.
 #
 # ---------------------------------------------------------------------------
-# Konfigurationsquellen & Ladereihenfolge
+# Empfohlenes Layout
 # ---------------------------------------------------------------------------
-# ArborPress unterstützt drei Layouts:
 #
-#  1. Einzelne Datei (Standard / Standalone):
-#       config.toml
-#
-#  2. Verzeichnis (Standalone mit getrennten Secrets):
+#  Standalone (venv):
 #       config/
-#         10-base.toml       ← allgemeine Einstellungen  (kann in Git)
-#         20-secrets.toml    ← Passwörter, Secret-Keys   (chmod 600, .gitignore)
-#         30-cache.toml      ← Cache/Redis-Konfig
-#       → alle *.toml werden alphabetisch sortiert und tief gemergt
+#         config.toml      ← Hauptkonfiguration  (wird auto-gefunden)
+#         secrets.toml     ← Passwörter, Secret-Keys  (chmod 600, .gitignore)
 #
-#  3. Einzelne Datei mit includes (Standalone):
-#       config.toml
-#         include = ["secrets.toml"]
-#
-#  Docker (empfohlen):
-#       Volume /app/config/ mounten – alle *.toml werden geladen.
-#       Oder einzelne Datei: /app/config.toml per Bind-Mount.
-#
-#       docker-compose.yml:
+#  Docker:
+#       Gleiches Layout, Volume mounten:
 #         volumes:
 #           - ./config:/app/config:ro
 #
-#  Auto-Discover (ohne --config):
-#    Sucht erst config/ im cwd/WORKDIR, dann config.toml im cwd/WORKDIR.
+#  Alternativ – alles in einer Datei:
+#       config.toml        (mit optionalem include = ["secrets.toml"])
 #
-#  Expliziter Pfad:
-#    arborpress --config ./config/ serve
-#    arborpress --config ./config.toml serve
+#  Auto-Discover (ohne --config): sucht erst config/ dann config.toml im cwd.
+#  Explizit: arborpress --config ./config/ serve
 #
 # ---------------------------------------------------------------------------
 # include-Direktive
 # ---------------------------------------------------------------------------
-# include = ["secrets.toml"]    # relativ zu dieser Datei
+# include = ["secrets.toml"]    # relativ zur Hauptdatei – selber Ordner
 #
 # Includes können selbst wieder include-Direktiven enthalten (rekursiv).
-# Später geladene Werte überschreiben frühere (Dict-Tabellen werden gemergt).
+# Inkludierte Werte überschreiben die Hauptdatei (Tabellen werden gemergt).
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------

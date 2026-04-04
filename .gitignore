@@ -10,6 +10,7 @@ build/
 
 # Konfiguration (enthält Geheimnisse)
 config.toml
+config/*.toml
 *.local.toml
 
 # Umgebungsvariablen

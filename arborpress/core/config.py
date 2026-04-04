@@ -11,17 +11,17 @@ Alle inhaltlichen Einstellungen (Mail, Kommentare, Captcha, Theme, Federation,
 Suche, allgemeine Blog-Einstellungen) werden über arborpress.core.site_settings
 aus der Datenbank gelesen und im Admin-Interface unter /admin/settings gepflegt.
 
-Konfigurationsquellen (Ladereihenfolge, spätere überschreiben frühere):
-  1.  --config /pfad/zu/config.toml  – einzelne Datei
-  2.  --config ./config/            – alle *.toml im Verzeichnis (sortiert)
-  3.  config/                       – lokales Verzeichnis (auto-discover)
-  4.  config.toml                     – einzelne Datei (auto-discover)
-  5.  Defaults + Umgebungsvariablen   – ARBORPRESS_SECTION__KEY=value
+Konfigurationsquellen (Ladereihenfolge):
+  1.  --config ./config/    – Verzeichnis: lädt config/config.toml
+  2.  --config config.toml  – einzelne Datei
+  3.  config/               – Auto-Discover: Verzeichnis im cwd
+  4.  config.toml           – Auto-Discover: Einzeldatei im cwd
+  5.  Defaults + Env-Vars   – ARBORPRESS_SECTION__KEY=value
 
-include-Direktive (in jeder TOML-Datei verwendbar):
-  include = ["secrets.toml", "/etc/arborpress/db.toml"]
-  Relative Pfade werden relativ zum Verzeichnis der enthaltenden Datei
-  aufgelöst. Includes unterstützen selbst wieder include (rekursiv).
+include-Direktive:
+  include = ["secrets.toml"]   # relativ zum Verzeichnis der Datei
+  Weitere Dateien im selben Ordner werden gemergt (Override-Semantik).
+  Includes dürfen selbst wieder include enthalten (rekursiv).
 """
 
 from __future__ import annotations
@@ -56,11 +56,11 @@ def _deep_merge(base: dict, override: dict) -> dict:
 def _load_toml_file(path: Path) -> dict:
     """Lädt eine TOML-Datei und verarbeitet optionale ``include``-Direktiven.
 
-    ``include = ["secrets.toml", "/etc/arborpress/db.toml"]``
+    ``include = ["secrets.toml"]``
 
-    Relative Pfade werden relativ zum Verzeichnis der Datei aufgelöst.
-    Includes werden auf die Hauptdatei gemergt (Override-Semantik).
-    Includes dürfen selbst include-Direktiven enthalten (rekursiv).
+    Relative Pfade werden relativ zum Verzeichnis der Datei aufgelöst,
+    d. h. im selben Ordner. Includes dürfen selbst include-Direktiven
+    enthalten (rekursiv).
     """
     with open(path, "rb") as fh:
         data = tomllib.load(fh)
@@ -80,27 +80,19 @@ def _load_toml_file(path: Path) -> dict:
 
 
 def _load_config_dir(directory: Path) -> tuple[dict, Path]:
-    """Lädt alle ``*.toml``-Dateien aus einem Verzeichnis (alphabetisch sortiert).
+    """Lädt ``config.toml`` aus einem Konfig-Verzeichnis.
 
-    Gibt das gemergete Dict und den ``_config_file``-Ankerpfad zurück
-    (wird für relative Pfadauflösung benötigt; bevorzugt ``config.toml``
-    im Verzeichnis, sonst die erste geladene Datei).
+    Das Verzeichnis ist der Konfig-Root. Die Hauptdatei (``config.toml``)
+    enthält optional `include = ["secrets.toml"]` – alle inkludierten
+    Dateien werden relativ zum Verzeichnis aufgelöst (also im selben Ordner).
     """
-    files = sorted(directory.glob("*.toml"))
-    if not files:
+    main = directory / "config.toml"
+    if not main.exists():
         raise FileNotFoundError(
-            f"Kein *.toml im Konfig-Verzeichnis gefunden: {directory}"
+            f"Keine config.toml im Konfig-Verzeichnis gefunden: {directory}"
         )
-    merged: dict = {}
-    for toml_file in files:
-        merged = _deep_merge(merged, _load_toml_file(toml_file))
-
-    # Ankerpfad für relative Pfadauflösung
-
-    anchor = directory / "config.toml"
-    if not anchor.exists():
-        anchor = files[0]
-    return merged, anchor.resolve()
+    data = _load_toml_file(main)
+    return data, main.resolve()
 
 
 class DatabaseSettings(BaseSettings):
