@@ -40,7 +40,7 @@ def get_csrf_token() -> str:
     return session[_CSRF_SESSION_KEY]
 
 
-def validate_csrf() -> None:
+async def validate_csrf() -> None:
     """Prüft CSRF-Token; bricht mit HTTP 403 ab wenn ungültig.
 
     Akzeptiert Token aus:
@@ -48,8 +48,9 @@ def validate_csrf() -> None:
       2. AJAX/SPA-Requests (Header ``X-CSRF-Token``)
     """
     expected = session.get(_CSRF_SESSION_KEY)
+    form = await request.form
     submitted = (
-        request.form.get(CSRF_FORM_FIELD)
+        form.get(CSRF_FORM_FIELD)
         or request.headers.get("X-CSRF-Token", "")
     )
     if not expected or not submitted or not secrets.compare_digest(expected, submitted):

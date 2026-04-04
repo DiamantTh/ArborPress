@@ -45,7 +45,7 @@ async def _auth_csrf_check() -> None:
     content_type = request.content_type or ""
     if "application/json" in content_type:
         return  # JSON-API: Origin/Referer-Check ist ausreichend
-    validate_csrf()
+    await validate_csrf()
 
 
 # Auth-Endpunkte, die dem IP-basierten Rate-Limit unterliegen (§10)
@@ -375,7 +375,7 @@ async def breakglass_login():
     if not cfg.auth.legacy_password_enabled:
         abort(404)
 
-    validate_csrf()
+    await validate_csrf()
 
     form = await request.form
     user_name = (form.get("user_name") or "").strip()
@@ -392,7 +392,13 @@ async def breakglass_login():
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
 
-        if user is None or not user.is_active or not user.password_hash:
+        user_invalid = (
+            user is None
+            or not user.is_active
+            or not user.legacy_password_enabled
+            or not user.legacy_password_hash
+        )
+        if user_invalid:
             # Timing-Safe: trotzdem dummy-hash prüfen um Timing-Angriffe zu erschweren
             from arborpress.auth.breakglass import _hasher
             try:
@@ -401,17 +407,17 @@ async def breakglass_login():
                 log.debug("Dummy-Verifikation (erwartet): %s", _e)
             abort(401, "Ungültige Anmeldedaten")
 
-        if not verify_password(user.password_hash, password, admin_id=str(user.id)):
+        if not verify_password(user.legacy_password_hash, password, admin_id=str(user.id)):
             abort(401, "Ungültige Anmeldedaten")
 
         # Rehash bei veralteten Parametern
-        if needs_rehash(user.password_hash):
+        if needs_rehash(user.legacy_password_hash):
             from sqlalchemy import update as sa_update
 
             from arborpress.auth.breakglass import hash_password
             await db.execute(
                 sa_update(User).where(User.id == user.id)
-                .values(password_hash=hash_password(password))
+                .values(legacy_password_hash=hash_password(password))
             )
             await db.commit()
 
@@ -424,7 +430,7 @@ async def breakglass_login():
 
         cfg_auth = cfg.auth
         now = datetime.now(UTC)
-        ttl: timedelta = cfg_auth.admin_session_ttl
+        ttl = timedelta(seconds=cfg_auth.admin_session_ttl)
         proto = (
             request.headers.get("X-Forwarded-Proto", "")
             or request.headers.get("X-Forwarded-Ssl", "")

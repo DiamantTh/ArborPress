@@ -513,7 +513,7 @@ async def post_comment_submit(slug: str):
       5. Bestätigungs-E-Mail an Autor senden
       6. Weiterleitung zum Artikel mit Hinweis-Flash
     """
-    validate_csrf()
+    await validate_csrf()
     from datetime import datetime as dt
 
     from quart import flash

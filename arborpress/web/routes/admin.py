@@ -38,7 +38,7 @@ def _require_session():
 async def _csrf_protect() -> None:
     """CSRF-Schutz für alle state-ändernden Admin-Anfragen (§10)."""
     if request.method in ("POST", "PUT", "PATCH", "DELETE"):
-        validate_csrf()
+        await validate_csrf()
 
 
 @admin_bp.before_request

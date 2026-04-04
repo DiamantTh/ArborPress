@@ -41,10 +41,10 @@
     <a href="{{ url_for('admin.plugins_list') }}" class="btn btn--small">{{ _('Verwalten') }}</a>
   </div>
 
-  {% if config.federation.mode != 'disabled' %}
+  {% if federation_settings.get('mode', 'disabled') != 'disabled' %}
   <div class="dashboard-card">
     <h2>{{ _('Federation') }}</h2>
-    <p class="dashboard-card__meta">{{ config.federation.mode }}</p>
+    <p class="dashboard-card__meta">{{ federation_settings.get('mode') }}</p>
   </div>
   {% endif %}
 </div>

@@ -54,6 +54,15 @@ def create_app() -> Quart:
     app.jinja_env.globals["csrf_token"] = get_csrf_token
     app.jinja_env.globals["has_role"] = has_min_role
 
+    # nl2br-Filter (für Kommentar-Anzeige: \n → <br>)
+    import markupsafe as _mu
+
+    def _nl2br(value: str) -> _mu.Markup:
+        escaped = _mu.escape(value)
+        return _mu.Markup(str(escaped).replace("\n", "<br>\n"))  # noqa: S704
+
+    app.jinja_env.filters["nl2br"] = _nl2br
+
     # Hilfsfunktion für Template-Zeitvergleiche (z. B. Ablauf-Check in sessions.html)
     from datetime import datetime as _dt
     app.jinja_env.globals["now"] = lambda: _dt.now(UTC)

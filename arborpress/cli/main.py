@@ -370,6 +370,37 @@ def user_password_status(
     asyncio.run(_check())
 
 
+@user_app.command("password-set")
+def user_password_set(
+    username: str = typer.Argument(..., help="Benutzername"),
+    password: str = typer.Option(
+        ..., prompt=True, hide_input=True, confirmation_prompt=True,
+        help="Neues Break-Glass-Passwort",
+    ),
+) -> None:
+    """Setzt oder ändert das Break-Glass-Passwort eines Accounts."""
+    async def _set_pw() -> None:
+        from sqlalchemy import select
+
+        from arborpress.auth.breakglass import hash_password
+        from arborpress.core.db import get_db_session
+        from arborpress.models.user import User
+
+        async for db in get_db_session():
+            result = await db.execute(select(User).where(User.username == username))
+            user = result.scalar_one_or_none()
+            if not user:
+                typer.echo(f"Benutzer {username!r} nicht gefunden.", err=True)
+                raise typer.Exit(1)
+            user.legacy_password_hash = hash_password(password)
+            user.legacy_password_enabled = True
+            db.add(user)
+            await db.commit()
+            typer.echo(f"Passwort für {username!r} gesetzt und aktiviert.")
+
+    asyncio.run(_set_pw())
+
+
 @user_app.command("password-disable")
 def user_password_disable(
     username: str = typer.Argument(..., help="Benutzername"),

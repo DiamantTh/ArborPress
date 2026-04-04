@@ -183,9 +183,10 @@
     document.documentElement.setAttribute('data-scheme', dark ? 'dark' : 'light');
   }
 
-  // Initialzustand: gespeicherte Präferenz, Standard Hell
+  // Initialzustand: 1. gespeicherte Präferenz, 2. Systemeinstellung, 3. Hell
   var stored = localStorage.getItem('ap-color-scheme');
-  var useDark = stored === 'dark';
+  var useDark = stored === 'dark'
+    || (stored === null && window.matchMedia('(prefers-color-scheme: dark)').matches);
   applyScheme(useDark);
 
   if (btn) {
