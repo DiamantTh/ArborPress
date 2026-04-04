@@ -4,6 +4,42 @@
 # Alle weiteren Einstellungen (Mail, Captcha, Kommentare, Federation,
 # Suche, Theme) werden im Admin-Bereich unter /admin/settings verwaltet
 # und in der Datenbank gespeichert.
+#
+# ---------------------------------------------------------------------------
+# Konfigurationsquellen & Ladereihenfolge
+# ---------------------------------------------------------------------------
+# ArborPress unterstützt drei Layouts:
+#
+#  1. Einzelne Datei (Standard):
+#       config.toml
+#
+#  2. Verzeichnis (empfohlen für Produktion):
+#       conf.d/
+#         10-base.toml       ← allgemeine Einstellungen
+#         20-secrets.toml    ← Passwörter, Secret-Keys  (chmod 600)
+#         30-cache.toml      ← Cache/Redis-Konfig
+#       → alle *.toml werden alphabetisch sortiert und tief gemergt
+#
+#  3. Einzelne Datei mit includes:
+#       config.toml
+#         include = ["secrets.toml"]   ← relative zum Verzeichnis der Datei
+#
+#  Aufruf mit explizitem Pfad:
+#    arborpress --config /etc/arborpress/conf.d/ serve
+#    arborpress --config /etc/arborpress/config.toml serve
+#
+#  Auto-Discover (ohne --config):
+#    Sucht erst conf.d/ im cwd, dann config.toml im cwd.
+#
+# ---------------------------------------------------------------------------
+# include-Direktive
+# ---------------------------------------------------------------------------
+# include = ["secrets.toml"]              # relativ zu dieser Datei
+# include = ["/etc/arborpress/db.toml"]   # absoluter Pfad
+#
+# Includes können selbst wieder include-Direktiven enthalten (rekursiv).
+# Später geladene Werte überschreiben frühere (Dict-Tabellen werden gemergt).
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Datenbank – PostgreSQL ≥16, MariaDB ≥11 oder SQLite (Entwicklung)

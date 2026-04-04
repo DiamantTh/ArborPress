@@ -60,13 +60,14 @@ app.add_typer(plugin_app, name="plugin")
 @app.callback()
 def main_callback(
     config: Path | None = typer.Option(  # noqa: B008
-        None, "--config", "-c", help="Pfad zur config.toml"
+        None, "--config", "-c",
+        help="Pfad zur config.toml oder zu einem conf.d/-Verzeichnis",
     ),
 ) -> None:
     """Gemeinsamer Einstiegspunkt. Lädt Konfiguration."""
     if config:
         import arborpress.core.config as config_mod
-        config_mod._settings = Settings.from_file(config)  # type: ignore[attr-defined]
+        config_mod._settings = Settings.from_path(config)  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
