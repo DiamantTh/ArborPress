@@ -39,8 +39,8 @@ docs/
 frontend/
 scripts/
 tests/
-themes/
-plugins/
+# Betreiber-Inhalte (content/) werden per Volume eingebunden
+content/
 future/
 
 # Git

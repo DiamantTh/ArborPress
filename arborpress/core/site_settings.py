@@ -43,7 +43,7 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "theme": {
         "active":          "default",
-        "themes_dir":      "themes",      # relativ zum Arbeitsverzeichnis
+        "themes_dir":      "content/themes",      # relativ zum Arbeitsverzeichnis
         "auto_dark":       False,          # automatisch Dark-Companion ab/bis Uhrzeit aktivieren
         "auto_dark_start": 19,             # Stunde (0–23), ab der das Dark-Theme gilt
         "auto_dark_end":   6,              # Stunde (0–23), bis zu der das Dark-Theme gilt

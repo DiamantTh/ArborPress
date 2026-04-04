@@ -48,10 +48,12 @@ arborpress/               Python-Paket (Backend)
     security.py           CSP + Security-Headers Middleware
     app.py                App-Factory (create_app)
   cli/                    Typer-CLI (§14 alle Admin-Befehle)
+content/                  Betreiber-Inhalte  (≡ wp-content)
+  plugins/                Manuell installierte Plugins
+  themes/                 Eigene Themes
 config/                   Konfigurationsverzeichnis
-  config.example.toml     Beispielkonfiguration (→ config.toml kopieren)
+  config.example.toml     Beispielkonfiguration (→ config/config.toml kopieren)
 container/                Container-Dateien (OCI – Docker/Podman)
-  Containerfile.ubi9      Produktions-Image auf UBI9-Basis (RHEL9)
   Containerfile.ubuntu    Produktions-Image auf Ubuntu 24.04 LTS
   entrypoint.sh           Container-Entrypoint
   compose.postgresql.yml  Compose: UBI9 + PostgreSQL (RHEL9-Images)
@@ -60,9 +62,7 @@ container/                Container-Dateien (OCI – Docker/Podman)
   compose.mariadb.ubuntu.yml     Compose: Ubuntu + MariaDB
 docs/                     Proxy-Konfigurationen + Spezifikation (§0–§17)
 frontend/                 SvelteKit-Frontend (Build-Zeit, §9)
-plugins/                  Manuell installierte Plugins
-themes/
-  default/                Standard-Theme (theme.toml)
+tests/                    Automatisierte Tests
 ```
 
 ## CLI-Referenz (§14)
@@ -128,7 +128,7 @@ Plugins werden ausschließlich manuell installiert – kein automatisches Update
 ```bash
 # 1. Plugin-Verzeichnis in config/config.toml eintragen:
 [plugins]
-dirs = ["/opt/arborpress/plugins"]
+dirs = ["content/plugins/mein-plugin"]
 
 # 2. Manifest prüfen
 arborpress plugin validate /pfad/zum/plugin

@@ -199,9 +199,9 @@ def get_theme_registry() -> ThemeRegistry:
     global _registry
     if _registry is None:
         _registry = ThemeRegistry()
-        # Externe Themes aus project root themes/ einlesen
+        # Externe Themes aus content/themes/ einlesen
         extra: list[Path] = []
-        external = Path("themes")
+        external = Path("content/themes")
         if external.is_dir():
             extra.append(external)
         _registry.load(extra_dirs=extra or None)

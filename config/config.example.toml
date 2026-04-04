@@ -97,6 +97,7 @@ audit_log  = true
 [plugins]
 # Verzeichnisse mit manuell installierten Plugins
 dirs = [
+    # "content/plugins/mein-plugin",
     # "/opt/arborpress/plugins",
 ]
 
