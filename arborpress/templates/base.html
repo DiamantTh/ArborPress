@@ -135,7 +135,7 @@
       {% endfor %}
     </p>
     {# §5 Federation: rel="me" nur wenn federation aktiviert #}
-    {% if config.federation.mode != 'disabled' %}
+    {% if federation_settings.get('mode', 'disabled') != 'disabled' %}
       <p><a rel="me" href="{{ config.web.base_url }}/ap/actor/{{ session.get('user_name', '') }}">ActivityPub</a></p>
     {% endif %}
   </div>

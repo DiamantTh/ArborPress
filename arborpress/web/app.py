@@ -89,6 +89,13 @@ def create_app() -> Quart:
         _css_val = make_pattern_url(_pid, _color, _opacity)
         return {"theme_bg_pattern": _pid, "theme_bg_pattern_css": _css_val}
 
+    # Federation – Per-Request-Context-Processor (Wert aus DB/Cache)
+    @app.context_processor
+    async def _federation_context() -> dict:
+        from arborpress.core.site_settings import get_cached, get_defaults
+        fed = get_cached("federation") or get_defaults("federation")
+        return {"federation_settings": fed}
+
     # Demo-Modus – Per-Request-Context-Processor liest Cache dynamisch
     # (wirkt sofort nach Admin-Änderung ohne Neustart)
     @app.context_processor

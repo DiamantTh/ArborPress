@@ -19,7 +19,7 @@ import logging
 from base64 import urlsafe_b64encode
 from datetime import UTC, datetime, timedelta
 
-from quart import Blueprint, abort, jsonify, render_template, request, session
+from quart import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import select, update
 
 from arborpress.auth.stepup import grant_stepup, revoke_stepup
@@ -357,6 +357,98 @@ async def login_complete():
 async def emit_fail(user_id: object) -> None:
     from arborpress.core.events import emit
     await emit("auth.login_failure", user_id=str(user_id))
+
+
+# ---------------------------------------------------------------------------
+# Break-Glass Passwort-Login (§2 – nur wenn legacy_password_enabled=true)
+# ---------------------------------------------------------------------------
+
+
+@auth_bp.post("/breakglass")
+async def breakglass_login():
+    """Notfall-Passwort-Login (§2 Break-Glass).
+
+    Nur aktiv wenn ``auth.legacy_password_enabled = true`` in config.toml.
+    Nutzt Argon2id-Verifikation (§2) und schreibt obligatorisch ins Audit-Log.
+    """
+    cfg = get_settings()
+    if not cfg.auth.legacy_password_enabled:
+        abort(404)
+
+    validate_csrf()
+
+    form = await request.form
+    user_name = (form.get("user_name") or "").strip()
+    password = form.get("password") or ""
+
+    if not user_name or not password:
+        abort(400, "Benutzername und Passwort erforderlich")
+
+    from arborpress.auth.breakglass import needs_rehash, verify_password
+    from arborpress.models.user import User
+
+    async for db in get_db_session():
+        stmt = select(User).where(User.username == user_name)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+
+        if user is None or not user.is_active or not user.password_hash:
+            # Timing-Safe: trotzdem dummy-hash prüfen um Timing-Angriffe zu erschweren
+            from arborpress.auth.breakglass import _hasher
+            try:
+                _hasher.verify("$argon2id$dummy", password)
+            except Exception as _e:  # noqa: BLE001
+                log.debug("Dummy-Verifikation (erwartet): %s", _e)
+            abort(401, "Ungültige Anmeldedaten")
+
+        if not verify_password(user.password_hash, password, admin_id=str(user.id)):
+            abort(401, "Ungültige Anmeldedaten")
+
+        # Rehash bei veralteten Parametern
+        if needs_rehash(user.password_hash):
+            from sqlalchemy import update as sa_update
+
+            from arborpress.auth.breakglass import hash_password
+            await db.execute(
+                sa_update(User).where(User.id == user.id)
+                .values(password_hash=hash_password(password))
+            )
+            await db.commit()
+
+        # Session anlegen (identisch zu WebAuthn-Login)
+        session.clear()
+        session["user_id"] = str(user.id)
+        session["user_name"] = user.username
+        session["user_role"] = user.role.value
+        session["account_type"] = user.account_type.value
+
+        cfg_auth = cfg.auth
+        now = datetime.now(UTC)
+        ttl: timedelta = cfg_auth.admin_session_ttl
+        proto = (
+            request.headers.get("X-Forwarded-Proto", "")
+            or request.headers.get("X-Forwarded-Ssl", "")
+        )
+        is_tls = proto.lower() in ("https", "on") or request.url.startswith("https")
+        raw_ua = request.headers.get("User-Agent", "")
+        from arborpress.models.user import UserSession
+        db_sess = UserSession(
+            user_id=str(user.id),
+            expires_at=now + ttl,
+            last_seen_at=now,
+            client_ip=request.remote_addr,
+            user_agent=raw_ua[:512] if raw_ua else None,
+            is_tls=is_tls,
+            is_cli=False,
+        )
+        db.add(db_sess)
+        await db.commit()
+        session["session_id"] = db_sess.id
+
+    from arborpress.core.events import emit
+    await emit("auth.login_success", user_id=str(user.id))
+
+    return redirect(url_for("admin.dashboard"))
 
 
 # ---------------------------------------------------------------------------
