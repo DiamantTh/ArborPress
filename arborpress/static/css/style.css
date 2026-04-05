@@ -246,9 +246,9 @@ a.tag { background: var(--color-primary); color: #fff; border-radius: var(--radi
 }
 
 /* Kommentar-Formular */
-.comment-form-wrapper { max-width: 60ch; }
+.comment-form-wrapper { max-width: 100%; }
 .comment-form label { display: block; font-weight: 500; margin-bottom: 1rem; }
-.comment-form label small { font-weight: 400; color: var(--color-muted); }
+.comment-form label small { font-weight: 400; color: var(--color-muted); display: block; margin-top: .15rem; }
 .comment-form input,
 .comment-form textarea {
   display: block;
@@ -268,6 +268,8 @@ a.tag { background: var(--color-primary); color: #fff; border-radius: var(--radi
   border-color: var(--color-primary);
 }
 .comment-form__row { display: grid; gap: .75rem; grid-template-columns: 1fr 1fr 1fr; }
+.comment-form__row label { display: flex; flex-direction: column; margin-bottom: 0; }
+.comment-form__row label input { margin-top: auto; }
 .comment-form__actions {
   display: flex;
   align-items: center;
