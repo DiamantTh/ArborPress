@@ -16,7 +16,8 @@
       <label for="user_name">{{ _('Benutzername') }}</label>
       <input type="text" id="user_name" name="user_name" autocomplete="username"
              autofocus required maxlength="64" pattern="[a-z0-9._-]+"
-             title="{{ _('Nur Kleinbuchstaben, Ziffern, . _ -') }}">
+             title="{{ _('Nur Kleinbuchstaben, Ziffern, . _ -') }}"
+             value="{{ prefill_username | default('') }}">
     </div>
     <div class="form-group">
       <label for="display_name">{{ _('Anzeigename') }}</label>

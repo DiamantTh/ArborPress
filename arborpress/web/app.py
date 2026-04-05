@@ -15,6 +15,7 @@ from arborpress.web.routes.api import api_admin_bp, api_v1_bp
 from arborpress.web.routes.auth import auth_bp
 from arborpress.web.routes.federation import federation_bp, wellknown_bp
 from arborpress.web.routes.health import health_bp
+from arborpress.web.routes.install import install_bp
 from arborpress.web.routes.public import public_bp
 from arborpress.web.routes.sso import sso_bp
 from arborpress.web.security import SecurityHeadersMiddleware
@@ -150,6 +151,27 @@ def create_app() -> Quart:
     from arborpress.web.routes.admin import admin_bp
     admin_prefix = cfg.web.admin_path.rstrip("/")
 
+    # §14 Install-Wizard (vor allen anderen Blueprints registrieren)
+    app.register_blueprint(install_bp)
+
+    # §14 Install-Gate: solange .installed fehlt, alle Anfragen nach /install leiten
+    # Ausnahmen: /install selbst, /static/, /health
+    @app.before_request
+    async def _install_gate():
+        from arborpress.core.config import is_installed
+        if is_installed():
+            return None
+        from quart import request as _req, redirect as _redir, url_for as _uf
+        path = _req.path
+        if (
+            path == "/install"
+            or path.startswith("/static/")
+            or path == "/health"
+            or path == "/favicon.ico"
+        ):
+            return None
+        return _redir(_uf("install.install_page"))
+
     # §1 / §6 Public routes
     app.register_blueprint(public_bp)
 
@@ -200,17 +222,45 @@ def create_app() -> Quart:
     @app.before_serving
     async def _on_startup() -> None:
         import asyncio
+        import logging as _log
+        import secrets as _sec
 
+        from arborpress.core.config import install_token_path, is_installed
         from arborpress.core.db import get_engine
         from arborpress.core.db_capabilities import detect_capabilities, set_capabilities
         from arborpress.core.scheduler import run_scheduler
+
+        # §14 Installations-Token generieren wenn noch nicht installiert
+        if not is_installed():
+            token_file = install_token_path()
+            if not token_file.exists():
+                token = _sec.token_urlsafe(32)
+                token_file.parent.mkdir(parents=True, exist_ok=True)
+                token_file.write_text(token + "\n", encoding="utf-8")
+                _log.getLogger("arborpress").warning(
+                    "\n"
+                    "══════════════════════════════════════════════════════\n"
+                    "  ArborPress ist noch nicht eingerichtet.             \n"
+                    "  Öffne http://… /install im Browser und gib          \n"
+                    "  folgenden Token ein:                                \n"
+                    "                                                      \n"
+                    "  %s                                                  \n"
+                    "                                                      \n"
+                    "  Oder lies ihn aus: %s                               \n"
+                    "══════════════════════════════════════════════════════",
+                    token, token_file.resolve(),
+                )
+            else:
+                _log.getLogger("arborpress").warning(
+                    "ArborPress nicht eingerichtet – Token liegt in: %s",
+                    token_file.resolve(),
+                )
 
         try:
             caps = await detect_capabilities(get_engine())
             set_capabilities(caps)
         except Exception as exc:
-            import logging
-            logging.getLogger("arborpress").warning(
+            _log.getLogger("arborpress").warning(
                 "DB-Capability-Detection fehlgeschlagen: %s", exc
             )
 

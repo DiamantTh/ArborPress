@@ -237,6 +237,34 @@ class Settings(BaseSettings):
 _settings: Settings | None = None
 
 
+def get_config_dir() -> Path:
+    """Gibt das Verzeichnis zurück, in dem Sidecar-Dateien liegen (install.token, .installed).
+
+    Entspricht dem Verzeichnis der geladenen config-Datei, oder ``config/`` als Fallback.
+    """
+    cfg_file = getattr(_settings, "_config_file", None) if _settings else None
+    if cfg_file is not None:
+        return Path(cfg_file).parent
+    if Path("config").is_dir():
+        return Path("config")
+    return Path(".")
+
+
+def install_token_path() -> Path:
+    """Pfad zur Datei mit dem Einmal-Installationstoken."""
+    return get_config_dir() / "install.token"
+
+
+def installed_marker_path() -> Path:
+    """Pfad zur Markerdatei, die eine abgeschlossene Installation anzeigt."""
+    return get_config_dir() / ".installed"
+
+
+def is_installed() -> bool:
+    """True wenn die Instanz bereits eingerichtet wurde."""
+    return installed_marker_path().exists()
+
+
 def get_settings(config_path: Path | None = None) -> Settings:
     """Singleton – Ladereihenfolge: config/ → config.toml → Env-Vars → Defaults.
 

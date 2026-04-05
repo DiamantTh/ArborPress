@@ -111,7 +111,8 @@ async def login_page():
 
 @auth_bp.get("/register")
 async def register_page():
-    return await render_template("auth/register.html")
+    prefill = session.pop("install_prefill_user", "")
+    return await render_template("auth/register.html", prefill_username=prefill)
 
 
 # ---------------------------------------------------------------------------

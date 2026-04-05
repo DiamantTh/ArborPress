@@ -13,6 +13,10 @@ config.toml
 config/*.toml
 *.local.toml
 
+# Laufzeit-Dateien des Install-Wizards
+config/install.token
+config/.installed
+
 # Umgebungsvariablen
 .env
 .env.*

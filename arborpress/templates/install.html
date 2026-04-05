@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}ArborPress einrichten{% endblock %}
+{% set noindex = true %}
+{% block body_class %}auth-page{% endblock %}
+
+{% block content %}
+<div class="auth-box install-box">
+
+  <h1>ArborPress einrichten</h1>
+
+  <p class="auth-box__hint">
+    Gib den Installations-Token ein, der beim ersten Start in
+    <code>config/install.token</code> abgelegt wurde, und fülle die
+    Stammdaten aus.
+  </p>
+
+  {% if errors %}
+  <ul class="install-errors">
+    {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  <form method="POST" action="{{ url_for('install.install_submit') }}" class="auth-form install-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+
+    {# ── Token ────────────────────────────────────── #}
+    <section class="install-section">
+      <h2 class="install-section__heading">Installations-Token</h2>
+      <div class="form-group">
+        <label for="token">Token <span aria-hidden="true">*</span></label>
+        <input type="password" id="token" name="token"
+               required autocomplete="off" autofocus
+               placeholder="Inhalt von config/install.token">
+        <small>Den Token findest du auf dem Server in der Datei
+          <code>config/install.token</code>.</small>
+      </div>
+    </section>
+
+    {# ── Blog ─────────────────────────────────────── #}
+    <section class="install-section">
+      <h2 class="install-section__heading">Blog-Einstellungen</h2>
+      <div class="form-group">
+        <label for="site_name">Blog-Name <span aria-hidden="true">*</span></label>
+        <input type="text" id="site_name" name="site_name"
+               required maxlength="128" autocomplete="off"
+               value="{{ form.site_name if form else '' }}">
+      </div>
+    </section>
+
+    {# ── Admin-Account ────────────────────────────── #}
+    <section class="install-section">
+      <h2 class="install-section__heading">Administrator-Konto</h2>
+      <div class="form-group">
+        <label for="admin_username">Benutzername <span aria-hidden="true">*</span></label>
+        <input type="text" id="admin_username" name="admin_username"
+               required maxlength="64"
+               autocomplete="username"
+               pattern="[a-z0-9][a-z0-9._-]*[a-z0-9]|[a-z0-9]"
+               title="Nur Kleinbuchstaben, Ziffern, . _ - (Anfang/Ende alphanumerisch)"
+               value="{{ form.admin_username if form else '' }}">
+        <small>Nur Kleinbuchstaben, Ziffern, Punkt, Unter&shy;strich, Bindestrich.</small>
+      </div>
+      <div class="form-group">
+        <label for="admin_display_name">Anzeigename</label>
+        <input type="text" id="admin_display_name" name="admin_display_name"
+               maxlength="128" autocomplete="name"
+               value="{{ form.admin_display_name if form else '' }}">
+        <small>Wird öffentlich als Autorenname angezeigt. Optional.</small>
+      </div>
+      <div class="form-group">
+        <label for="admin_email">E-Mail-Adresse</label>
+        <input type="email" id="admin_email" name="admin_email"
+               maxlength="256" autocomplete="email"
+               value="{{ form.admin_email if form else '' }}">
+        <small>Optional – nur intern, nie öffentlich sichtbar.</small>
+      </div>
+    </section>
+
+    <button type="submit" class="btn btn--primary install-btn">
+      Einrichten &amp; weiter →
+    </button>
+  </form>
+
+</div>
+{% endblock %}
