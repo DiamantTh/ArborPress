@@ -267,9 +267,10 @@ a.tag { background: var(--color-primary); color: #fff; border-radius: var(--radi
   outline: 2px solid var(--color-primary);
   border-color: var(--color-primary);
 }
-.comment-form__row { display: grid; gap: .75rem; grid-template-columns: 1fr 1fr 1fr; }
+.comment-form__row { display: grid; gap: .75rem; grid-template-columns: 1fr 1fr; }
 .comment-form__row label { display: flex; flex-direction: column; margin-bottom: 0; }
 .comment-form__row label input { margin-top: auto; }
+.comment-form__row label:last-child { grid-column: 1 / -1; }
 .comment-form__actions {
   display: flex;
   align-items: center;
