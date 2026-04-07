@@ -9,13 +9,13 @@
   {% endfor %}
 {% endwith %}
 
-<p class="hint" style="margin-bottom:1.5rem">
+<p class="hint hint--mb-lg">
   Diese Einstellungen werden in der Datenbank gespeichert und können ohne Neustart geändert werden.
   Infrastruktur-Einstellungen (Datenbankverbindung, Web-Port, Authentifizierung) befinden sich weiterhin in <code>config.toml</code>.
 </p>
 
 <!-- Tab-Navigation -->
-<div class="admin-tabs" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.5rem">
+<div class="admin-tabs">
   <a href="#sec-general"    class="btn btn--small">Allgemein</a>
   <a href="#sec-mail"       class="btn btn--small">E-Mail</a>
   <a href="#sec-comments"   class="btn btn--small">Kommentare</a>
@@ -29,7 +29,7 @@
 <!-- ================================================================== -->
 <!-- ALLGEMEIN                                                           -->
 <!-- ================================================================== -->
-<section class="admin-card" id="sec-general" style="margin-bottom:2rem">
+<section class="admin-card" id="sec-general">
   <h3>Allgemein</h3>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
     <input type="hidden" name="section" value="general">
@@ -74,7 +74,7 @@
 <!-- ================================================================== -->
 <!-- E-MAIL                                                              -->
 <!-- ================================================================== -->
-<section class="admin-card" id="sec-mail" style="margin-bottom:2rem">
+<section class="admin-card" id="sec-mail">
   <h3>E-Mail</h3>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
     <input type="hidden" name="section" value="mail">
@@ -155,7 +155,7 @@
 <!-- ================================================================== -->
 <!-- KOMMENTARE                                                          -->
 <!-- ================================================================== -->
-<section class="admin-card" id="sec-comments" style="margin-bottom:2rem">
+<section class="admin-card" id="sec-comments">
   <h3>Kommentare</h3>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
     <input type="hidden" name="section" value="comments">
@@ -198,7 +198,7 @@
              value="{{ sections.comments.get('max_depth', 3) }}">
     </label>
 
-    <div style="display:flex;gap:1rem">
+    <div class="form-row">
       <label>
         Mindestlänge (Zeichen)
         <input type="number" name="min_comment_length" min="1"
@@ -221,7 +221,7 @@
 <!-- ================================================================== -->
 <!-- FEDERATION (ActivityPub)                                            -->
 <!-- ================================================================== -->
-<section class="admin-card" id="sec-federation" style="margin-bottom:2rem">
+<section class="admin-card" id="sec-federation">
   <h3>Federation <span class="badge">ActivityPub</span></h3>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
     <input type="hidden" name="section" value="federation">
@@ -271,7 +271,7 @@
 <!-- ================================================================== -->
 <!-- SUCHE                                                               -->
 <!-- ================================================================== -->
-<section class="admin-card" id="sec-search" style="margin-bottom:2rem">
+<section class="admin-card" id="sec-search">
   <h3>Suche</h3>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
     <input type="hidden" name="section" value="search">
@@ -301,7 +301,7 @@
 <!-- ================================================================== -->
 <!-- THEME                                                               -->
 <!-- ================================================================== -->
-<section class="admin-card" id="sec-theme" style="margin-bottom:2rem">
+<section class="admin-card" id="sec-theme">
   <h3>Theme</h3>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
     <input type="hidden" name="section" value="theme">
@@ -326,42 +326,41 @@
       <code>static/</code> und <code>templates/</code>.
     </p>
 
-    <h4 style="margin:1rem 0 .5rem">Hintergrundmuster</h4>
-    <p class="hint" style="margin-bottom:.75rem">
+    <h4>Hintergrundmuster</h4>
+    <p class="hint hint--mb-sm">
       Wähle ein globales Polygon-Muster für den Seitenhintergrund.
       <em>Theme-Standard</em> verwendet das jeweils im Theme definierte Muster.
       Die Farbe und Deckkraft können unabhängig vom Theme gesetzt werden.
     </p>
 
-    <div class="pattern-picker" style="display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem">
+    <div class="pattern-picker">
       {% set cur_pattern = sections.theme.get('bg_pattern','auto') %}
       {% for pat in available_patterns %}
-      <label class="pattern-opt" style="display:flex;flex-direction:column;align-items:center;gap:.25rem;cursor:pointer;font-size:.72rem;text-align:center;width:60px">
+      <label class="pattern-opt">
         <input type="radio" name="bg_pattern" value="{{ pat.id }}"
-               {{ 'checked' if cur_pattern == pat.id }}
-               style="margin-bottom:.2rem">
-        <span style="font-size:.68rem;color:var(--color-text-muted)">{{ pat.label }}</span>
+               {{ 'checked' if cur_pattern == pat.id }}>
+        <span>{{ pat.label }}</span>
       </label>
       {% endfor %}
     </div>
 
-    <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem">
-      <label style="flex:1;min-width:120px">
+    <div class="form-row form-row--mb">
+      <label class="form-row__field">
         Musterfarbe (Hex)
         <input type="text" name="bg_pattern_color" maxlength="9"
                placeholder="leer = Theme-Akzentfarbe"
                value="{{ sections.theme.get('bg_pattern_color','') }}">
         <span class="hint">z. B. <code>#818cf8</code></span>
       </label>
-      <label style="flex:1;min-width:120px">
+      <label class="form-row__field">
         Deckkraft (0–1)
         <input type="number" name="bg_pattern_opacity" min="0" max="1" step="0.01"
                value="{{ sections.theme.get('bg_pattern_opacity', 0.07) }}">
       </label>
     </div>
 
-    <h4 style="margin:1rem 0 .5rem">Automatischer Hell/Dunkel-Wechsel</h4>
-    <p class="hint" style="margin-bottom:.75rem">
+    <h4>Automatischer Hell/Dunkel-Wechsel</h4>
+    <p class="hint hint--mb-sm">
       Wenn aktiviert, wechselt das aktive Theme automatisch zum Dark-Companion zwischen
       <em>Start-Stunde</em> und <em>End-Stunde</em>. Besucher können die Auswahl jederzeit
       manuell überschreiben.
@@ -373,13 +372,13 @@
       Auto-Dark aktivieren
     </label>
 
-    <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-top:.5rem">
-      <label style="flex:1;min-width:120px">
+    <div class="form-row form-row--mt">
+      <label class="form-row__field">
         Dunkel ab (Stunde, 0–23)
         <input type="number" name="auto_dark_start" min="0" max="23"
                value="{{ sections.theme.get('auto_dark_start', 19) }}">
       </label>
-      <label style="flex:1;min-width:120px">
+      <label class="form-row__field">
         Hell ab (Stunde, 0–23)
         <input type="number" name="auto_dark_end" min="0" max="23"
                value="{{ sections.theme.get('auto_dark_end', 6) }}">
@@ -396,9 +395,9 @@
 <!-- ================================================================== -->
 <!-- DEMO-MODUS                                                          -->
 <!-- ================================================================== -->
-<section class="admin-card" id="sec-demo" style="margin-bottom:2rem">
+<section class="admin-card" id="sec-demo">
   <h3>Demo-Modus</h3>
-  <p class="hint" style="margin-bottom:1rem">
+  <p class="hint hint--mb-md">
     Im Demo-Modus können Besucher das Theme direkt im Browser wechseln, ohne
     sich einloggen zu müssen. Die Wahl wird per Cookie &amp; <code>localStorage</code>
     gespeichert und hat keinen Einfluss auf andere Besucher.
@@ -413,20 +412,20 @@
       Demo-Modus aktivieren
     </label>
 
-    <label class="checkbox-row" style="margin-top:.5rem">
+    <label class="checkbox-row checkbox-row--mt">
       <input type="checkbox" name="show_banner" value="1"
              {{ 'checked' if sections.demo.get('show_banner', True) }}>
       Demo-Banner oben anzeigen
       <span class="hint">(weist Besucher auf den Demo-Betrieb hin)</span>
     </label>
 
-    <label class="checkbox-row" style="margin-top:.5rem">
+    <label class="checkbox-row checkbox-row--mt">
       <input type="checkbox" name="allow_all_themes" value="1"
              {{ 'checked' if sections.demo.get('allow_all_themes', True) }}>
       Alle Themes anzeigen (inkl. reiner Dark-Themes ohne Pendant)
     </label>
 
-    <div class="form-actions" style="margin-top:1rem">
+    <div class="form-actions form-actions--mt">
       <button type="submit" class="btn btn--primary">Demo-Modus speichern</button>
     </div>
   </form>
