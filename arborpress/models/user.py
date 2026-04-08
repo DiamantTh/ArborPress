@@ -50,7 +50,7 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    username: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(128), nullable=False)
     email: Mapped[str | None] = mapped_column(String(254), unique=True, nullable=True)
     account_type: Mapped[AccountType] = mapped_column(
@@ -69,6 +69,11 @@ class User(Base):
     sso_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # §5 Federation – opt-out pro Account (auch wenn Instanz federiert)
     federation_opt_out: Mapped[bool] = mapped_column(Boolean, default=False)
+    # §2 Account lockout (credential-stuffing protection)
+    failed_login_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Public profile (§4 PUBLIC accounts, optional)
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)

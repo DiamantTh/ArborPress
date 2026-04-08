@@ -132,6 +132,10 @@ class AuthSettings(BaseSettings):
     stepup_ttl: int = 900
     admin_session_ttl: int = 3600
     auth_rate_limit: str = "10/minute"
+    # §2 Account lockout – credential-stuffing protection
+    # Operator-tunable; set lockout_threshold=0 to disable.
+    lockout_threshold: int = 5      # failed attempts before temporary lock
+    lockout_duration: int = 900     # lock duration in seconds (default: 15 min)
     # Dedicated key-encryption key for actor keypairs (§5).
     # Separate from web.secret_key so that session key rotation does
     # NOT invalidate AP keys.
@@ -146,6 +150,10 @@ class LoggingSettings(BaseSettings):
     access_log: bool = False
     audit_log: bool = True
     audit_file: Path | None = None
+    # §16 Opt-in: persist audit events as rows in the ``audit_events`` DB table.
+    # Requires the 0003 schema migration to have been applied (or a fresh install).
+    # Enables searchable / exportable audit trail in the admin UI.
+    db_audit_log: bool = False
 
 
 class CacheSettings(BaseSettings):

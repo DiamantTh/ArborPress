@@ -252,12 +252,12 @@ def user_disable(
             raise typer.Exit(0)
 
     async def _disable() -> None:
-        from sqlalchemy import select
+        from sqlalchemy import func, select
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
         async for db in get_db_session():
-            result = await db.execute(select(User).where(User.username == username))
+            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -268,6 +268,38 @@ def user_disable(
             typer.echo(f"User {username!r} disabled.")
 
     asyncio.run(_disable())
+
+
+@user_app.command("unlock")
+def user_unlock(
+    username: str = typer.Argument(..., help="Username"),
+) -> None:
+    """Hebt eine temporäre Anmelde-Sperre auf (§2 Account Lockout)."""
+
+    async def _unlock() -> None:
+        from sqlalchemy import func, select
+
+        from arborpress.core.db import get_db_session
+        from arborpress.models.user import User
+        async for db in get_db_session():
+            result = await db.execute(
+                select(User).where(func.lower(User.username) == username.lower())
+            )
+            user = result.scalar_one_or_none()
+            if not user:
+                typer.echo(f"User {username!r} not found.", err=True)
+                raise typer.Exit(1)
+            was_locked = bool(user.locked_until)
+            user.failed_login_count = 0
+            user.locked_until = None
+            db.add(user)
+            await db.commit()
+            if was_locked:
+                typer.echo(f"User {username!r} unlocked (lock removed, failed_login_count reset).")
+            else:
+                typer.echo(f"User {username!r}: no active lock, failed_login_count reset to 0.")
+
+    asyncio.run(_unlock())
 
 
 @user_app.command("roles")
@@ -290,12 +322,12 @@ def user_roles(
     )
 
     async def _set_role() -> None:
-        from sqlalchemy import select
+        from sqlalchemy import func, select
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
         async for db in get_db_session():
-            result = await db.execute(select(User).where(User.username == username))
+            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -346,12 +378,12 @@ def user_password_status(
 ) -> None:
     """Shows password status of an account (warning if active)."""
     async def _check() -> None:
-        from sqlalchemy import select
+        from sqlalchemy import func, select
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
         async for db in get_db_session():
-            result = await db.execute(select(User).where(User.username == username))
+            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -381,14 +413,14 @@ def user_password_set(
 ) -> None:
     """Sets or changes the break-glass password of an account."""
     async def _set_pw() -> None:
-        from sqlalchemy import select
+        from sqlalchemy import func, select
 
         from arborpress.auth.breakglass import hash_password
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
 
         async for db in get_db_session():
-            result = await db.execute(select(User).where(User.username == username))
+            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -421,12 +453,12 @@ def user_password_disable(
             raise typer.Exit(0)
 
     async def _disable_pw() -> None:
-        from sqlalchemy import select
+        from sqlalchemy import func, select
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
         async for db in get_db_session():
-            result = await db.execute(select(User).where(User.username == username))
+            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -458,12 +490,12 @@ def user_federation_status(
 ) -> None:
     """Shows federation status of an account (opt-out, key pair)."""
     async def _show() -> None:
-        from sqlalchemy import select
+        from sqlalchemy import func, select
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import ActorKeypair, User
         async for db in get_db_session():
-            result = await db.execute(select(User).where(User.username == username))
+            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -516,13 +548,13 @@ def mfa_list(
 ) -> None:
     """Lists all MFA devices of a user."""
     async def _list() -> None:
-        from sqlalchemy import select
+        from sqlalchemy import func, select
 
         from arborpress.auth.mfa import MFA_MAX_DEVICES
         from arborpress.core.db import get_db_session
         from arborpress.models.user import MFADevice, User
         async for db in get_db_session():
-            result = await db.execute(select(User).where(User.username == username))
+            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -569,7 +601,7 @@ def mfa_add(
         from arborpress.core.db import get_db_session
         from arborpress.models.user import MFADevice, User
         async for db in get_db_session():
-            result = await db.execute(select(User).where(User.username == username))
+            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -635,12 +667,12 @@ def mfa_remove(
             raise typer.Exit(0)
 
     async def _remove() -> None:
-        from sqlalchemy import select
+        from sqlalchemy import func, select
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import MFADevice, User
         async for db in get_db_session():
-            result = await db.execute(select(User).where(User.username == username))
+            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -670,12 +702,12 @@ def mfa_rename(
 ) -> None:
     """Renames an MFA device."""
     async def _rename() -> None:
-        from sqlalchemy import select
+        from sqlalchemy import func, select
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import MFADevice, User
         async for db in get_db_session():
-            result = await db.execute(select(User).where(User.username == username))
+            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -792,7 +824,7 @@ def key_status(
 
             # ---- User-specific ----
             user_row = (
-                await db.execute(select(User).where(User.username == username))
+                await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             ).scalar_one_or_none()
             if not user_row:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -1123,7 +1155,7 @@ def federation_follower_list(
 ) -> None:
     """Lists followers (inbound) or following (outbound) of an account."""
     async def _list() -> None:
-        from sqlalchemy import select
+        from sqlalchemy import func, select
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import Follower, FollowerDirection, User
@@ -1133,7 +1165,7 @@ def federation_follower_list(
             typer.echo("Invalid direction. Allowed: inbound, outbound", err=True)
             raise typer.Exit(1) from None
         async for db in get_db_session():
-            result = await db.execute(select(User).where(User.username == username))
+            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)

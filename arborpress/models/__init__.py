@@ -1,5 +1,6 @@
 # arborpress/models/__init__.py
 # Import all ORM models so that SQLAlchemy metadata is complete
+from arborpress.models.audit import AuditEvent  # noqa: F401
 from arborpress.models.content import (  # noqa: F401
     Category,
     Comment,

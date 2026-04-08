@@ -20,31 +20,63 @@ from base64 import urlsafe_b64encode
 from datetime import UTC, datetime, timedelta
 
 from quart import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from arborpress.auth.stepup import grant_stepup, revoke_stepup
 from arborpress.auth.webauthn import WebAuthnService
+from arborpress.core.audit import write_audit_event
 from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
+from arborpress.core.validators import is_valid_username
 from arborpress.web.security import validate_csrf
 
 log = logging.getLogger("arborpress.web.auth")
+# Audit logger kept for direct use in non-DB paths (file-only, no DB write needed)
+_audit = logging.getLogger("arborpress.audit")
 
 auth_bp = Blueprint("auth", __name__, template_folder="../../templates")
+
+# WebAuthn endpoints that *only* accept JSON bodies (§10 Content-Type enforcement)
+_JSON_API_PATHS = frozenset({
+    "/auth/register/begin",
+    "/auth/register/complete",
+    "/auth/login/begin",
+    "/auth/login/complete",
+    "/auth/stepup/begin",
+    "/auth/stepup/complete",
+})
 
 
 @auth_bp.before_request
 async def _auth_csrf_check() -> None:
-    """CSRF protection for HTML form POSTs (§10).
+    """CSRF + Content-Type protection for auth endpoints (§10).
 
-    JSON API requests (WebAuthn challenge/response) are excluded and
-    instead secured by the Origin/Referer check in _origin_check().
+    JSON API endpoints (WebAuthn): enforce ``Content-Type: application/json``
+    and validate Origin/Referer instead of a CSRF token.
+    HTML form endpoints: standard CSRF-token check via ``validate_csrf()``.
     """
     if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
         return
     content_type = request.content_type or ""
+    if request.path in _JSON_API_PATHS:
+        # Enforce JSON body – prevents cross-origin form-encoded attacks
+        if "application/json" not in content_type:
+            abort(415, "Content-Type: application/json required")
+        # Origin/Referer guard (replaces CSRF token for XHR/fetch)
+        cfg = get_settings()
+        base = cfg.web.base_url.rstrip("/")
+        origin = request.headers.get("Origin") or request.headers.get("Referer", "")
+        if origin and not origin.startswith(base):
+            abort(403, "Cross-origin request rejected")
+        return
     if "application/json" in content_type:
-        return  # JSON-API: Origin/Referer-Check ist ausreichend
+        # Non-enumerated JSON path – apply Origin check as sanity guard
+        cfg = get_settings()
+        base = cfg.web.base_url.rstrip("/")
+        origin = request.headers.get("Origin") or request.headers.get("Referer", "")
+        if origin and not origin.startswith(base):
+            abort(403, "Cross-origin request rejected")
+        return
     await validate_csrf()
 
 
@@ -128,15 +160,17 @@ async def register_begin():
         abort(400, "user_name fehlt")
 
     user_name: str = data["user_name"].strip()
-    if not user_name or len(user_name) > 64:
-        abort(400, "user_name invalid")
+    if not user_name or not is_valid_username(user_name):
+        abort(400, "user_name invalid – only letters, digits, dot, hyphen, underscore allowed")
+
+    display_name: str = str(data.get("display_name") or user_name).strip()[:128]
 
     wa = _get_webauthn()
 
     async for db in get_db_session():
         from arborpress.models.user import User
         # Check whether user already exists
-        stmt = select(User).where(User.username == user_name)
+        stmt = select(User).where(func.lower(User.username) == user_name.lower())
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
 
@@ -144,7 +178,7 @@ async def register_begin():
             # Neuen User anlegen
             user = User(
                 username=user_name,
-                display_name=data.get("display_name", user_name),
+                display_name=display_name,
             )
             db.add(user)
             await db.flush()  # ID generieren ohne commit
@@ -197,7 +231,7 @@ async def register_complete():
         log.warning("WebAuthn-Registrierung fehlgeschlagen: %s", exc)
         abort(400, "Registrierung fehlgeschlagen")
 
-    label: str = raw.get("label") or "Security key"
+    label: str = (str(raw.get("label") or "Security key").strip())[:128] or "Security key"
 
     async for db in get_db_session():
         from arborpress.models.user import User, WebAuthnCredential
@@ -241,7 +275,7 @@ async def login_begin():
     if user_name:
         async for db in get_db_session():
             from arborpress.models.user import User, WebAuthnCredential
-            stmt = select(User).where(User.username == user_name)
+            stmt = select(User).where(func.lower(User.username) == user_name.lower())
             result = await db.execute(stmt)
             user = result.scalar_one_or_none()
 
@@ -287,11 +321,48 @@ async def login_complete():
         result = await db.execute(stmt)
         db_cred = result.scalar_one_or_none()
         if db_cred is None:
+            await write_audit_event(
+                event_type="login_failure",
+                outcome="failure",
+                ip=request.remote_addr,
+                detail="credential_not_found",
+                db=db,
+            )
+            await db.commit()
             abort(401, "Credential nicht gefunden")
 
         user = await db.get(User, db_cred.user_id)
         if user is None or not user.is_active:
+            await write_audit_event(
+                event_type="login_failure",
+                outcome="failure",
+                actor_id=str(db_cred.user_id),
+                ip=request.remote_addr,
+                detail="account_inactive",
+                db=db,
+            )
+            await db.commit()
             abort(401, "Konto nicht aktiv")
+
+        # §2 Account-Sperre prüfen (Lockout nach N Fehlversuchen)
+        _now = datetime.now(UTC)
+        # locked_until aus DB kann tz-naive sein – Vergleich ohne tz-Info
+        _locked_until = user.locked_until
+        if _locked_until is not None:
+            _lu = _locked_until.replace(tzinfo=None) if _locked_until.tzinfo else _locked_until
+            _nu = _now.replace(tzinfo=None)
+            if _lu > _nu:
+                await write_audit_event(
+                    event_type="login_blocked",
+                    outcome="blocked",
+                    actor_id=str(user.id),
+                    actor_name=user.username,
+                    ip=request.remote_addr,
+                    detail=f"locked_until={_locked_until.isoformat()}",
+                    db=db,
+                )
+                await db.commit()
+                abort(423, "Konto temporär gesperrt – bitte später erneut versuchen")
 
         try:
             credential = AuthenticationCredential.parse_raw(json.dumps(raw))
@@ -302,9 +373,36 @@ async def login_complete():
                 current_sign_count=db_cred.sign_count,
             )
         except Exception as exc:
+            # §2 Fehlversuchs-Counter erhöhen, ggf. Konto sperren
+            _cfg = get_settings()
+            user.failed_login_count = (user.failed_login_count or 0) + 1
+            if _cfg.auth.lockout_threshold > 0 and user.failed_login_count >= _cfg.auth.lockout_threshold:
+                _lock_at = datetime.now(UTC).replace(tzinfo=None)
+                user.locked_until = _lock_at + timedelta(seconds=_cfg.auth.lockout_duration)
+                _detail = f"attempt={user.failed_login_count} account_locked"
+            else:
+                _detail = f"attempt={user.failed_login_count}"
+            db.add(user)
+            await write_audit_event(
+                event_type="login_failure",
+                outcome="failure",
+                actor_id=str(user.id),
+                actor_name=user.username,
+                ip=request.remote_addr,
+                user_agent=request.headers.get("User-Agent"),
+                detail=_detail,
+                db=db,
+            )
+            await db.commit()
             log.warning("WebAuthn auth failed for user=%s: %s", user.username, exc)
             await emit_fail(user.id)
             abort(401, "Authentifizierung fehlgeschlagen")
+
+        # §2 Fehlversuchs-Counter zurücksetzen nach erfolgreichem Login
+        if user.failed_login_count or user.locked_until:
+            user.failed_login_count = 0
+            user.locked_until = None
+            db.add(user)
 
         # Sign-Count + last_used_at aktualisieren
         await db.execute(
@@ -349,6 +447,18 @@ async def login_complete():
         await db.commit()
         session["session_id"] = db_sess.id
 
+        # §16 Erfolgreichen Login in Audit-Log schreiben
+        await write_audit_event(
+            event_type="login_success",
+            outcome="success",
+            actor_id=str(user.id),
+            actor_name=user.username,
+            ip=request.remote_addr,
+            user_agent=request.headers.get("User-Agent"),
+            db=db,
+        )
+        await db.commit()
+
     from arborpress.core.events import emit
     await emit("auth.login_success", user_id=str(user.id))
 
@@ -389,7 +499,7 @@ async def breakglass_login():
     from arborpress.models.user import User
 
     async for db in get_db_session():
-        stmt = select(User).where(User.username == user_name)
+        stmt = select(User).where(func.lower(User.username) == user_name.lower())
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
 
