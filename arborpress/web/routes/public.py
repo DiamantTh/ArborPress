@@ -1,15 +1,15 @@
-"""Öffentliche Content-Routen (§6 URL-Schema, §7 I18N, §9 server-rendered).
+"""Public content routes (§6 URL schema, §7 I18N, §9 server-rendered).
 
-Kanonische URL-Hierarchie:
-  /               – Post-Liste (Startseite)
+Canonical URL hierarchy:
+  /               – Post list (home page)
   /p/<slug>       – Post
-  /o/<short_id>   – Short-ID → 301 zum kanonischen Slug
-  /page/<slug>    – Statische Seite
-  /tag/<tag>      – Tag-Übersicht
-  /search?q=      – Volltext-Suche
-  /media/…        – Mediendateien (stable URL, §6)
-  /@<handle>      – Nutzerprofil (PUBLIC-Konten, §4)
-  /@<handle>/p/<slug>  – Post eines Nutzers
+  /o/<short_id>   – Short ID → 301 to canonical slug
+  /page/<slug>    – Static page
+  /tag/<tag>      – Tag archive
+  /search?q=      – Full-text search
+  /media/…        – Media files (stable URL, §6)
+  /@<handle>      – User profile (PUBLIC accounts, §4)
+  /@<handle>/p/<slug>  – Post by a user
 """
 
 from __future__ import annotations
@@ -54,9 +54,9 @@ def _canonical_slug(slug: str) -> str:
 
 
 async def _get_footer_pages() -> list:
-    """Lädt Pflichtseiten für den Footer (§1 Impressum/Datenschutz/Regeln).
+    """Loads required pages for the footer (§1 imprint/privacy/rules).
 
-    Nur Seiten mit visibility=PUBLIC erscheinen im Footer.
+    Only pages with visibility=PUBLIC appear in the footer.
     """
     try:
         from arborpress.models.content import Page, PageType, PostVisibility
@@ -148,7 +148,7 @@ async def post_detail(slug: str):
     from arborpress.models.content import Post, PostStatus, PostVisibility
 
     async for db in get_db_session():
-        # Post laden (status=published reicht; visibility wird separat geprüft)
+        # Load post (status=published is sufficient; visibility is checked separately)
         stmt = select(Post).where(
             Post.slug == canonical,
             Post.status == PostStatus.PUBLISHED,
@@ -174,7 +174,7 @@ async def post_detail(slug: str):
         captcha_type    = get_effective_captcha_type(post.captcha_type, captcha_section)
         captcha_ctx     = get_captcha_challenge(captcha_type, captcha_section)
 
-        # --- Verwandte Artikel (Tag-Überlappung, max. 3) ---
+        # --- Related articles (tag overlap, max. 3) ---
         related_posts: list = []
         post_tag_ids = [t.id for t in (post.tags or [])]
         if post_tag_ids:
@@ -228,7 +228,7 @@ async def shortlink(short_id: str):
 
     if post is None:
         abort(404)
-    # private Posts sind auch über Short-Link nicht erreichbar
+    # private posts are not reachable via short link either
     if post.visibility == PostVisibility.PRIVATE:
         abort(404)
     return redirect(url_for("public.post_detail", slug=post.slug), 301)
@@ -249,7 +249,7 @@ async def page_detail(slug: str):
     from arborpress.models.content import Page, PostVisibility
 
     async for db in get_db_session():
-        # is_published prüfen; visibility separat behandeln
+        # check is_published; handle visibility separately
         stmt = select(Page).where(
             Page.slug == canonical,
             Page.is_published == True,  # noqa: E712
@@ -262,12 +262,12 @@ async def page_detail(slug: str):
     # private: Seite komplett gesperrt
     if page.visibility == PostVisibility.PRIVATE:
         abort(404)
-    # hidden: erreichbar, aber nicht in Navigation/Fußzeile verlinkt
+    # hidden: reachable but not linked in navigation/footer
     return await _render("page.html", page=page)
 
 
 # ---------------------------------------------------------------------------
-# Tag-Übersicht
+# Tag archive
 # ---------------------------------------------------------------------------
 
 
@@ -425,7 +425,7 @@ async def media_serve(yyyy: int, mm: int, filename: str):
 
 @public_bp.get("/@<handle>")
 async def author_profile(handle: str):
-    """Öffentliches Profil – nur PUBLIC-Konten (§4 Sicherheitstrennung)."""
+    """Public profile – PUBLIC accounts only (§4 security separation)."""
     from arborpress.models.user import AccountType, User
 
     async for db in get_db_session():
@@ -440,7 +440,7 @@ async def author_profile(handle: str):
     if user is None:
         abort(404)
 
-    # Posts dieses Nutzers – nur öffentlich verlinkte
+    # Posts by this user – publicly linked only
     from arborpress.models.content import Post, PostStatus, PostVisibility
     async for db in get_db_session():
         posts_stmt = (
@@ -489,7 +489,7 @@ async def author_post(handle: str, slug: str):
 
     if post is None:
         abort(404)
-    # private: auch über Autoren-URL gesperrt
+    # private: also blocked via author URL
     from arborpress.models.content import PostVisibility
     if post.visibility == PostVisibility.PRIVATE:
         abort(404)
@@ -506,12 +506,12 @@ async def post_comment_submit(slug: str):
     """Kommentar einreichen.
 
     Ablauf:
-      1. CSRF-Token prüfen (§10)
-      2. Captcha prüfen (Typ richtet sich nach Post-Override oder globalem Standard)
-      3. Formular validieren
-      4. Comment(status=PENDING) in DB anlegen
-      5. Bestätigungs-E-Mail an Autor senden
-      6. Weiterleitung zum Artikel mit Hinweis-Flash
+      1. Validate CSRF token (§10)
+      2. Validate captcha (type follows post override or global default)
+      3. Validate form
+      4. Create Comment(status=PENDING) in DB
+      5. Send confirmation e-mail to commenter
+      6. Redirect to article with flash notice
     """
     await validate_csrf()
     from datetime import datetime as dt
@@ -541,18 +541,18 @@ async def post_comment_submit(slug: str):
         captcha_section  = await get_section("captcha", db)
         comments_section = await get_section("comments", db)
 
-        # --- Captcha-Prüfung ---
+        # --- Captcha validation ---
         captcha_type = get_effective_captcha_type(post.captcha_type, captcha_section)
         ok, err = await verify_captcha(captcha_type, form, captcha_section)
         if not ok:
-            await flash(err or "Bitte löse das Captcha korrekt.", "error")
+            await flash(err or "Please solve the captcha correctly.", "error")
             return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
 
         author_name  = (form.get("author_name",  "") or "").strip()
         author_email = (form.get("author_email", "") or "").strip()
         author_url   = (form.get("author_url",   "") or "").strip() or None
         body         = (form.get("body",          "") or "").strip()
-        # Zitat-Referenz: optional, muss zum selben Post gehören
+        # Quote reference: optional, must belong to the same post
         quote_of_raw = (form.get("quote_of_id",  "") or "").strip() or None
         quote_of_id  = None
         if quote_of_raw:
@@ -566,20 +566,20 @@ async def post_comment_submit(slug: str):
                 quote_of_id = quote_of_raw
 
         if not author_name or not author_email or not body:
-            await flash("Bitte fülle alle Pflichtfelder aus.", "error")
+            await flash("Please fill in all required fields.", "error")
             return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
 
-        # DSGVO-Zustimmung prüfen
+        # Check GDPR consent
         if not form.get("consent"):
-            await flash("Bitte stimme der Datenschutzerklärung zu.", "error")
+            await flash("Please agree to the privacy policy.", "error")
             return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
 
         # Grobes E-Mail-Format-Check
         if "@" not in author_email or "." not in author_email.split("@")[-1]:
-            await flash("Bitte gib eine gültige E-Mail-Adresse ein.", "error")
+            await flash("Please enter a valid e-mail address.", "error")
             return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
 
-        # Rate-Limit (einfache IP-Prüfung)
+        # Rate limit (simple IP check)
         rate_limit = comments_section.get("rate_limit_per_hour", 10)
         if rate_limit > 0:
             from datetime import timedelta
@@ -595,11 +595,11 @@ async def post_comment_submit(slug: str):
             )
             rl_result = await db.execute(rl_stmt)
             if len(rl_result.scalars().all()) >= rate_limit:
-                await flash("Zu viele Kommentare – bitte später erneut versuchen.", "error")
+                await flash("Too many comments – please try again later.", "error")
                 return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
 
         import uuid as _uuid
-        # --- Sperrliste prüfen (Soft-Block: sofort als SPAM markieren) ---
+        # --- Check blocklist (soft-block: immediately mark as SPAM) ---
         blocklist_raw = comments_section.get("blocklist", "") or ""
         blocklist     = [
             term.strip().lower()
@@ -632,26 +632,26 @@ async def post_comment_submit(slug: str):
         await db.commit()
         await db.refresh(comment)
 
-        # Bestätigungs-Mail senden (wenn Backend != none und nicht geblockt)
+        # Send confirmation mail (if backend != none and not blocked)
         if blocked:
-            # Stilles Akzeptieren – dem Absender keine Rückmeldung geben
+            # Silent accept – do not give the sender any feedback
             await flash(
-                "Danke für deinen Kommentar!",
+                "Thank you for your comment!",
                 "success",
             )
         elif comments_section.get("require_email_confirmation", True):
             await send_comment_confirmation(comment, post)
             await flash(
-                "Danke für deinen Kommentar! Bitte bestätige ihn über den Link "
-                "in der E-Mail, die wir an dich gesendet haben.",
+                "Thank you for your comment! Please confirm it via the link "
+                "in the e-mail we sent you.",
                 "success",
             )
         else:
-            # Wenn Bestätigung deaktiviert: direkt auf CONFIRMED setzen
+            # If confirmation disabled: set directly to CONFIRMED
             comment.status = CommentStatus.CONFIRMED
             await db.commit()
             await flash(
-                "Danke für deinen Kommentar! Er wird nach Prüfung freigeschaltet.",
+                "Thank you for your comment! It will be published after review.",
                 "success",
             )
 
@@ -660,9 +660,9 @@ async def post_comment_submit(slug: str):
 
 @public_bp.get("/comment/confirm/<token>")
 async def comment_confirm(token: str):
-    """E-Mail-Bestätigung des Kommentars.
+    """E-mail confirmation of the comment.
 
-    Setzt status=CONFIRMED und sendet Admin-Benachrichtigung.
+    Sets status=CONFIRMED and sends admin notification.
     """
     from datetime import datetime as dt
 
@@ -713,21 +713,21 @@ def _post_url(base: str, post) -> str:
 
 
 def _rfc3339(d: dt.datetime | None) -> str:
-    """ISO-8601 / RFC 3339-Datum für Atom.  Immer UTC + Z-Suffix."""
+    """ISO-8601 / RFC 3339 date for Atom. Always UTC + Z suffix."""
     if d is None:
         return dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     return d.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _rfc822_ts(d: dt.datetime | None) -> str:
-    """RFC-822-Datum für RSS 2.0."""
+    """RFC-822 date for RSS 2.0."""
     if d is None:
         return _rfc822(dt.datetime.utcnow().timestamp(), usegmt=True)
     return _rfc822(d.timestamp(), usegmt=True)
 
 
 def _xml_esc(s: str) -> str:
-    """Minimales XML-Escaping für CDATA-Attribute."""
+    """Minimal XML escaping for CDATA attributes."""
     return (
         s.replace("&", "&amp;")
          .replace("<", "&lt;")
@@ -737,7 +737,7 @@ def _xml_esc(s: str) -> str:
 
 
 async def _feed_posts():
-    """Gibt die letzten _FEED_LIMIT veröffentlichten, öffentlichen Posts zurück."""
+    """Returns the last _FEED_LIMIT published, public posts."""
     from arborpress.models.content import Post, PostStatus, PostVisibility
 
     async for db in get_db_session():
@@ -757,7 +757,7 @@ async def _feed_posts():
 
 @public_bp.get("/feed.xml")
 async def rss_feed():
-    """RSS-2.0-Feed aller öffentlichen Posts (max. 20).
+    """RSS 2.0 feed of all public posts (max. 20).
 
     URL: /feed.xml
     Auto-Discovery: <link rel="alternate" type="application/rss+xml" …>
@@ -819,7 +819,7 @@ async def rss_feed():
 
 @public_bp.get("/feed/atom.xml")
 async def atom_feed():
-    """Atom-1.0-Feed aller öffentlichen Posts (max. 20).
+    """Atom 1.0 feed of all public posts (max. 20).
 
     URL: /feed/atom.xml
     Auto-Discovery: <link rel="alternate" type="application/atom+xml" …>

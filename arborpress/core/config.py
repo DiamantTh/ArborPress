@@ -1,27 +1,27 @@
-"""Infrastruktur-Konfiguration – config.toml und Umgebungsvariablen.
+"""Infrastructure configuration – config.toml and environment variables.
 
-Enthält nur Einstellungen, die VOR dem Datenbankstart benötigt werden:
-  [db]       – Datenbankverbindung
-  [web]      – Bind-Adresse, Secret-Key, Base-URL, Admin-Pfad
-  [auth]     – Session-TTLs, WebAuthn-UV, Step-up (Sicherheitsinfrastruktur)
-  [logging]  – Log-Level und Dateipfade
-  [plugins]  – Plugin-Verzeichnisse
+Contains only settings required BEFORE the database starts:
+  [db]       – Database connection
+  [web]      – Bind address, secret key, base URL, admin path
+  [auth]     – Session TTLs, WebAuthn UV, step-up (security infrastructure)
+  [logging]  – Log level and file paths
+  [plugins]  – Plugin directories
 
-Alle inhaltlichen Einstellungen (Mail, Kommentare, Captcha, Theme, Federation,
-Suche, allgemeine Blog-Einstellungen) werden über arborpress.core.site_settings
-aus der Datenbank gelesen und im Admin-Interface unter /admin/settings gepflegt.
+All content-related settings (mail, comments, captcha, theme, federation,
+search, general blog settings) are read via arborpress.core.site_settings
+from the database and managed in the admin interface under /admin/settings.
 
-Konfigurationsquellen (Ladereihenfolge):
-  1.  --config ./config/    – Verzeichnis: lädt config/config.toml
-  2.  --config config.toml  – einzelne Datei
-  3.  config/               – Auto-Discover: Verzeichnis im cwd
-  4.  config.toml           – Auto-Discover: Einzeldatei im cwd
-  5.  Defaults + Env-Vars   – ARBORPRESS_SECTION__KEY=value
+Configuration sources (load order):
+  1.  --config ./config/    – directory: loads config/config.toml
+  2.  --config config.toml  – single file
+  3.  config/               – auto-discover: directory in cwd
+  4.  config.toml           – auto-discover: single file in cwd
+  5.  Defaults + env vars   – ARBORPRESS_SECTION__KEY=value
 
-include-Direktive:
-  include = ["secrets.toml"]   # relativ zum Verzeichnis der Datei
-  Weitere Dateien im selben Ordner werden gemergt (Override-Semantik).
-  Includes dürfen selbst wieder include enthalten (rekursiv).
+include directive:
+  include = ["secrets.toml"]   # relative to the file's directory
+  Additional files in the same folder are merged (override semantics).
+  Includes may themselves contain include directives (recursive).
 """
 
 from __future__ import annotations
@@ -34,15 +34,15 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
-# TOML-Lade-Hilfsfunktionen
+# TOML loading helpers
 # ---------------------------------------------------------------------------
 
 def _deep_merge(base: dict, override: dict) -> dict:
-    """Rekursives Dict-Merge; Override gewinnt bei skalaren Konflikten.
+    """Recursive dict merge; override wins on scalar conflicts.
 
-    TOML-Tabellen werden zusammengeführt statt ersetzt, so dass
-    ``[db] pool_size = 5`` in einer Datei ``url = "..."`` aus einer
-    anderen Datei nicht löscht.
+    TOML tables are merged rather than replaced, so that
+    ``[db] pool_size = 5`` in one file does not drop ``url = "..."``
+    from another file.
     """
     result = base.copy()
     for key, val in override.items():
@@ -54,13 +54,13 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def _load_toml_file(path: Path) -> dict:
-    """Lädt eine TOML-Datei und verarbeitet optionale ``include``-Direktiven.
+    """Load a TOML file and process optional ``include`` directives.
 
     ``include = ["secrets.toml"]``
 
-    Relative Pfade werden relativ zum Verzeichnis der Datei aufgelöst,
-    d. h. im selben Ordner. Includes dürfen selbst include-Direktiven
-    enthalten (rekursiv).
+    Relative paths are resolved relative to the file's directory,
+    i.e. the same folder. Includes may themselves contain include
+    directives (recursive).
     """
     with open(path, "rb") as fh:
         data = tomllib.load(fh)
@@ -71,8 +71,8 @@ def _load_toml_file(path: Path) -> dict:
         inc_path = Path(inc) if Path(inc).is_absolute() else base_dir / inc
         if not inc_path.exists():
             raise FileNotFoundError(
-                f"Config-Include nicht gefunden: {inc_path}"
-                f" (referenziert in {path})"
+                f"Config include not found: {inc_path}"
+                f" (referenced in {path})"
             )
         data = _deep_merge(data, _load_toml_file(inc_path))
 
@@ -80,29 +80,29 @@ def _load_toml_file(path: Path) -> dict:
 
 
 def _load_config_dir(directory: Path) -> tuple[dict, Path]:
-    """Lädt ``config.toml`` aus einem Konfig-Verzeichnis.
+    """Load ``config.toml`` from a configuration directory.
 
-    Das Verzeichnis ist der Konfig-Root. Die Hauptdatei (``config.toml``)
-    enthält optional `include = ["secrets.toml"]` – alle inkludierten
-    Dateien werden relativ zum Verzeichnis aufgelöst (also im selben Ordner).
+    The directory is the config root. The main file (``config.toml``)
+    optionally contains `include = ["secrets.toml"]` – all included
+    files are resolved relative to the directory (i.e. the same folder).
     """
     main = directory / "config.toml"
     if not main.exists():
         raise FileNotFoundError(
-            f"Keine config.toml im Konfig-Verzeichnis gefunden: {directory}"
+            f"No config.toml found in configuration directory: {directory}"
         )
     data = _load_toml_file(main)
     return data, main.resolve()
 
 
 class DatabaseSettings(BaseSettings):
-    """Datenbankverbindung.
+    """Database connection.
 
-    Unterstützte URL-Schemata:
-      postgresql+asyncpg://...   – PostgreSQL (Prod-Default)
+    Supported URL schemes:
+      postgresql+asyncpg://...   – PostgreSQL (production default)
       mysql+aiomysql://...       – MariaDB / MySQL
-      sqlite+aiosqlite:///...    – SQLite (Dev/Test; kein pool_size)
-      sqlite+aiosqlite:///:memory:  – In-Memory-SQLite (nur Tests)
+      sqlite+aiosqlite:///...    – SQLite (dev/test; no pool_size)
+      sqlite+aiosqlite:///:memory:  – in-memory SQLite (tests only)
     """
     url: str = "postgresql+asyncpg://arborpress:changeme@localhost/arborpress"
     pool_size: int = 10
@@ -122,7 +122,7 @@ class WebSettings(BaseSettings):
     admin_path: str = "/admin"
     default_lang: str = "de"
     i18n_mode: Literal["single", "prefix"] = "single"
-    # Medienspeicher
+    # Media storage
     media_dir: Path = Path("media")
 
 
@@ -132,11 +132,11 @@ class AuthSettings(BaseSettings):
     stepup_ttl: int = 900
     admin_session_ttl: int = 3600
     auth_rate_limit: str = "10/minute"
-    # Dedizierter Key-Encryption-Key für Actor-Keypairs (§5).
-    # Getrennt von web.secret_key, damit Session-Key-Rotation die
-    # AP-Schlüssel NICHT unbrauchbar macht.
-    # Generieren: arborpress federation kek-init
-    # Format: 32-Byte base64url-kodierter Wert (von Fernet erwartet)
+    # Dedicated key-encryption key for actor keypairs (§5).
+    # Separate from web.secret_key so that session key rotation does
+    # NOT invalidate AP keys.
+    # Generate: arborpress federation kek-init
+    # Format: 32-byte base64url-encoded value (expected by Fernet)
     actor_key_enc_key: SecretStr | None = None
 
 
@@ -149,19 +149,19 @@ class LoggingSettings(BaseSettings):
 
 
 class CacheSettings(BaseSettings):
-    """Cache-Backend-Konfiguration.
+    """Cache backend configuration.
 
     Backends: memory (default) | redis | memcached | file | none
 
-    memory:     In-Process-Dict mit TTL – kein externer Dienst nötig.
-    redis:      redis-py async. Zusatz-Dep: pip install 'redis[hiredis]'
-    memcached:  aiomcache. Zusatz-Dep: pip install aiomcache
-    file:       JSON-Dateien auf Disk – kein Rebuild nach Neustart.
-    none:       Cache deaktiviert (immer Cache-Miss).
+    memory:     In-process dict with TTL – no external service required.
+    redis:      redis-py async. Extra dep: pip install 'redis[hiredis]'
+    memcached:  aiomcache. Extra dep: pip install aiomcache
+    file:       JSON files on disk – no rebuild needed after restart.
+    none:       Cache disabled (always cache-miss).
     """
     backend: Literal["memory", "redis", "memcached", "file", "none"] = "memory"
-    ttl: int = 300           # Standard-TTL in Sekunden
-    prefix: str = "ap:"      # Key-Präfix
+    ttl: int = 300           # default TTL in seconds
+    prefix: str = "ap:"      # key prefix
     # Redis
     redis_url: str = "redis://localhost:6379/0"
     # Memcached
@@ -175,10 +175,10 @@ class PluginSettings(BaseSettings):
     dirs: list[Path] = Field(default_factory=list)
 
     def resolved_dirs(self, config_file: Path) -> list[Path]:
-        """Gibt alle dirs als absolute Pfade zurück.
+        """Return all dirs as absolute paths.
 
-        Relative Pfade werden relativ zum Verzeichnis der Config-Datei
-        aufgelöst (nicht relativ zum cwd).
+        Relative paths are resolved relative to the config file's
+        directory (not relative to cwd).
         """
         base = config_file.parent
         return [
@@ -203,10 +203,10 @@ class Settings(BaseSettings):
 
     @classmethod
     def from_path(cls, path: Path) -> Settings:
-        """Lädt Settings aus einer Datei oder einem Verzeichnis.
+        """Load settings from a file or directory.
 
-        Datei:       TOML-Datei, optional mit ``include``-Direktive.
-        Verzeichnis: alle ``*.toml`` alphabetisch sortiert und gemergt.
+        File:       TOML file, optionally with ``include`` directive.
+        Directory:  all ``*.toml`` alphabetically sorted and merged.
         """
         if path.is_dir():
             data, anchor = _load_config_dir(path)
@@ -219,14 +219,14 @@ class Settings(BaseSettings):
 
     @classmethod
     def from_file(cls, path: Path) -> Settings:
-        """Rückwärtskompatibel – delegiert an from_path."""
+        """Backwards-compatible – delegates to from_path."""
         return cls.from_path(path)
 
     def plugin_dirs(self) -> list[Path]:
-        """Plugin-Verzeichnisse als aufgelöste absolute Pfade.
+        """Plugin directories as resolved absolute paths.
 
-        Relative Pfade werden relativ zur Config-Datei aufgelöst,
-        nicht relativ zum Arbeitsverzeichnis.
+        Relative paths are resolved relative to the config file,
+        not relative to the working directory.
         """
         cfg = getattr(self, "_config_file", None)
         if cfg is not None:
@@ -238,9 +238,9 @@ _settings: Settings | None = None
 
 
 def get_config_dir() -> Path:
-    """Gibt das Verzeichnis zurück, in dem Sidecar-Dateien liegen (install.token, .installed).
+    """Return the directory where sidecar files live (install.token, .installed).
 
-    Entspricht dem Verzeichnis der geladenen config-Datei, oder ``config/`` als Fallback.
+    Corresponds to the loaded config file's directory, or ``config/`` as fallback.
     """
     cfg_file = getattr(_settings, "_config_file", None) if _settings else None
     if cfg_file is not None:
@@ -251,25 +251,25 @@ def get_config_dir() -> Path:
 
 
 def install_token_path() -> Path:
-    """Pfad zur Datei mit dem Einmal-Installationstoken."""
+    """Path to the file containing the one-time installation token."""
     return get_config_dir() / "install.token"
 
 
 def installed_marker_path() -> Path:
-    """Pfad zur Markerdatei, die eine abgeschlossene Installation anzeigt."""
+    """Path to the marker file indicating a completed installation."""
     return get_config_dir() / ".installed"
 
 
 def is_installed() -> bool:
-    """True wenn die Instanz bereits eingerichtet wurde."""
+    """True if the instance has already been set up."""
     return installed_marker_path().exists()
 
 
 def get_settings(config_path: Path | None = None) -> Settings:
-    """Singleton – Ladereihenfolge: config/ → config.toml → Env-Vars → Defaults.
+    """Singleton – load order: config/ → config.toml → env vars → defaults.
 
-    ``config_path`` kann eine Datei oder ein Verzeichnis sein.
-    Auto-Discover (wenn None): erst ``config/``, dann ``config.toml``.
+    ``config_path`` can be a file or a directory.
+    Auto-discover (when None): first ``config/``, then ``config.toml``.
     """
     global _settings
     if _settings is None:

@@ -19,7 +19,7 @@ class Capability(StrEnum):
     IMPORTER = "importer"
     EXPORTER = "exporter"
 
-    # --- Föderations-Erweiterungen ----------------------------------------
+    # --- Federation Extensions ----------------------------------------
     FEDERATION_EXTENSION = "federation_extension"
 
     # --- Optionale Konzepte -----------------------------------------------

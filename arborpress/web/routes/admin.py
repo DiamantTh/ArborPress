@@ -1,11 +1,11 @@
-"""Admin-Routen (§8 – Admin-Interface mit Step-up, §9 server-rendered, §10 noindex).
+"""Admin routes (§8 – admin interface with step-up, §9 server-rendered, §10 noindex).
 
-Basispfad dynamisch aus config.web.admin_path.
+Base path is configured dynamically via config.web.admin_path.
 
-Anforderungen:
-- noindex / no-store auf allen Admin-Seiten (§10, via SecurityMiddleware)
-- Login erzwingt WebAuthn (→ /auth/ Endpunkte, §2)
-- Step-up für sensitive Operationen (§2)
+Requirements:
+- noindex / no-store on all admin pages (§10, via SecurityMiddleware)
+- Login enforces WebAuthn (→ /auth/ endpoints, §2)
+- Step-up for sensitive operations (§2)
 """
 
 from __future__ import annotations
@@ -36,18 +36,18 @@ def _require_session():
 
 @admin_bp.before_request
 async def _csrf_protect() -> None:
-    """CSRF-Schutz für alle state-ändernden Admin-Anfragen (§10)."""
+    """CSRF protection for all state-changing admin requests (§10)."""
     if request.method in ("POST", "PUT", "PATCH", "DELETE"):
         await validate_csrf()
 
 
 @admin_bp.before_request
 async def _session_guard() -> None:
-    """Erzwingt Auth-Session + Mindestrole 'author' + DB-Session-Gültigkeit (§2, §4)."""
+    """Enforces auth session + minimum role 'author' + DB session validity (§2, §4)."""
     _require_session()
     require_role("author")
 
-    # DB-Session auf Gültigkeit und Ablauf prüfen; last_seen_at aktualisieren
+    # Validate DB session for validity and expiry; update last_seen_at
     session_id = session.get("session_id")
     if not session_id:
         return
@@ -73,7 +73,7 @@ async def _session_guard() -> None:
 
 @admin_bp.context_processor
 async def _role_context() -> dict:
-    """Stellt user_role und has_role für alle Admin-Templates bereit."""
+    """Provides user_role and has_role for all admin templates."""
     from arborpress.auth.roles import has_min_role
     return {"user_role": session.get("user_role", "viewer"), "has_role": has_min_role}
 
@@ -163,7 +163,7 @@ async def post_new_save():
     visibility_val = form.get("visibility", "public")
     captcha_type = (form.get("captcha_type") or "").strip() or None
 
-    # Geplante Veröffentlichung (datetime-local ohne Zeitzone → UTC)
+    # Scheduled publishing (datetime-local without timezone → UTC)
     from datetime import datetime as _dt
     _pub_raw = (form.get("published_at") or "").strip()
     published_at = None
@@ -276,7 +276,7 @@ async def post_edit_save(slug: str):
         captcha_type   = (form.get("captcha_type") or "").strip() or None
         change_summary = (form.get("change_summary") or "").strip() or None
 
-        # Geplante Veröffentlichung
+        # Scheduled publishing
         from datetime import datetime as _dt
         _pub_raw = (form.get("published_at") or "").strip()
         if _pub_raw:
@@ -285,7 +285,7 @@ async def post_edit_save(slug: str):
             except ValueError:
                 pass
 
-        # Snapshot vor Änderung für Diff
+        # Snapshot before change for diff
         old_body_md = post.body_md or ""
 
         if title:
@@ -306,7 +306,7 @@ async def post_edit_save(slug: str):
         except ValueError:
             pass
 
-        # Nächste Revisionsnummer ermitteln
+        # Determine next revision number
         from sqlalchemy import func as _func
         rev_max_result = await db.execute(
             select(_func.max(PostRevision.rev_number)).where(
@@ -351,7 +351,7 @@ async def pages_list():
         result = await db.execute(select(Page).order_by(Page.title))
         page_list = result.scalars().all()
 
-    # Warnung: Systemseiten, die nicht öffentlich sichtbar sind
+    # Warning: system pages that are not publicly visible
     system_page_types = {PageType.IMPRESSUM, PageType.PRIVACY, PageType.RULES}
     hidden_system_pages = [
         p for p in page_list
@@ -399,7 +399,7 @@ async def users():
 
 
 # ---------------------------------------------------------------------------
-# Plugin-Verwaltung §15 – Step-up für Enable/Disable
+# Plugin management §15 – step-up for Enable/Disable
 # ---------------------------------------------------------------------------
 
 
@@ -500,7 +500,7 @@ async def comments_list():
         result = await db.execute(stmt)
         pending = result.scalars().all()
 
-        # Alle Kommentare für Übersicht (neueste zuerst)
+        # All comments for overview (newest first)
         all_stmt = select(Comment).order_by(Comment.created_at.desc()).limit(200)
         all_result = await db.execute(all_stmt)
         all_comments = all_result.scalars().all()
@@ -636,7 +636,7 @@ _SETTINGS_SECTIONS = ("general", "mail", "comments", "federation", "search", "th
 
 @admin_bp.get("/settings")
 async def site_settings_page():
-    """Übersichtsseite der Website-Einstellungen (alle Sektionen)."""
+    """Overview page for website settings (all sections)."""
     _require_session()
     require_role("admin")
     from arborpress.core.site_settings import get_section
@@ -648,14 +648,14 @@ async def site_settings_page():
         for sec in _SETTINGS_SECTIONS:
             sections[sec] = await get_section(sec, db)
 
-    # Verfügbare Themes für Auswahlliste
+    # Available themes for selection list
     registry = get_theme_registry()
     available_themes = [
         {"id": t.theme.id, "name": t.theme.name}
         for t in registry.all()
     ]
 
-    # Verfügbare Muster für Pattern-Picker
+    # Available patterns for pattern picker
     available_patterns = [
         {"id": pid, "label": PATTERN_LABELS.get(pid, pid)}
         for pid in PATTERN_ORDER
@@ -711,7 +711,7 @@ async def site_settings_save():
                 "from_address": (form.get("from_address") or "").strip(),
                 "from_name":   (form.get("from_name") or "ArborPress").strip(),
             })
-            # Passwort nur übernehmen wenn ausgefüllt (nicht leer→löschen)
+            # Only apply password if filled in (do not delete when empty)
             pw = (form.get("smtp_password") or "").strip()
             if pw:
                 current["smtp_password"] = pw

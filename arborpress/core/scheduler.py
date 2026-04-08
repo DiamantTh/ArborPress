@@ -1,16 +1,16 @@
-"""Scheduled-Post-Worker (§1 PostStatus.SCHEDULED).
+"""Scheduled post worker (§1 PostStatus.SCHEDULED).
 
-Hintergrundaufgabe, die alle 60 Sekunden nach fälligen Beiträgen sucht
-und diese automatisch auf ``published`` setzt.
+Background task that checks every 60 seconds for due posts
+and automatically sets them to ``published``.
 
-Wird in :func:`arborpress.web.app.create_app` als asyncio-Background-Task
-gestartet und läuft für die gesamte Laufzeit der Anwendung.
+Started in :func:`arborpress.web.app.create_app` as an asyncio background task
+and runs for the entire lifetime of the application.
 
-Ablauf pro Tick:
-  1. Alle Posts mit status=SCHEDULED und published_at <= jetzt laden
-  2. Status auf PUBLISHED setzen, published_at ggf. auf jetzt setzen
-  3. Event ``post.published`` emittieren (Plugin-Hooks)
-  4. 60 Sekunden warten
+Flow per tick:
+  1. Load all posts with status=SCHEDULED and published_at <= now
+  2. Set status to PUBLISHED, set published_at to now if not already set
+  3. Emit event ``post.published`` (plugin hooks)
+  4. Wait 60 seconds
 """
 
 from __future__ import annotations
@@ -21,14 +21,14 @@ from datetime import UTC, datetime
 
 log = logging.getLogger("arborpress.scheduler")
 
-_TICK_INTERVAL = 60  # Sekunden
+_TICK_INTERVAL = 60  # seconds
 
 
 async def _publish_scheduled() -> int:
-    """Einmaliger Tick: publiziert alle fälligen Scheduled Posts.
+    """Single tick: publishes all due scheduled posts.
 
     Returns:
-        Anzahl der veröffentlichten Posts.
+        Number of published posts.
     """
     from sqlalchemy import select
 
@@ -54,7 +54,7 @@ async def _publish_scheduled() -> int:
                 if not post.published_at:
                     post.published_at = now
                 db.add(post)
-                log.info("Scheduler: Post veröffentlicht | slug=%s id=%s", post.slug, post.id)
+                log.info("Scheduler: post published | slug=%s id=%s", post.slug, post.id)
 
             if posts:
                 await db.commit()
@@ -63,25 +63,25 @@ async def _publish_scheduled() -> int:
                 published_count = len(posts)
 
     except Exception:
-        log.exception("Scheduler: Fehler beim Veröffentlichen geplanter Posts")
+        log.exception("Scheduler: error publishing scheduled posts")
 
     return published_count
 
 
 async def run_scheduler() -> None:
-    """Dauerhafter Background-Loop.
+    """Persistent background loop.
 
-    Läuft bis zur Aufgaben-Cancellation (App-Shutdown).
+    Runs until task cancellation (app shutdown).
     """
-    log.info("Scheduler gestartet (Intervall: %ds)", _TICK_INTERVAL)
+    log.info("Scheduler started (interval: %ds)", _TICK_INTERVAL)
     while True:
         try:
             n = await _publish_scheduled()
             if n:
-                log.info("Scheduler: %d Post(s) veröffentlicht", n)
+                log.info("Scheduler: %d post(s) published", n)
         except asyncio.CancelledError:
-            log.info("Scheduler: gestoppt")
+            log.info("Scheduler: stopped")
             break
         except Exception:
-            log.exception("Scheduler: unerwarteter Fehler")
+            log.exception("Scheduler: unexpected error")
         await asyncio.sleep(_TICK_INTERVAL)

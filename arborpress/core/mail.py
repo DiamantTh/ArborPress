@@ -1,11 +1,11 @@
-"""E-Mail-Versand (aiosmtplib, TLS/STARTTLS).
+"""E-mail sending (aiosmtplib, TLS/STARTTLS).
 
-Unterstützte Backends (config.toml → [mail]):
-  backend = "none"   – kein Versand, nur Logging (Standard bei Neuinstallation)
-  backend = "smtp"   – echter SMTP-Versand via aiosmtplib
+Supported backends (config.toml → [mail]):
+  backend = "none"   – no sending, logging only (default on first install)
+  backend = "smtp"   – real SMTP via aiosmtplib
 
-SMTP-Konfiguration (Beispiele für config.toml):
-  # --- STARTTLS (Port 587, empfohlen) ---
+SMTP configuration (examples for config.toml):
+  # --- STARTTLS (port 587, recommended) ---
   [mail]
   backend        = "smtp"
   smtp_host      = "mail.example.com"
@@ -13,11 +13,11 @@ SMTP-Konfiguration (Beispiele für config.toml):
   smtp_starttls  = true
   smtp_tls       = false
   smtp_user      = "user@example.com"
-  smtp_password  = "geheim"
+  smtp_password  = "secret"
   from_address   = "blog@example.com"
-  from_name      = "Mein Blog"
+  from_name      = "My Blog"
 
-  # --- Implizites TLS (Port 465) ---
+  # --- Implicit TLS (port 465) ---
   [mail]
   backend   = "smtp"
   smtp_port = 465
@@ -39,19 +39,19 @@ if TYPE_CHECKING:
 
 
 def _mail_s() -> dict:
-    """Liefert Mail-Settings (Cache oder Defaults)."""
+    """Return mail settings (cached or defaults)."""
     from arborpress.core.site_settings import get_cached, get_defaults
     return get_cached("mail") or get_defaults("mail")
 
 
 def _comments_s() -> dict:
-    """Liefert Comments-Settings (Cache oder Defaults)."""
+    """Return comment settings (cached or defaults)."""
     from arborpress.core.site_settings import get_cached, get_defaults
     return get_cached("comments") or get_defaults("comments")
 
 
 # ---------------------------------------------------------------------------
-# Basis-Senderfunktion
+# Base send function
 # ---------------------------------------------------------------------------
 
 async def _send(
@@ -61,16 +61,16 @@ async def _send(
     body_text: str,
     body_html: str | None = None,
 ) -> bool:
-    """Sendet eine E-Mail gemäß aktueller Konfiguration.
+    """Send an e-mail according to the current configuration.
 
-    Gibt True zurück bei Erfolg, False bei Fehler oder Backend=none.
-    STARTTLS hat Vorrang vor smtp_tls, wenn beide gesetzt sind.
+    Returns True on success, False on error or backend=none.
+    STARTTLS takes precedence over smtp_tls when both are set.
     """
     mc = _mail_s()
 
     if mc.get("backend", "none") == "none":
         log.info(
-            "[mail:none] An=%s | Betreff=%s | Text=%s",
+            "[mail:none] to=%s | subject=%s | text=%s",
             to_address, subject, body_text[:120],
         )
         return False
@@ -79,7 +79,7 @@ async def _send(
         import aiosmtplib  # optional dependency
     except ImportError:
         log.error(
-            "aiosmtplib nicht installiert – bitte 'pip install aiosmtplib' ausführen."
+            "aiosmtplib not installed – please run 'pip install aiosmtplib'."
         )
         return False
 
@@ -98,7 +98,7 @@ async def _send(
         "password": mc.get("smtp_password", "") or None,
     }
 
-    # Verbindungsmodus: explizites TLS (465) oder STARTTLS (587)
+    # Connection mode: explicit TLS (465) or STARTTLS (587)
     if mc.get("smtp_tls") and not mc.get("smtp_starttls"):
         kwargs["use_tls"] = True
     elif mc.get("smtp_starttls"):
@@ -106,22 +106,22 @@ async def _send(
 
     try:
         await aiosmtplib.send(msg, **kwargs)
-        log.info("Mail gesendet an %s (Betreff: %s)", to_address, subject)
+        log.info("Mail sent to %s (subject: %s)", to_address, subject)
         return True
     except Exception as exc:
-        log.error("Mail-Fehler an %s: %s", to_address, exc)
+        log.error("Mail error for %s: %s", to_address, exc)
         return False
 
 
 # ---------------------------------------------------------------------------
-# Kommentar-Bestätigungs-E-Mail (an Autor)
+# Comment confirmation e-mail (to author)
 # ---------------------------------------------------------------------------
 
 async def send_comment_confirmation(comment: Comment, post: Post) -> bool:
-    """Sendet den Bestätigungs-Link an den Kommentar-Autor.
+    """Send the confirmation link to the comment author.
 
-    Der Nutzer muss auf diesen Link klicken, damit der Kommentar
-    zur Admin-Freischaltung weitergereicht wird (zweistufige Moderation).
+    The user must click this link so that the comment is forwarded
+    for admin approval (two-step moderation).
     """
     from arborpress.core.config import get_settings
 
@@ -129,44 +129,44 @@ async def send_comment_confirmation(comment: Comment, post: Post) -> bool:
     from_name   = _mail_s().get("from_name", "ArborPress")
     confirm_url = f"{base_url}/comment/confirm/{comment.confirmation_token}"
 
-    subject = f"Kommentar bestätigen – {post.title}"
+    subject = f"Please confirm your comment – {post.title}"
 
     body_text = (
-        f"Hallo {comment.author_name},\n\n"
-        f"vielen Dank für deinen Kommentar zum Artikel »{post.title}«.\n\n"
-        f"Bitte bestätige deinen Kommentar durch einen Klick auf folgenden Link:\n"
+        f"Hello {comment.author_name},\n\n"
+        f"thank you for your comment on the post \u00bb{post.title}\u00ab.\n\n"
+        f"Please confirm your comment by clicking the following link:\n"
         f"{confirm_url}\n\n"
-        f"Nach deiner Bestätigung wird der Kommentar von uns geprüft und\n"
-        f"anschließend freigeschaltet.\n\n"
-        f"Falls du keinen Kommentar hinterlassen hast, ignoriere diese E-Mail einfach.\n\n"
-        f"Viele Grüße,\n{from_name}"
+        f"After confirmation your comment will be reviewed by us and\n"
+        f"then published.\n\n"
+        f"If you did not leave a comment, simply ignore this e-mail.\n\n"
+        f"Best regards,\n{from_name}"
     )
 
     body_html = f"""\
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head><meta charset="UTF-8"></head>
 <body style="font-family:sans-serif;color:#1a202c;max-width:520px;margin:0 auto">
-  <h2 style="color:#2563eb">Kommentar bestätigen</h2>
-  <p>Hallo <strong>{comment.author_name}</strong>,</p>
-  <p>vielen Dank für deinen Kommentar zum Artikel
+  <h2 style="color:#2563eb">Confirm your comment</h2>
+  <p>Hello <strong>{comment.author_name}</strong>,</p>
+  <p>thank you for your comment on the post
      <em>&raquo;{post.title}&laquo;</em>.</p>
-  <p>Bitte bestätige deinen Kommentar:</p>
+  <p>Please confirm your comment:</p>
   <p style="text-align:center;margin:1.5rem 0">
     <a href="{confirm_url}"
        style="background:#2563eb;color:#fff;padding:.65rem 1.5rem;
               border-radius:6px;text-decoration:none;font-weight:700">
-      Kommentar bestätigen
+      Confirm comment
     </a>
   </p>
   <p style="font-size:.85rem;color:#6b7280">
-    Nach der Bestätigung wird dein Kommentar vom Betreiber geprüft
-    und anschließend freigeschaltet.<br>
-    Falls du keinen Kommentar hinterlassen hast, ignoriere diese E-Mail.
+    After confirmation your comment will be reviewed by the site owner
+    and then published.<br>
+    If you did not leave a comment, please ignore this e-mail.
   </p>
   <hr style="border:none;border-top:1px solid #e2e8f0;margin:1.5rem 0">
   <p style="font-size:.8rem;color:#9ca3af">
-    Direkt-Link: <a href="{confirm_url}">{confirm_url}</a>
+    Direct link: <a href="{confirm_url}">{confirm_url}</a>
   </p>
 </body>
 </html>"""
@@ -181,14 +181,14 @@ async def send_comment_confirmation(comment: Comment, post: Post) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Admin-Benachrichtigung (neuer bestätigter Kommentar)
+# Admin notification (new confirmed comment)
 # ---------------------------------------------------------------------------
 
 async def send_comment_notification(comment: Comment, post: Post) -> bool:
-    """Benachrichtigt den Admin über einen neuen (bestätigten) Kommentar.
+    """Notify the admin about a new (confirmed) comment.
 
-    Wird versandt, nachdem der Autor per E-Mail bestätigt hat.
-    Nur aktiv, wenn comments.notify_admin_email in den Einstellungen gesetzt ist.
+    Sent after the author has confirmed via e-mail.
+    Only active when comments.notify_admin_email is set in the settings.
     """
     from arborpress.core.config import get_settings
 
@@ -200,27 +200,27 @@ async def send_comment_notification(comment: Comment, post: Post) -> bool:
     approve_url = f"{base_url}/admin/comments/{comment.id}/approve"
     reject_url  = f"{base_url}/admin/comments/{comment.id}/reject"
 
-    subject = f"Neuer Kommentar zur Freischaltung – {post.title}"
+    subject = f"New comment awaiting approval – {post.title}"
 
     body_text = (
-        f"Neuer Kommentar von {comment.author_name} <{comment.author_email}>\n"
-        f"Artikel: {post.title}\n\n"
+        f"New comment from {comment.author_name} <{comment.author_email}>\n"
+        f"Post: {post.title}\n\n"
         f"---\n{comment.body}\n---\n\n"
-        f"Freischalten:  {approve_url}\n"
-        f"Ablehnen:      {reject_url}\n\n"
-        f"Oder direkt im Admin-Bereich: {base_url}/admin/comments"
+        f"Approve:  {approve_url}\n"
+        f"Reject:   {reject_url}\n\n"
+        f"Or directly in the admin area: {base_url}/admin/comments"
     )
 
     body_html = f"""\
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head><meta charset="UTF-8"></head>
 <body style="font-family:sans-serif;color:#1a202c;max-width:560px;margin:0 auto">
-  <h2>Neuer Kommentar zur Freischaltung</h2>
+  <h2>New comment awaiting approval</h2>
   <table style="width:100%;border-collapse:collapse;font-size:.9rem;margin-bottom:1rem">
-    <tr><td style="color:#6b7280;padding:.3rem .5rem">Artikel</td>
+    <tr><td style="color:#6b7280;padding:.3rem .5rem">Post</td>
         <td><strong>{post.title}</strong></td></tr>
-    <tr><td style="color:#6b7280;padding:.3rem .5rem">Autor</td>
+    <tr><td style="color:#6b7280;padding:.3rem .5rem">Author</td>
         <td>{comment.author_name} &lt;{comment.author_email}&gt;</td></tr>
   </table>
   <blockquote style="border-left:3px solid #2563eb;padding:.5rem 1rem;
@@ -231,16 +231,16 @@ async def send_comment_notification(comment: Comment, post: Post) -> bool:
     <a href="{approve_url}"
        style="background:#16a34a;color:#fff;padding:.55rem 1.25rem;
               border-radius:6px;text-decoration:none;font-weight:700">
-      ✓ Freischalten
+      ✓ Approve
     </a>
     <a href="{reject_url}"
        style="background:#dc2626;color:#fff;padding:.55rem 1.25rem;
               border-radius:6px;text-decoration:none;font-weight:700">
-      ✗ Ablehnen
+      ✗ Reject
     </a>
   </p>
   <p style="font-size:.8rem;color:#9ca3af;margin-top:1rem">
-    <a href="{base_url}/admin/comments">Alle Kommentare im Admin-Bereich</a>
+    <a href="{base_url}/admin/comments">All comments in the admin area</a>
   </p>
 </body>
 </html>"""

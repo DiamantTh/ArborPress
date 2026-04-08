@@ -1,14 +1,14 @@
-"""Asynchrones Event-System für Plugin-Hooks (§15 Plugin-Capabilities).
+"""Asynchronous event system for plugin hooks (§15 Plugin-Capabilities).
 
-Plugins registrieren Handler via Capability-Metadaten oder direkt über
-`subscribe()`. Der Core emittiert Events an definierten Hook-Punkten.
+Plugins register handlers via capability metadata or directly via
+`subscribe()`. The core emits events at defined hook points.
 
-Beispiel:
+Example:
     from arborpress.core.events import subscribe, emit
 
     @subscribe("post.published")
     async def on_post(event):
-        ...  # Feed aktualisieren, Notification senden, …
+        ...  # Update feed, send notification, …
 
     await emit("post.published", post=post_obj)
 """
@@ -23,16 +23,16 @@ from typing import Any
 
 log = logging.getLogger("arborpress.events")
 
-# Event-Name → Liste von Handlern
+# event name → list of handlers
 _handlers: dict[str, list[Callable[..., Awaitable[None]]]] = defaultdict(list)
 
 # ---------------------------------------------------------------------------
-# Bekannte Core-Events (§15-Referenz für Plugins)
+# Known core events (§15 reference for plugins)
 # ---------------------------------------------------------------------------
 
 EVENTS = frozenset(
     {
-        # Inhalts-Lifecycle
+        # Content lifecycle
         "post.before_save",
         "post.published",
         "post.updated",
@@ -40,7 +40,7 @@ EVENTS = frozenset(
         "page.published",
         "page.updated",
         "page.deleted",
-        # Auth-Events (§2)
+        # Auth events (§2)
         "auth.login_success",
         "auth.login_failure",
         "auth.logout",
@@ -56,7 +56,7 @@ EVENTS = frozenset(
         # Media
         "media.uploaded",
         "media.deleted",
-        # Plugin-Lifecycle (§15)
+        # Plugin lifecycle (§15)
         "plugin.loaded",
         "plugin.enabled",
         "plugin.disabled",
@@ -79,9 +79,9 @@ def subscribe(
     event: str,
     handler: Callable[..., Awaitable[None]] | None = None,
 ) -> Callable:
-    """Registriert einen Async-Handler für das angegebene Event.
+    """Register an async handler for the given event.
 
-    Kann als Dekorator oder direkt aufgerufen werden:
+    Can be used as a decorator or called directly:
 
         @subscribe("post.published")
         async def handler(event, **kwargs): ...
@@ -90,7 +90,7 @@ def subscribe(
     """
     def _decorator(fn: Callable[..., Awaitable[None]]) -> Callable:
         _handlers[event].append(fn)
-        log.debug("Event-Handler registriert: %s → %s", event, fn.__qualname__)
+        log.debug("Event handler registered: %s → %s", event, fn.__qualname__)
         return fn
 
     if handler is not None:
@@ -100,7 +100,7 @@ def subscribe(
 
 
 def unsubscribe(event: str, handler: Callable[..., Awaitable[None]]) -> bool:
-    """Entfernt einen Handler. Gibt True zurück wenn gefunden."""
+    """Remove a handler. Returns True if found."""
     try:
         _handlers[event].remove(handler)
         return True
@@ -109,13 +109,13 @@ def unsubscribe(event: str, handler: Callable[..., Awaitable[None]]) -> bool:
 
 
 async def emit(event: str, **kwargs: Any) -> None:
-    """Sendet ein Event an alle registrierten Handler.
+    """Send an event to all registered handlers.
 
-    Handler-Fehler werden geloggt, aber nicht propagiert (§15: Core-Stabilität
-    darf nicht von Plugins abhängen).
+    Handler errors are logged but not propagated (§15: core stability
+    must not depend on plugins).
     """
     if event not in EVENTS:
-        log.warning("Unbekanntes Event emittiert: %r (nicht in EVENTS definiert)", event)
+        log.warning("Unknown event emitted: %r (not defined in EVENTS)", event)
 
     handlers = list(_handlers.get(event, []))
     if not handlers:
@@ -126,7 +126,7 @@ async def emit(event: str, **kwargs: Any) -> None:
             await handler(event=event, **kwargs)
         except Exception as exc:
             log.exception(
-                "Event-Handler %s schlug fehl für Event %r: %s",
+                "Event handler %s failed for event %r: %s",
                 handler.__qualname__,
                 event,
                 exc,
@@ -134,12 +134,12 @@ async def emit(event: str, **kwargs: Any) -> None:
 
 
 async def emit_all(events: list[tuple[str, dict[str, Any]]]) -> None:
-    """Sendet mehrere Events nebenläufig."""
+    """Send multiple events concurrently."""
     await asyncio.gather(*(emit(ev, **kw) for ev, kw in events))
 
 
 def clear_handlers(event: str | None = None) -> None:
-    """Entfernt Handler (für Tests)."""
+    """Remove handlers (for tests)."""
     if event:
         _handlers.pop(event, None)
     else:

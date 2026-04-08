@@ -1,9 +1,9 @@
-"""Break-Glass Legacy-Passwort-Auth (Spec §17).
+"""Break-glass legacy password auth (spec §17).
 
-WICHTIG: Nur als versteckter Notfall-Zugang gedacht.
-- Nicht in UI exponiert
-- Nur für dedizierte Admin-Identitäten
-- Audit-Log bei jeder Nutzung obligatorisch
+IMPORTANT: Intended only as a hidden emergency access path.
+- Not exposed in UI
+- Only for dedicated admin identities
+- Audit log on every use is mandatory
 """
 
 from __future__ import annotations
@@ -18,34 +18,34 @@ from arborpress.logging.config import get_audit_logger
 log = logging.getLogger("arborpress.auth.breakglass")
 audit = get_audit_logger()
 
-# OWASP 2024-Empfehlung Argon2id (interactive): t=3, m=64 MiB, p=4
+# OWASP 2024 recommendation Argon2id (interactive): t=3, m=64 MiB, p=4
 # https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
 _hasher = PasswordHasher(
     time_cost=3,
     memory_cost=65536,  # 64 MiB
-    parallelism=4,      # war 2 – auf OWASP-Empfehlung angehoben
+    parallelism=4,      # raised from 2 to follow OWASP recommendation
     hash_len=32,
     salt_len=16,
 )
 
 
 def hash_password(password: str) -> str:
-    """Erzeugt einen Argon2id-Hash des Passworts."""
+    """Hash a password with Argon2id."""
     return _hasher.hash(password)
 
 
 def verify_password(hashed: str, password: str, *, admin_id: str) -> bool:
-    """Überprüft das Passwort und schreibt immer ins Audit-Log."""
+    """Verify a password and always write to the audit log."""
     try:
         result = _hasher.verify(hashed, password)
         if result:
             audit.warning(
-                "BREAK-GLASS login erfolgreich | admin=%s", admin_id
+                "BREAK-GLASS login successful | admin=%s", admin_id
             )
         return result
     except VerificationError:
         audit.warning(
-            "BREAK-GLASS login fehlgeschlagen | admin=%s", admin_id
+            "BREAK-GLASS login failed | admin=%s", admin_id
         )
         return False
 

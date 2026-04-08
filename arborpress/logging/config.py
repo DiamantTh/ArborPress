@@ -1,7 +1,7 @@
-"""Logging-Setup gemäß Spec §16.
+"""Logging setup per spec §16.
 
-Standardmäßig: stdout/stderr.
-Optionales File-Logging wenn in der Konfiguration aktiviert.
+Default: stdout/stderr.
+Optional file logging when enabled in configuration.
 """
 
 from __future__ import annotations
@@ -13,37 +13,37 @@ from pathlib import Path
 
 from arborpress.core.config import LoggingSettings
 
-# Strukturiertes Format (maschinenlesbar + menschenlesbar)
+# Structured format (machine-readable + human-readable)
 _FMT_STD = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _FMT_AUDIT = "%(asctime)s [AUDIT] %(name)s: %(message)s"
 
-# Dedizierter Logger für Sicherheits-/Audit-Ereignisse
+# Dedicated logger for security/audit events
 AUDIT_LOGGER_NAME = "arborpress.audit"
 
 
 def setup_logging(cfg: LoggingSettings) -> None:
-    """Initialisiert das Logging-System.
+    """Initialize the logging system.
 
-    Kategorien (Spec §16):
-    - arborpress.app   – Fehler/Warnungen/Info
-    - arborpress.access – optionaler Access-Log
-    - arborpress.audit  – Credential/Policy/Admin-Ereignisse
+    Categories (spec §16):
+    - arborpress.app    – errors/warnings/info
+    - arborpress.access – optional access log
+    - arborpress.audit  – credential/policy/admin events
     """
     root = logging.getLogger("arborpress")
     root.setLevel(cfg.level)
 
-    # --- App-Log → stdout -------------------------------------------------
+    # --- App log → stdout -------------------------------------------------
     stdout_handler = logging.StreamHandler(sys.stdout)
     stdout_handler.setFormatter(logging.Formatter(_FMT_STD))
     root.addHandler(stdout_handler)
 
-    # --- Optionales App-File-Log ------------------------------------------
+    # --- Optional app file log --------------------------------------------
     if cfg.file:
         _add_file_handler(root, cfg.file, _FMT_STD)
 
-    # --- Audit-Log --------------------------------------------------------
+    # --- Audit log --------------------------------------------------------
     audit_logger = logging.getLogger(AUDIT_LOGGER_NAME)
-    audit_logger.propagate = False  # Nicht in Root-Log mischen
+    audit_logger.propagate = False  # Do not mix into root log
 
     if cfg.audit_log:
         audit_stderr = logging.StreamHandler(sys.stderr)
@@ -53,7 +53,7 @@ def setup_logging(cfg: LoggingSettings) -> None:
         if cfg.audit_file:
             _add_file_handler(audit_logger, cfg.audit_file, _FMT_AUDIT)
 
-    # --- Optionaler Access-Log --------------------------------------------
+    # --- Optional access log ----------------------------------------------
     if cfg.access_log:
         access_logger = logging.getLogger("arborpress.access")
         access_logger.propagate = False

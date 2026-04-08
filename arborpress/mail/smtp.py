@@ -18,10 +18,10 @@ log = logging.getLogger("arborpress.mail")
 
 
 def _to_ascii_hostname(host: str) -> str:
-    """Konvertiert IDN-Hostnamen zu IDNA-ASCII/Punycode (§13, RFC 5321)."""
+    """Converts IDN hostnames to IDNA-ASCII/Punycode (§13, RFC 5321)."""
     if not host or host in ("localhost", "127.0.0.1", "::1"):
         return host
-    # Reine IPv4-Adressen unverändert lassen
+    # Leave pure IPv4 addresses unchanged
     import re
     if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host):
         return host
@@ -36,7 +36,7 @@ def _to_ascii_hostname(host: str) -> str:
 
 
 class MailMessage:
-    """Einfaches Mail-DTO."""
+    """Simple mail DTO."""
 
     def __init__(
         self,
@@ -57,7 +57,7 @@ class SMTPBackend:
     """SMTP-Backend (§13 – universal mail backend)."""
 
     async def send(self, msg: MailMessage, mail_section: dict) -> None:
-        """Sendet eine E-Mail über SMTP. Erhält Mail-Einstellungen als dict."""
+        """Sends an email via SMTP. Receives mail settings as dict."""
         mime = MIMEMultipart("alternative") if msg.body_html else MIMEText(msg.body_text, "plain")
         mime["From"] = (
             f"{mail_section.get('from_name', '')} <{mail_section.get('from_address', '')}>"

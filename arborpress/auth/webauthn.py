@@ -1,7 +1,7 @@
-"""WebAuthn/FIDO2-Authentifizierung (Spec §17).
+"""WebAuthn/FIDO2 authentication (spec §17).
 
-Primärer Auth-Pfad. Legacy-Passwort ist separates Break-Glass-Modul
-und NIE standardmäßig aktiviert.
+Primary auth path. Legacy password is a separate break-glass module
+and is NEVER enabled by default.
 """
 
 from __future__ import annotations

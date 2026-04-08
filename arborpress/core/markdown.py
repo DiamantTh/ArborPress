@@ -1,24 +1,24 @@
 """Markdown → HTML Rendering (§1).
 
-Verwendet markdown-it-py (MIT) mit bleach-Sanitization (§10).
+Uses markdown-it-py (MIT) with bleach sanitisation (§10).
 
-Aktivierte Plugins:
-  - table          – GFM-Tabellen
-  - strikethrough  – ~~Text~~
-  - tasklist       – [ ] / [x] Checklisten
+Enabled plugins:
+  - table          – GFM tables
+  - strikethrough  – ~~text~~
+  - tasklist       – [ ] / [x] checklists
 
-Oeffentliche API
-  render_md(text)         – sync, Markdown → sanitisiertes HTML.
-  render_md_async(text, db=None) – async, render_md + oEmbed-Shortcodes aufloesen
-                               + externe Bilder lokal speichern (wenn db übergeben).
+Public API
+  render_md(text)         – sync, Markdown → sanitised HTML.
+  render_md_async(text, db=None) – async, render_md + resolve oEmbed shortcodes
+                               + store external images locally (if db supplied).
 
-Embed-Shortcode im Markdown::
+Embed shortcode in Markdown::
 
     {{embed:https://twitter.com/user/status/123}}
     {{embed:https://www.youtube.com/watch?v=xyz}}
 
-  ArborPress holt oEmbed-HTML serverseitig, entfernt <script>-Tags,
-  cached Ergebnis auf Disk (TTL: 24 h). Kein JS-Request des Besuchers.
+  ArborPress fetches oEmbed HTML server-side, strips <script> tags,
+  caches the result on disk (TTL: 24 h). No JS request from the visitor.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from markdown_it import MarkdownIt
 log = logging.getLogger("arborpress.markdown")
 
 # ---------------------------------------------------------------------------
-# Erlaubte HTML-Elemente nach dem Rendering (§10 XSS-Prävention)
+# Allowed HTML elements after rendering (§10 XSS prevention)
 # ---------------------------------------------------------------------------
 
 _ALLOWED_TAGS: list[str] = [
@@ -91,7 +91,7 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
-# Öffentliche API
+# Public API
 # ---------------------------------------------------------------------------
 
 
@@ -137,16 +137,16 @@ async def render_md_async(text: str, db=None) -> str:
     Ablauf:
       1. ``{{embed:url}}``-Muster aus Text extrahieren, Platzhalter einfuegen.
       2. Synchrones render_md() auf den verbleibenden Text anwenden.
-      2b. Externe <img>-URLs herunterladen und lokal speichern (wenn db übergeben).
-      3. Alle Platzhalter durch gecachtes oEmbed-HTML ersetzen.
+      2b. Download external <img> URLs and store locally (if db supplied).
+      3. Replace all placeholders with cached oEmbed HTML.
 
     Der Schritt 1+3 stellt sicher, dass oEmbed-HTML nicht durch markdown-it
     prozessiert oder durch bleach sanitisiert wird.
 
     Args:
         text: Markdown-Text, kann ``{{embed:url}}``-Shortcodes enthalten.
-        db:   Aktive AsyncSession für Bild-Download + oEmbed-DB-Cache.
-              ``None`` = Preview-Modus (kein Download, Embeds als Fallback-Link).
+        db:   Active AsyncSession for image download + oEmbed DB cache.
+              ``None`` = preview mode (no download, embeds as fallback link).
 
     Returns:
         Vollstaendig gerendertes, sanitisiertes HTML.
@@ -225,7 +225,7 @@ async def render_md_async(text: str, db=None) -> str:
 
 
 def _add_link_rel(html: str) -> str:
-    """Fügt rel="noopener noreferrer" und target="_blank" zu externen Links."""
+    """Adds rel="noopener noreferrer" and target="_blank" to external links."""
     def _replace(m: re.Match) -> str:
         tag = m.group(0)
         href = re.search(r'href="([^"]*)"', tag)
@@ -248,11 +248,11 @@ _EXT_IMG_RE = re.compile(
 
 
 async def _fetch_and_replace_imgs(html: str, db) -> str:
-    """Lädt externe <img>-URLs herunter und ersetzt src durch lokale URL.
+    """Downloads external <img> URLs and replaces src with the local URL.
 
-    Verwendet ``download_and_store`` aus ``image_fetch`` – gleiche Logik
-    wie Mastodon: einmaliger Server-Download, Besucher bekommt nur die
-    lokale ``/media/``-URL.
+    Uses ``download_and_store`` from ``image_fetch`` – same logic as
+    Mastodon: single server-side download, visitor only receives the
+    local ``/media/`` URL.
     """
     from arborpress.core.image_fetch import download_and_store
 

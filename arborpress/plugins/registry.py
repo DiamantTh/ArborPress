@@ -1,10 +1,10 @@
-"""Plugin-Registry – lädt Plugins aus konfigurierten Verzeichnissen.
+"""Plugin registry – loads plugins from configured directories.
 
-Regeln (Spec §15):
-- Nur manuelle Installation (kein Marketplace/Remote-Store)
-- Core validiert Kompatibilitätsversion beim Laden
-- UI-Integration nur über Core-Slots
-- Kein Plugin darf eigenständige Security-Seiten definieren
+Rules (spec §15):
+- Manual installation only (no marketplace/remote store)
+- Core validates compatibility version on load
+- UI integration only via core slots
+- No plugin may define standalone security pages
 """
 
 from __future__ import annotations
@@ -24,11 +24,11 @@ log = logging.getLogger("arborpress.plugins")
 
 
 class PluginLoadError(Exception):
-    """Wird geworfen wenn ein Plugin nicht geladen werden kann."""
+    """Raised when a plugin cannot be loaded."""
 
 
 class LoadedPlugin:
-    """Repräsentiert ein geladenes Plugin zur Laufzeit."""
+    """Represents a loaded plugin at runtime."""
 
     def __init__(self, manifest: PluginManifest, directory: Path) -> None:
         self.manifest = manifest
@@ -48,13 +48,13 @@ class LoadedPlugin:
         return self.manifest.plugin.capabilities
 
     def get_instance(self, cap: Capability) -> Any:
-        """Gibt die Capability-Implementierung zurück (lazy import)."""
+        """Return the capability implementation (lazy import)."""
         if cap not in self._instances:
             ep_data = self.manifest.entry_points.model_dump()
             dotpath: str | None = ep_data.get(cap.value)
             if not dotpath:
                 raise PluginLoadError(
-                    f"Plugin {self.id!r} hat keinen Entry-Point für {cap.value!r}"
+                    f"Plugin {self.id!r} has no entry point for {cap.value!r}"
                 )
             module_path, _, attr = dotpath.rpartition(":")
             try:
@@ -62,7 +62,7 @@ class LoadedPlugin:
                 self._instances[cap] = getattr(mod, attr)
             except (ImportError, AttributeError) as exc:
                 raise PluginLoadError(
-                    f"Konnte Entry-Point {dotpath!r} für Plugin {self.id!r} nicht laden: {exc}"
+                    f"Could not load entry point {dotpath!r} for plugin {self.id!r}: {exc}"
                 ) from exc
         return self._instances[cap]
 
@@ -72,22 +72,22 @@ class LoadedPlugin:
 
 
 class PluginRegistry:
-    """Singleton-Registry aller geladenen Plugins."""
+    """Singleton registry of all loaded plugins."""
 
     def __init__(self) -> None:
         self._plugins: dict[str, LoadedPlugin] = {}
 
     # ------------------------------------------------------------------
-    # Laden
+    # Loading
     # ------------------------------------------------------------------
 
     def load_directory(self, directory: Path) -> None:
-        """Lädt alle Plugins aus einem Verzeichnis.
+        """Load all plugins from a directory.
 
-        Erwartet: ``<directory>/<plugin_id>/manifest.toml``
+        Expects: ``<directory>/<plugin_id>/manifest.toml``
         """
         if not directory.is_dir():
-            log.warning("Plugin-Verzeichnis existiert nicht: %s", directory)
+            log.warning("Plugin directory does not exist: %s", directory)
             return
 
         for subdir in sorted(directory.iterdir()):
@@ -95,43 +95,43 @@ class PluginRegistry:
                 continue
             manifest_path = subdir / "manifest.toml"
             if not manifest_path.exists():
-                log.debug("Überspringe %s (kein manifest.toml)", subdir.name)
+                log.debug("Skipping %s (no manifest.toml)", subdir.name)
                 continue
             try:
                 self._load_one(manifest_path, subdir)
             except PluginLoadError as exc:
-                log.error("Plugin-Ladefehler: %s", exc)
+                log.error("Plugin load error: %s", exc)
 
     def _load_one(self, manifest_path: Path, directory: Path) -> None:
         manifest = PluginManifest.from_file(manifest_path)
         plugin_id = manifest.plugin.id
 
-        # Kompatibilitäts-Check
+        # Compatibility check
         min_core = Version(manifest.plugin.min_core)
         core_ver = Version(CORE_VERSION)
         if core_ver < min_core:
             raise PluginLoadError(
-                f"Plugin {plugin_id!r} benötigt Core >= {manifest.plugin.min_core}"
-                f" (aktuell: {CORE_VERSION})"
+                f"Plugin {plugin_id!r} requires core >= {manifest.plugin.min_core}"
+                f" (current: {CORE_VERSION})"
             )
 
-        # Entry-Point-Vollständigkeit prüfen
+        # Verify entry point completeness
         missing = manifest.validate_entry_points()
         if missing:
             raise PluginLoadError(
-                f"Plugin {plugin_id!r}: fehlende Entry-Points für {missing}"
+                f"Plugin {plugin_id!r}: missing entry points for {missing}"
             )
 
         self._plugins[plugin_id] = LoadedPlugin(manifest, directory)
         log.info(
-            "Plugin geladen: %s v%s (%s)",
+            "Plugin loaded: %s v%s (%s)",
             plugin_id,
             manifest.plugin.version,
             ", ".join(c.value for c in manifest.plugin.capabilities),
         )
 
     # ------------------------------------------------------------------
-    # Abfragen
+    # Queries
     # ------------------------------------------------------------------
 
     def all(self) -> list[LoadedPlugin]:
@@ -144,7 +144,7 @@ class PluginRegistry:
         return self._plugins.get(plugin_id)
 
 
-# Globale Singleton-Instanz
+# Global singleton instance
 _registry: PluginRegistry | None = None
 
 

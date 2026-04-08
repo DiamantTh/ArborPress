@@ -1,13 +1,13 @@
-"""I18N / Lokalisierung (§7 Internationalization).
+"""I18N / localization (§7 Internationalization).
 
-Unterstützte Routing-Modes (§7 / config [web].i18n_mode):
-  - "single"  – keine Sprach-Prefix, Sprache aus Accept-Language-Header
-  - "prefix"  – /de/…, /en/…  (vollständige Sprach-Routes)
+Supported routing modes (§7 / config [web].i18n_mode):
+  - "single"  – no language prefix, language from Accept-Language header
+  - "prefix"  – /de/…, /en/…  (full language routes)
 
-Übersetzungen liegen als GNU-gettext-.po/.mo-Dateien unter
+Translations are stored as GNU gettext .po/.mo files under
   arborpress/translations/<lang>/LC_MESSAGES/arborpress.mo
 
-Zum Extrahieren:
+To extract:
   pybabel extract -F babel.cfg -o translations/messages.pot .
   pybabel init -l de -i translations/messages.pot -d translations
   pybabel compile -d translations
@@ -22,26 +22,26 @@ from quart import g, request
 
 log = logging.getLogger("arborpress.i18n")
 
-# Unterstützte Sprachen – erweitert via Plugin-Capability (§15)
+# Supported languages – extended via plugin capability (§15)
 _SUPPORTED: set[str] = {"de", "en"}
 
-# Root für .mo-Dateien
+# Root directory for .mo files
 _TRANSLATIONS_DIR = Path(__file__).parent.parent / "translations"
 
 
 # ---------------------------------------------------------------------------
-# Spracherkennung
+# Language detection
 # ---------------------------------------------------------------------------
 
 
 def detect_language(default: str = "de") -> str:
-    """Bestimmt die aktive Sprache für den aktuellen Request.
+    """Determine the active language for the current request.
 
-    Reihenfolge (§7):
-    1. URL-Prefix (wenn i18n_mode="prefix"):  /de/seite  → "de"
-    2. _lang-Cookie (User-Präferenz)
-    3. Accept-Language-Header (Browser)
-    4. Konfigurierter Default
+    Order (§7):
+    1. URL prefix (when i18n_mode="prefix"):  /de/page  → "de"
+    2. _lang cookie (user preference)
+    3. Accept-Language header (browser)
+    4. Configured default
     """
     from arborpress.core.config import get_settings
     cfg = get_settings()
@@ -61,7 +61,7 @@ def detect_language(default: str = "de") -> str:
     # 3. Accept-Language
     best = request.accept_languages.best_match(list(_SUPPORTED))
     if best:
-        # Nur Primärcode (de-AT → de)
+        # Primary code only (de-AT → de)
         code = best.split("-")[0].lower()
         if code in _SUPPORTED:
             return code
@@ -70,30 +70,30 @@ def detect_language(default: str = "de") -> str:
 
 
 def get_lang() -> str:
-    """Gibt die Sprache des aktuellen Requests zurück (aus `g`)."""
+    """Return the language of the current request (from `g`)."""
     return getattr(g, "lang", "de")
 
 
 # ---------------------------------------------------------------------------
-# Quart Before-Request-Hook
+# Quart before-request hook
 # ---------------------------------------------------------------------------
 
 
 async def i18n_before_request() -> None:
-    """Setzt g.lang für jeden Request."""
+    """Set g.lang for every request."""
     from arborpress.core.config import get_settings
     g.lang = detect_language(get_settings().web.default_lang)
 
 
 # ---------------------------------------------------------------------------
-# Einfache Übersetzungs-Funktion (Gettext-kompatibel)
+# Simple translation function (gettext-compatible)
 # ---------------------------------------------------------------------------
 
 _cache: dict[str, dict[str, str]] = {}  # lang → {msgid: msgstr}
 
 
 def _load_translations(lang: str) -> dict[str, str]:
-    """Lädt .po-Datei als simples Dict (Fallback wenn kein .mo kompiliert)."""
+    """Load .po file as a simple dict (fallback when no .mo is compiled)."""
     if lang in _cache:
         return _cache[lang]
 
@@ -101,7 +101,7 @@ def _load_translations(lang: str) -> dict[str, str]:
     translations: dict[str, str] = {}
 
     if po_path.exists():
-        # Minimalparser für .po-Dateien (nur msgid + msgstr Paare)
+        # Minimal parser for .po files (msgid + msgstr pairs only)
         msgid = ""
         in_msgstr = False
         for line in po_path.read_text("utf-8").splitlines():
@@ -123,35 +123,35 @@ def _load_translations(lang: str) -> dict[str, str]:
 
 
 def gettext(msgid: str, lang: str | None = None) -> str:
-    """Übersetzt msgid in die angegebene oder aktuelle Sprache."""
+    """Translate msgid into the given or current language."""
     if lang is None:
         lang = get_lang()
     t = _load_translations(lang)
     return t.get(msgid, msgid)
 
 
-# Kurz-Alias für Templates
+# Short alias for templates
 _ = gettext
 
 
 # ---------------------------------------------------------------------------
-# Hilfsfunktionen für URL-Prefix-Mode
+# Helper functions for URL prefix mode
 # ---------------------------------------------------------------------------
 
 
 def url_for_lang(lang: str, endpoint: str, **values: object) -> str:
-    """Baut eine URL im Prefix-Mode (§7)."""
+    """Build a URL in prefix mode (§7)."""
     from quart import url_for as _url_for
     url = _url_for(endpoint, **values)
     return f"/{lang}{url}"
 
 
 def register_i18n(app: object) -> None:
-    """Registriert den Before-Request-Hook an der Quart-App (§7)."""
+    """Register the before-request hook on the Quart app (§7)."""
     import quart
     assert isinstance(app, quart.Quart)
     app.before_request(i18n_before_request)
-    # Übersetzungsfunktion als Jinja2-Global bereitstellen
+    # Make translation function available as Jinja2 global
     app.jinja_env.globals["_"] = gettext
     app.jinja_env.globals["get_lang"] = get_lang
-    log.debug("I18N registriert (§7)")
+    log.debug("I18N registered (§7)")

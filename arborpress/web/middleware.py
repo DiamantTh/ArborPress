@@ -1,4 +1,4 @@
-"""Einfaches ASGI-Middleware für Reverse-Proxy-Header."""
+"""Simple ASGI middleware for reverse-proxy headers."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from typing import Any
 
 
 class ReverseProxyMiddleware:
-    """Wertet X-Forwarded-For / X-Forwarded-Proto aus.
+    """Evaluates X-Forwarded-For / X-Forwarded-Proto.
 
-    ``trusted_proxies``: Anzahl der vertrauten Proxy-Hops vom rechten Ende.
+    ``trusted_proxies``: number of trusted proxy hops from the right end.
     """
 
     def __init__(self, app: Any, *, trusted_proxies: int = 1) -> None:
@@ -32,13 +32,13 @@ class ReverseProxyMiddleware:
             if forwarded_host:
                 scope["server"] = (forwarded_host, None)
 
-            # Client-IP: rechte N Einträge aus X-Forwarded-For vertrauen
+            # Client IP: trust the right-most N entries from X-Forwarded-For
             xff = headers.get(b"x-forwarded-for", b"").decode().strip()
             if xff and self.trusted_proxies > 0:
                 ips = [ip.strip() for ip in xff.split(",")]
-                # Das N-te Element von rechts ist die vertrauenswürdige Client-IP
+                # The N-th element from the right is the trusted client IP
                 client_ip = ips[-min(self.trusted_proxies, len(ips))]
-                # Scope: (host, port) – Port aus Original-Client übernehmen
+                # Scope: (host, port) – port taken from original client
                 orig_port = (scope.get("client") or (None, 0))[1]
                 scope["client"] = (client_ip, orig_port)
 

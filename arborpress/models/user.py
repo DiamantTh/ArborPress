@@ -24,7 +24,7 @@ from arborpress.core.db import Base
 
 
 class AccountType(enum.StrEnum):
-    """§4 – zwei klar getrennte Identitätstypen."""
+    """§4 – two clearly separated identity types."""
 
     PUBLIC = "public"       # Federated / Public Account (WebFinger, ActivityPub)
     OPERATIONAL = "operational"  # Admin/Moderation – nicht extern auffindbar
@@ -39,10 +39,10 @@ class UserRole(enum.StrEnum):
 
 
 class User(Base):
-    """Benutzer-Konto.
+    """User account.
 
-    §4: PUBLIC-Konten dürfen ActivityPub-Endpunkte haben.
-        OPERATIONAL-Konten haben keinen WebFinger-Eintrag.
+    §4: PUBLIC accounts may have ActivityPub endpoints.
+        OPERATIONAL accounts have no WebFinger entry.
     """
 
     __tablename__ = "users"
@@ -60,17 +60,17 @@ class User(Base):
         Enum(UserRole), nullable=False, default=UserRole.VIEWER
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    # §2 Break-Glass – nur wenn explizit aktiviert
+    # §2 Break-Glass – only when explicitly enabled
     legacy_password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     legacy_password_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    # §4 Rol-Policy-Flags
+    # §4 Role-policy flags
     require_uv: Mapped[bool] = mapped_column(Boolean, default=False)
     require_stepup: Mapped[bool] = mapped_column(Boolean, default=False)
     sso_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # §5 Federation – opt-out pro Account (auch wenn Instanz federiert)
     federation_opt_out: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # Öffentliches Profil (§4 PUBLIC-Konten, optional)
+    # Public profile (§4 PUBLIC accounts, optional)
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)
     website: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
@@ -88,15 +88,15 @@ class User(Base):
     backup_codes: Mapped[list[BackupCode]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-    # OpenPGP §13 – mehrere Schlüssel pro Nutzer möglich
+    # OpenPGP §13 – multiple keys per user possible
     pgp_keys: Mapped[list[UserPGPKey]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-    # §5 Federation – Schlüsselpaar für HTTP-Signatures, max. 1 pro Nutzer
+    # §5 Federation – keypair for HTTP signatures, max. 1 per user
     actor_keypair: Mapped[ActorKeypair | None] = relationship(
         back_populates="user", cascade="all, delete-orphan", uselist=False
     )
-    # §5 Federation – Follower/Following-Beziehungen
+    # §5 Federation – follower/following relationships
     followers: Mapped[list[Follower]] = relationship(
         "Follower",
         primaryjoin="and_(Follower.local_user_id == User.id, Follower.direction == 'inbound')",
@@ -111,7 +111,7 @@ class User(Base):
         cascade="all, delete-orphan",
         overlaps="followers",
     )
-    # §2 DB-backed Sessions
+    # §2 DB-backed sessions
     sessions: Mapped[list[UserSession]] = relationship(
         "UserSession", back_populates="user", cascade="all, delete-orphan"
     )
@@ -132,7 +132,7 @@ class CredentialTransport(enum.StrEnum):
 
 
 class WebAuthnCredential(Base):
-    """WebAuthn-Credential eines Benutzers (§2 – multiple credentials per account)."""
+    """WebAuthn credential for a user (§2 – multiple credentials per account)."""
 
     __tablename__ = "webauthn_credentials"
 
@@ -142,7 +142,7 @@ class WebAuthnCredential(Base):
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    # Label vom Benutzer vergeben – §2
+    # Label assigned by the user – §2
     label: Mapped[str] = mapped_column(String(128), nullable=False, default="My Key")
     credential_id: Mapped[bytes] = mapped_column(LargeBinary, unique=True, nullable=False)
     public_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
@@ -167,7 +167,7 @@ class MFADeviceType(enum.StrEnum):
 
 
 class MFADevice(Base):
-    """MFA-Gerät (TOTP/HOTP/Plugin-Provider §3)."""
+    """MFA device (TOTP/HOTP/plugin provider §3)."""
 
     __tablename__ = "mfa_devices"
 
@@ -182,7 +182,7 @@ class MFADevice(Base):
     # Encrypted secret (never bare in DB)
     secret_enc: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    # Plugin-Provider-ID (wenn device_type == PLUGIN)
+    # Plugin provider ID (if device_type == PLUGIN)
     plugin_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -190,12 +190,12 @@ class MFADevice(Base):
 
     user: Mapped[User] = relationship(back_populates="mfa_devices")
 
-    # Jedes Label muss pro Nutzer eindeutig sein
+    # Each label must be unique per user
     __table_args__ = (UniqueConstraint("user_id", "label", name="uq_user_mfa_label"),)
 
 
 class BackupCode(Base):
-    """Einmaliger Backup-Code §2 / §3."""
+    """One-time backup code §2 / §3."""
 
     __tablename__ = "backup_codes"
 
@@ -214,19 +214,19 @@ class BackupCode(Base):
 
 
 class UserPGPKey(Base):
-    """OpenPGP-Schlüssel eines Nutzers (§13 – mehrere Schlüssel möglich).
+    """OpenPGP key for a user (§13 – multiple keys possible).
 
-    Ein Nutzer kann mehrere OpenPGP-Schlüsselpaare hinterlegen, z. B.:
-      - privates Schlüsselpaar (für persönliche Mails)
-      - berufliches Schlüsselpaar (für Pressekontakt)
+    A user can register multiple OpenPGP keypairs, e.g.:
+      - private keypair (for personal mail)
+      - professional keypair (for press contact)
 
-    Rollen (nicht exklusiv – ein Schlüssel kann beide Rollen haben):
-      use_for_signing      → ausgehende Mails dieses Nutzers werden damit signiert
-      use_for_encryption   → eingehende Mails an diesen Nutzer werden damit verschlüsselt
+    Roles (non-exclusive – one key can have both roles):
+      use_for_signing      → outgoing mails for this user are signed with it
+      use_for_encryption   → incoming mails to this user are encrypted with it
 
-    Primärer Signierungsschlüssel (is_primary_signing=True):
-      → Es kann immer nur einen geben; beim Setzen eines neuen Primary wird
-        der alte automatisch auf False gesetzt (Application-Layer-Logik).
+    Primary signing key (is_primary_signing=True):
+      → There can always be only one; when setting a new primary, the old
+        one is automatically set to False (application-layer logic).
     """
 
     __tablename__ = "user_pgp_keys"
@@ -237,18 +237,18 @@ class UserPGPKey(Base):
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    # Menschenlesbares Label (z. B. "Privat", "Presse", "Arbeit")
-    label: Mapped[str] = mapped_column(String(128), nullable=False, default="Mein Schlüssel")
-    # ASCII-armored Public Key (BEGIN PGP PUBLIC KEY BLOCK)
+    # Human-readable label (e.g. "Private", "Press", "Work")
+    label: Mapped[str] = mapped_column(String(128), nullable=False, default="My Key")
+    # ASCII-armored public key (BEGIN PGP PUBLIC KEY BLOCK)
     public_key_armored: Mapped[str] = mapped_column(Text, nullable=False)
-    # Fingerprint für schnellen Vergleich / Anzeige (z. B. 40-stellige HEX)
+    # Fingerprint for fast comparison / display (e.g. 40-char HEX)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
-    # Rollen
+    # Roles
     use_for_signing: Mapped[bool] = mapped_column(Boolean, default=True)
     use_for_encryption: Mapped[bool] = mapped_column(Boolean, default=True)
-    # Nur ein Schlüssel kann pro Nutzer der primäre Signierschlüssel sein
+    # Only one key per user can be the primary signing key
     is_primary_signing: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Ablaufdatum (aus dem Schlüssel gelesen – optional)
+    # Expiry date (read from the key – optional)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -257,24 +257,24 @@ class UserPGPKey(Base):
     user: Mapped[User] = relationship(back_populates="pgp_keys")
 
     __table_args__ = (
-        # Pro Nutzer darf ein Fingerprint nur einmal vorkommen
+        # A fingerprint may only appear once per user
         UniqueConstraint("user_id", "fingerprint", name="uq_user_pgp_fingerprint"),
     )
 
 
 # ---------------------------------------------------------------------------
-# §5 Federation – Actor-Schlüsselpaar (HTTP-Signatures)
+# §5 Federation – Actor keypair (HTTP signatures)
 # ---------------------------------------------------------------------------
 
 
 class ActorKeypair(Base):
-    """Ed25519-Schlüsselpaar für ActivityPub HTTP-Signatures (§5) – per Account.
+    """Ed25519 keypair for ActivityPub HTTP signatures (§5) – per account.
 
-    Nur relevant wenn allow_per_account_federation aktiviert ist. Wird automatisch
-    bei Bedarf durch die Web-App generiert – kein manueller Eingriff nötig.
-    Algorithmus: Ed25519 (Standard) oder rsa-sha256 (Legacy via Admin-UI).
-    Verschlüsselt mit Fernet, KEK aus auth.actor_key_enc_key.
-    Rotation: arborpress federation keygen (erzeugt neues Schlüsselpaar)
+    Only relevant when allow_per_account_federation is enabled. Generated
+    automatically by the web app on demand – no manual intervention needed.
+    Algorithm: Ed25519 (default) or rsa-sha256 (legacy via admin UI).
+    Encrypted with Fernet, KEK from auth.actor_key_enc_key.
+    Rotation: arborpress federation keygen (generates a new keypair)
     """
 
     __tablename__ = "actor_keypairs"
@@ -285,13 +285,13 @@ class ActorKeypair(Base):
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True
     )
-    # Schlüssel-ID-URL (z. B. https://example.com/ap/actor/alice#main-key)
+    # Key ID URL (e.g. https://example.com/ap/actor/alice#main-key)
     key_id_url: Mapped[str] = mapped_column(String(512), nullable=False)
-    # PEM-kodierter öffentlicher Schlüssel (RSA ≥ 2048 oder Ed25519)
+    # PEM-encoded public key (RSA ≥ 2048 or Ed25519)
     public_key_pem: Mapped[str] = mapped_column(Text, nullable=False)
-    # Verschlüsselter privater Schlüssel (Bytes, Fernet-verschlüsselt)
+    # Encrypted private key (bytes, Fernet-encrypted)
     private_key_enc: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    # Algorithmus: "ed25519" (Standard, breit unterstützt) oder "rsa-sha256" (Legacy)
+    # Algorithm: "ed25519" (default, widely supported) or "rsa-sha256" (legacy)
     algorithm: Mapped[str] = mapped_column(String(32), nullable=False, default="ed25519")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -301,27 +301,27 @@ class ActorKeypair(Base):
 
 
 class InstanceKeypair(Base):
-    """Ed25519-Schlüsselpaar des Blog-Actors (§5 – Instanzebene).
+    """Ed25519 keypair for the blog actor (§5 – instance level).
 
-    Die ArborPress-Instanz selbst ist der primäre ActivityPub-Actor
-    (vergleichbar mit dem WordPress-ActivityPub-Plugin). Dieser Schlüssel
-    steht unter `https://<base>/ap/actor#main-key`.
+    The ArborPress instance itself is the primary ActivityPub actor
+    (comparable to the WordPress ActivityPub plugin). This key is located
+    at `https://<base>/ap/actor#main-key`.
 
-    Singleton-Tabelle (id = 1 immer). Per-Account-Schlüssel → ActorKeypair.
-    Verschlüsselung: Fernet, KEK aus auth.actor_key_enc_key.
+    Singleton table (id = 1 always). Per-account keys → ActorKeypair.
+    Encryption: Fernet, KEK from auth.actor_key_enc_key.
     Rotation: arborpress federation keygen --force
     """
 
     __tablename__ = "instance_keypair"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
-    # Schlüssel-ID-URL  z. B. https://example.com/ap/actor#main-key
+    # Key ID URL e.g. https://example.com/ap/actor#main-key
     key_id_url: Mapped[str] = mapped_column(String(512), nullable=False)
-    # PEM-kodierter öffentlicher Schlüssel
+    # PEM-encoded public key
     public_key_pem: Mapped[str] = mapped_column(Text, nullable=False)
-    # Fernet-verschlüsselter privater Schlüssel
+    # Fernet-encrypted private key
     private_key_enc: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    # "ed25519" (Standard) oder "rsa-sha256" (Legacy)
+    # "ed25519" (default) or "rsa-sha256" (legacy)
     algorithm: Mapped[str] = mapped_column(String(32), nullable=False, default="ed25519")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -334,27 +334,27 @@ class InstanceKeypair(Base):
 
 
 class FollowerDirection(enum.StrEnum):
-    INBOUND  = "inbound"   # Jemand folgt diesem Account (Follower)
-    OUTBOUND = "outbound"  # Dieser Account folgt jemandem (Following)
+    INBOUND  = "inbound"   # Someone follows this account (follower)
+    OUTBOUND = "outbound"  # This account follows someone (following)
 
 
 class FollowerState(enum.StrEnum):
-    PENDING  = "pending"   # Follow-Anfrage noch nicht bestätigt
-    ACCEPTED = "accepted"  # Follow aktiv
-    REJECTED = "rejected"  # Abgelehnt / blockiert
-    UNDONE   = "undone"    # Unfollow – historischer Eintrag behalten
+    PENDING  = "pending"   # Follow request not yet confirmed
+    ACCEPTED = "accepted"  # Follow active
+    REJECTED = "rejected"  # Declined / blocked
+    UNDONE   = "undone"    # Unfollow – historical entry retained
 
 
 class Follower(Base):
-    """ActivityPub Follow-Beziehung (§5).
+    """ActivityPub Follow relationship (§5).
 
-    Speichert sowohl eingehende (jemand folgt uns) als auch
-    ausgehende (wir folgen jemandem) Follow-Beziehungen.
+    Stores both inbound (someone follows us) and outbound
+    (we follow someone) follow relationships.
 
-    Für inbound:  local_user_id = der verfolgte lokale Account
-                  remote_actor_uri = URI des Followers
-    Für outbound: local_user_id = der folgende lokale Account
-                  remote_actor_uri = URI des gefolgten Accounts
+    For inbound:  local_user_id = the followed local account
+                  remote_actor_uri = URI of the follower
+    For outbound: local_user_id = the following local account
+                  remote_actor_uri = URI of the followed account
     """
 
     __tablename__ = "ap_followers"
@@ -365,11 +365,11 @@ class Follower(Base):
     local_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    # Vollständige URI des Remote-Actors (z. B. https://mastodon.social/users/bob)
+    # Full URI of the remote actor (e.g. https://mastodon.social/users/bob)
     remote_actor_uri: Mapped[str] = mapped_column(String(2048), nullable=False)
-    # Anzeigename (optional, aus Actor-Dokument gecacht)
+    # Display name (optional, cached from actor document)
     remote_display_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
-    # Inbox-URI des Remote-Actors (für Sends)
+    # Inbox URI of the remote actor (for sends)
     remote_inbox_uri: Mapped[str | None] = mapped_column(String(2048), nullable=True)
 
     direction: Mapped[FollowerDirection] = mapped_column(
@@ -379,7 +379,7 @@ class Follower(Base):
         Enum(FollowerState), nullable=False, default=FollowerState.PENDING
     )
 
-    # ID der Follow-Aktivität (für Undo/Accept-Referenz)
+    # ID of the Follow activity (for Undo/Accept reference)
     activity_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -394,7 +394,7 @@ class Follower(Base):
     )
 
     __table_args__ = (
-        # Ein Remote-Actor kann einem lokalen Account nur einmal pro Richtung folgen
+        # A remote actor can follow a local account only once per direction
         UniqueConstraint(
             "local_user_id", "remote_actor_uri", "direction",
             name="uq_follower_local_remote_dir",
@@ -408,11 +408,11 @@ class Follower(Base):
 
 
 class UserSession(Base):
-    """Server-seitige Sitzung – ergänzt das signierte Quart-Cookie.
+    """Server-side session – supplements the signed Quart cookie.
 
-    Das Cookie enthält nur die ``session_id`` (UUID). Alle Metadaten
-    (IP, User-Agent, TLS, Ablaufzeit) werden hier gespeichert.
-    Invalidierung: ``is_valid = False`` + Session-Cookie leeren.
+    The cookie only contains the ``session_id`` (UUID). All metadata
+    (IP, user agent, TLS, expiry) is stored here.
+    Invalidation: ``is_valid = False`` + clear session cookie.
     """
 
     __tablename__ = "user_sessions"

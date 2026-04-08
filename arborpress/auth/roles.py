@@ -1,14 +1,14 @@
-"""Rollenbasierte Zugriffskontrolle – RBAC-Hilfsfunktionen (§4).
+"""Role-based access control – RBAC helpers (§4).
 
-Rollen-Hierarchie (aufsteigend):
+Role hierarchy (ascending):
   viewer < author < editor < admin
 
-Verwendung in Route-Handlern::
+Usage in route handlers::
 
     from arborpress.auth.roles import require_role
-    require_role("editor")   # wirft 403 wenn unter editor
+    require_role("editor")   # raises 403 if below editor
 
-Im Jinja2-Template (über Jinja-Global ``has_role``)::
+In Jinja2 templates (via Jinja global ``has_role``)::
 
     {% if has_role("admin") %} … {% endif %}
 """
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from quart import abort, session
 
-# Rollen in aufsteigender Berechtigung (höherer Wert = mehr Rechte).
+# Roles in ascending permission order (higher value = more privileges).
 ROLE_ORDER: dict[str, int] = {
     "viewer": 0,
     "author": 1,
@@ -27,9 +27,9 @@ ROLE_ORDER: dict[str, int] = {
 
 
 def require_role(min_role: str) -> None:
-    """Bricht mit HTTP 403 ab, wenn die Session-Rolle unter *min_role* liegt.
+    """Abort with HTTP 403 if the session role is below *min_role*.
 
-    Muss nach einem Session-Guard aufgerufen werden, der `user_id` prüft.
+    Must be called after a session guard that checks `user_id`.
     """
     current = session.get("user_role", "viewer")
     if ROLE_ORDER.get(current, 0) < ROLE_ORDER.get(min_role, 99):
@@ -37,9 +37,9 @@ def require_role(min_role: str) -> None:
 
 
 def has_min_role(min_role: str) -> bool:
-    """True wenn die aktuelle Session-Rolle >= *min_role* ist.
+    """True if the current session role >= *min_role*.
 
-    Gedacht für Jinja2-Templates (wird via `app.jinja_env.globals` registriert).
+    Intended for Jinja2 templates (registered via `app.jinja_env.globals`).
     """
     current = session.get("user_role", "viewer")
     return ROLE_ORDER.get(current, 0) >= ROLE_ORDER.get(min_role, 0)

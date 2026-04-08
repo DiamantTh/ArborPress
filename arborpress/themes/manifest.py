@@ -1,6 +1,6 @@
-"""Theme-Manifest-Schema, Validierung und Loader (§9).
+"""Theme manifest schema, validation and loader (§9).
 
-Jedes Theme liegt in ``arborpress/themes/<id>/`` mit einer ``theme.toml``:
+Each theme lives in ``arborpress/themes/<id>/`` with a ``theme.toml``:
 
     [theme]
     id          = "my-theme"
@@ -14,12 +14,12 @@ Jedes Theme liegt in ``arborpress/themes/<id>/`` mit einer ``theme.toml``:
     code_highlight    = true
     reading_time      = true
 
-    [assets]           # optional, falls Custom-JS/CSS neben style.css
+    [assets]           # optional, if custom JS/CSS alongside style.css
     css   = []
     js    = []
 
     [overrides]
-    templates = []     # nur öffentliche Templates – NIE Login/Security (§9)
+    templates = []     # public templates only – NEVER login/security (§9)
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field, field_validator
 
 log = logging.getLogger("arborpress.themes")
 
-# Seiten die NIE durch Themes überschrieben werden dürfen (§9)
+# Pages that MUST NEVER be overridden by themes (§9)
 _PROTECTED_TEMPLATES: frozenset[str] = frozenset({
     "auth/login.html",
     "auth/register.html",
@@ -42,7 +42,7 @@ _PROTECTED_TEMPLATES: frozenset[str] = frozenset({
     "admin/mfa.html",
 })
 
-# Verzeichnis aller eingebauten Themes
+# Directory of all built-in themes
 _BUILTIN_THEMES_DIR = Path(__file__).parent
 
 
@@ -69,7 +69,7 @@ class ThemeOverrides(BaseModel):
         forbidden = [t for t in v if t in _PROTECTED_TEMPLATES]
         if forbidden:
             raise ValueError(
-                f"Theme darf folgende Templates nicht überschreiben: {forbidden}"
+                f"Theme must not override these templates: {forbidden}"
             )
         return v
 
@@ -85,8 +85,8 @@ class ThemeMeta(BaseModel):
     url:              str = ""
     preview:          str = "preview.png"
     features:         ThemeFeatures = Field(default_factory=ThemeFeatures)
-    dark_companion:   str | None = None  # ID des zugehörigen Dark-Themes
-    light_companion:  str | None = None  # ID des zugehörigen Light-Themes (für Dark-Themes)
+    dark_companion:   str | None = None  # ID of the associated dark theme
+    light_companion:  str | None = None  # ID of the associated light theme (for dark themes)
 
 
 class ThemeManifest(BaseModel):
@@ -94,7 +94,7 @@ class ThemeManifest(BaseModel):
     assets:    ThemeAssets    = Field(default_factory=ThemeAssets)
     overrides: ThemeOverrides = Field(default_factory=ThemeOverrides)
 
-    # Pfad-Felder, nicht aus TOML – werden vom Loader gesetzt
+    # Path fields, not from TOML – set by the loader
     _path: Path | None = None
 
     @classmethod
@@ -106,7 +106,7 @@ class ThemeManifest(BaseModel):
         return obj
 
     # ------------------------------------------------------------------
-    # Komfort-Properties
+    # Convenience properties
     # ------------------------------------------------------------------
 
     @property
@@ -115,12 +115,12 @@ class ThemeManifest(BaseModel):
 
     @property
     def css_url(self) -> str:
-        """Haupt-CSS-URL für dieses Theme.
+        """Main CSS URL for this theme.
 
-        Full-Themes (default, minimal, dark, …) legen ihr CSS unter
-        ``static/css/style.css`` ab; Saison-Themes direkt unter
-        ``static/style.css``.  Wir wählen den Pfad nach tatsächlicher
-        Existenz der Datei; fällt sonst auf den flachen Pfad zurück.
+        Full themes (default, minimal, dark, …) store their CSS under
+        ``static/css/style.css``; seasonal themes directly under
+        ``static/style.css``.  We select the path based on actual file
+        existence; otherwise falls back to the flat path.
         """
         if self._path:
             if (self._path / "static" / "css" / "style.css").exists():
@@ -140,7 +140,7 @@ class ThemeManifest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Theme-Registry / Loader
+# Theme registry / loader
 # ---------------------------------------------------------------------------
 
 
@@ -151,28 +151,28 @@ def _scan_dir(directory: Path) -> dict[str, ThemeManifest]:
             m = ThemeManifest.from_file(toml_file)
             themes[m.theme.id] = m
         except Exception as exc:
-            log.warning("Ungültiges Theme in %s: %s", toml_file, exc)
+            log.warning("Invalid theme in %s: %s", toml_file, exc)
     return themes
 
 
 class ThemeRegistry:
-    """Lädt und verwaltet alle verfügbaren Themes."""
+    """Loads and manages all available themes."""
 
     def __init__(self) -> None:
         self._themes: dict[str, ThemeManifest] = {}
         self._loaded = False
 
     def load(self, extra_dirs: list[Path] | None = None) -> None:
-        # Externe Themes zuerst einlesen (niedrigere Priorität)
+        # Load external themes first (lower priority)
         merged: dict[str, ThemeManifest] = {}
         for d in (extra_dirs or []):
             merged.update(_scan_dir(d))
-        # Eingebaute Themes überschreiben externe mit gleicher ID
-        # (stellt sicher, dass Built-in-Themes vollständig inkl. CSS bleiben)
+        # Built-in themes override external ones with the same ID
+        # (ensures built-in themes remain complete including CSS)
         merged.update(_scan_dir(_BUILTIN_THEMES_DIR))
         self._themes = merged
         self._loaded = True
-        log.debug("Themes geladen: %s", list(self._themes))
+        log.debug("Themes loaded: %s", list(self._themes))
 
     def all(self) -> list[ThemeManifest]:
         return list(self._themes.values())
@@ -185,10 +185,10 @@ class ThemeRegistry:
     def get_or_default(self, theme_id: str) -> ThemeManifest:
         m = self.get(theme_id)
         if m is None:
-            log.warning("Theme '%s' nicht gefunden, nutze 'default'.", theme_id)
+            log.warning("Theme '%s' not found, using 'default'.", theme_id)
             m = self.get("default")
         if m is None:
-            raise RuntimeError("Kein Theme verfügbar (weder angefragt noch 'default').")
+            raise RuntimeError("No theme available (neither requested nor 'default').")
         return m
 
 
@@ -199,7 +199,7 @@ def get_theme_registry() -> ThemeRegistry:
     global _registry
     if _registry is None:
         _registry = ThemeRegistry()
-        # Externe Themes aus content/themes/ einlesen
+        # Load external themes from content/themes/
         extra: list[Path] = []
         external = Path("content/themes")
         if external.is_dir():
@@ -209,7 +209,7 @@ def get_theme_registry() -> ThemeRegistry:
 
 
 def get_active_theme() -> ThemeManifest:
-    """Gibt das aktive Theme zurück (aus DB-Settings oder Fallback 'default')."""
+    """Return the active theme (from DB settings or fallback 'default')."""
     from arborpress.core.site_settings import get_cached, get_defaults
     theme_s = get_cached("theme") or get_defaults("theme")
     theme_id = theme_s.get("active", "default") or "default"

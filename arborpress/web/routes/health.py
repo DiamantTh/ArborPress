@@ -12,7 +12,7 @@ async def health() -> tuple:
 
 @health_bp.get("/_ready")
 async def ready() -> tuple:
-    """Readiness-Check: prüft DB-Verbindung (§12)."""
+    """Readiness check: validates DB connection (§12)."""
     try:
         from sqlalchemy import text
 

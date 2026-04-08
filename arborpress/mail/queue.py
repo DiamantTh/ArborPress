@@ -34,9 +34,9 @@ async def enqueue_mail(
     body_html: str | None = None,
     idempotency_key: str | None = None,
 ) -> str:
-    """Reiht eine Mail in die Warteschlange ein (§13 async outbox).
+    """Enqueues a mail in the outbox (§13 async outbox).
 
-    Gibt die ID des Queue-Eintrags zurück.
+    Returns the ID of the queue entry.
     """
     from arborpress.core.db import get_session_factory
     from arborpress.models.mail import MailQueue, MailStatus
@@ -70,9 +70,9 @@ async def enqueue_mail(
 
 
 async def process_queue(batch_size: int = 10) -> int:
-    """Verarbeitet ausstehende Mails aus der Queue (§13).
+    """Processes pending mails from the queue (§13).
 
-    Gibt Anzahl erfolgreich gesendeter Mails zurück.
+    Returns the count of successfully sent mails.
     """
     from sqlalchemy import select
 
@@ -120,11 +120,11 @@ async def process_queue(batch_size: int = 10) -> int:
                 sent += 1
             except Exception as exc:
                 entry.attempts += 1
-                entry.last_error = str(exc)[:512]  # §13: kein sensibles Logging
+                entry.last_error = str(exc)[:512]  # §13: no sensitive logging
                 if entry.attempts >= max_retries:
                     entry.status = MailStatus.FAILED
                 else:
-                    # Exponentielles Backoff
+                    # Exponential backoff
                     delay = retry_backoff_base * int(math.pow(2, entry.attempts - 1))
                     entry.next_attempt_at = datetime.utcnow() + timedelta(seconds=delay)
                 log.warning("Mail send failed (attempt %d): %s", entry.attempts, exc)
@@ -135,13 +135,13 @@ async def process_queue(batch_size: int = 10) -> int:
 
 
 async def run_queue_worker(interval: int = 30) -> None:
-    """Dauerhafter Background-Worker (für CLI-Befehl / Quart-Startup)."""
-    log.info("Mail-Queue-Worker gestartet (Intervall: %ds)", interval)
+    """Persistent background worker (for CLI command / Quart startup)."""
+    log.info("Mail queue worker started (interval: %ds)", interval)
     while True:
         try:
             sent = await process_queue()
             if sent:
-                log.info("Mail-Queue: %d Mails gesendet", sent)
+                log.info("Mail queue: %d mail(s) sent", sent)
         except Exception as exc:
-            log.error("Mail-Queue-Worker Fehler: %s", exc)
+            log.error("Mail queue worker error: %s", exc)
         await asyncio.sleep(interval)

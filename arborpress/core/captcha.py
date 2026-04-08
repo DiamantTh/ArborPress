@@ -1,19 +1,19 @@
-"""Captcha-Modul – unterstützt mehrere Anbieter (§-Kommentar-System).
+"""Captcha module – supports multiple providers (§ comment system).
 
-Unterstützte Typen (CaptchaType):
-  none             – kein Captcha
-  math             – eingebaute Rechenaufgabe (a + b)
-  custom           – eigene Fragen aus Admin-Interface (Fallback → math)
-  hcaptcha         – hCaptcha (GDPR-freundlich, EU-Nutzung möglich)
-  friendly_captcha – Friendly Captcha (Deutschland, EU-hosted, PoW, keine Interaktion)
-  altcha           – ALTCHA (Open Source, selbstgehostet, PoW, MIT)
-  mcaptcha         – mCaptcha (selbstgehostet, Open Source, AGPL)
-  mosparo          – mosparo (Schweiz, EFTA, Open Source, MIT)
+Supported types (CaptchaType):
+  none             – no captcha
+  math             – built-in arithmetic challenge (a + b)
+  custom           – custom questions from admin interface (fallback → math)
+  hcaptcha         – hCaptcha (GDPR-friendly, EU usage possible)
+  friendly_captcha – Friendly Captcha (Germany, EU-hosted, PoW, no interaction)
+  altcha           – ALTCHA (open source, self-hosted, PoW, MIT)
+  mcaptcha         – mCaptcha (self-hosted, open source, AGPL)
+  mosparo          – mosparo (Switzerland, EFTA, open source, MIT)
   turnstile        – Cloudflare Turnstile
 
-Alle Verifikationsfunktionen sind async, damit externe API-Aufrufe nicht blocken.
+All verification functions are async so external API calls do not block.
 
-Öffentliche API:
+Public API:
   get_effective_captcha_type(post_captcha_type, captcha_section) -> CaptchaType
   verify_captcha(captcha_type, form, captcha_section) -> (ok: bool, error: str)
   get_captcha_challenge(captcha_type, captcha_section) -> dict   # template context
@@ -47,17 +47,17 @@ class CaptchaType(enum.StrEnum):
     TURNSTILE        = "turnstile"
 
 # ---------------------------------------------------------------------------
-# Hilfsfunktionen
+# Helper functions
 # ---------------------------------------------------------------------------
 
 def get_effective_captcha_type(
     post_captcha_type: str | None,
     captcha_section: dict,
 ) -> CaptchaType:
-    """Gibt den effektiven CaptchaType zurück.
+    """Return the effective CaptchaType.
 
-    Per-Post-Override hat Vorrang vor dem globalen Standard.
-    Falls custom_questions leer ist und Typ=custom, fällt das System auf math zurück.
+    Per-post override takes precedence over the global default.
+    Falls back to math if type=custom but custom_questions is empty.
     """
     default = captcha_section.get("default_type", CaptchaType.CUSTOM.value)
     if post_captcha_type:
@@ -76,25 +76,25 @@ def get_effective_captcha_type(
 
 
 def _random_question(captcha_section: dict) -> tuple[int, dict]:
-    """Wählt eine zufällige eigene Frage aus.
+    """Pick a random custom question.
 
-    Gibt (index, {"q": ..., "a": ...}) zurück.
+    Returns (index, {"q": ..., "a": ...}).
     """
     questions = captcha_section.get("custom_questions", [])
     if not questions:
-        raise ValueError("Keine Custom-Fragen konfiguriert.")
+        raise ValueError("No custom questions configured.")
     idx = secrets.randbelow(len(questions))
     return idx, questions[idx]
 
 
 # ---------------------------------------------------------------------------
-# Challenge erzeugen (für Template-Rendering)
+# Challenge creation (for template rendering)
 # ---------------------------------------------------------------------------
 
 def get_captcha_challenge(captcha_type: CaptchaType, captcha_section: dict) -> dict:
-    """Erzeugt Template-Kontext für den gewählten Captcha-Typ.
+    """Build template context for the chosen captcha type.
 
-    Rückgabe-Keys (je nach Typ):
+    Returned keys (depending on type):
       type, site_key, question, question_index, math_a, math_b
     """
     ctx: dict = {"type": captcha_type.value}
@@ -133,7 +133,7 @@ def get_captcha_challenge(captcha_type: CaptchaType, captcha_section: dict) -> d
 
 
 # ---------------------------------------------------------------------------
-# Verifikation
+# Verification
 # ---------------------------------------------------------------------------
 
 async def verify_captcha(
@@ -141,10 +141,10 @@ async def verify_captcha(
     form: dict,
     captcha_section: dict,
 ) -> tuple[bool, str]:
-    """Prüft das eingereichte Captcha.
+    """Verify the submitted captcha.
 
-    Gibt (True, "") bei Erfolg zurück,
-    (False, "Fehlermeldung") bei Fehler.
+    Returns (True, "") on success,
+    (False, "error message") on failure.
     """
     if captcha_type == CaptchaType.NONE:
         return True, ""
@@ -177,27 +177,27 @@ async def verify_captcha(
 
 
 # ---------------------------------------------------------------------------
-# Eingebaute Verifizierer
+# Built-in verifiers
 # ---------------------------------------------------------------------------
 
 def _verify_math(form: dict) -> tuple[bool, str]:
-    """Prüft a + b = answer."""
+    """Verify a + b = answer."""
     try:
         a = int(form.get("captcha_a", ""))
         b = int(form.get("captcha_b", ""))
         answer = int(form.get("captcha_answer", ""))
     except (ValueError, TypeError):
-        return False, "Bitte löse die Rechenaufgabe."
+        return False, "Please solve the arithmetic challenge."
     if a + b != answer:
-        return False, "Die Antwort auf die Rechenaufgabe ist leider falsch."
+        return False, "The answer to the arithmetic challenge is incorrect."
     return True, ""
 
 
 def _verify_custom(form: dict, captcha_section: dict) -> tuple[bool, str]:
-    """Prüft eine eigene Frage anhand des gespeicherten Index."""
+    """Verify a custom question using the stored index."""
     questions = captcha_section.get("custom_questions", [])
     if not questions:
-        return _verify_math(form)  # Fallback
+        return _verify_math(form)  # fallback
 
     try:
         idx = int(form.get("captcha_qi", ""))
@@ -205,11 +205,11 @@ def _verify_custom(form: dict, captcha_section: dict) -> tuple[bool, str]:
             raise ValueError("Index out of range")
         expected = questions[idx]["a"].strip().lower()
     except (ValueError, TypeError, KeyError, IndexError):
-        return False, "Ungültige Frage – bitte Seite neu laden."
+        return False, "Invalid question – please reload the page."
 
     given = (form.get("captcha_answer") or "").strip().lower()
     if not given or given != expected:
-        return False, "Die Antwort auf die Sicherheitsfrage ist leider falsch."
+        return False, "The answer to the security question is incorrect."
     return True, ""
 
 
@@ -218,7 +218,7 @@ def _verify_custom(form: dict, captcha_section: dict) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 def _altcha_create_challenge(captcha_section: dict) -> dict:
-    """Erstellt eine ALTCHA-Herausforderung (SHA-256, HMAC-signiert)."""
+    """Create an ALTCHA challenge (SHA-256, HMAC-signed)."""
     max_number = captcha_section.get("altcha_max_number", 1_000_000)
     algorithm  = captcha_section.get("altcha_algorithm", "SHA-256")
     hmac_key   = captcha_section.get("altcha_hmac_key", "")
@@ -241,7 +241,7 @@ def _altcha_create_challenge(captcha_section: dict) -> dict:
 
 
 def _verify_altcha(form: dict, captcha_section: dict) -> tuple[bool, str]:
-    """Prüft eine ALTCHA-Lösung (base64-JSON-Payload im field 'altcha')."""
+    """Verify an ALTCHA solution (base64 JSON payload in field 'altcha')."""
     import base64
 
     max_number = captcha_section.get("altcha_max_number", 1_000_000)
@@ -249,7 +249,7 @@ def _verify_altcha(form: dict, captcha_section: dict) -> tuple[bool, str]:
 
     raw = form.get("altcha", "")
     if not raw:
-        return False, "Bitte das Captcha lösen."
+        return False, "Please solve the captcha."
 
     try:
         payload   = json.loads(base64.b64decode(raw))
@@ -259,14 +259,14 @@ def _verify_altcha(form: dict, captcha_section: dict) -> tuple[bool, str]:
         number    = int(payload["number"])
         sig       = payload["signature"]
     except Exception:
-        return False, "Ungültige Captcha-Lösung."
+        return False, "Invalid captcha solution."
 
-    # Challenge neu berechnen und vergleichen
+    # Recompute and compare challenge
     computed = hashlib.sha256(f"{salt}{number}".encode()).hexdigest()
     if computed != challenge:
-        return False, "Captcha-Prüfung fehlgeschlagen (challenge)."
+        return False, "Captcha verification failed (challenge)."
 
-    # Signatur prüfen
+    # Verify signature
     key = hmac_key.encode()
     expected_sig = hmac.new(
         key,
@@ -274,22 +274,22 @@ def _verify_altcha(form: dict, captcha_section: dict) -> tuple[bool, str]:
         hashlib.sha256,
     ).hexdigest()
     if not hmac.compare_digest(sig, expected_sig):
-        return False, "Captcha-Signatur ungültig."
+        return False, "Captcha signature invalid."
 
     return True, ""
 
 
 # ---------------------------------------------------------------------------
-# Externe Anbieter (HTTP-Calls)
+# External providers (HTTP calls)
 # ---------------------------------------------------------------------------
 
 async def _http_post_form(url: str, data: dict) -> dict:
-    """Hilfsfunktion: POST x-www-form-urlencoded → JSON."""
+    """Helper: POST x-www-form-urlencoded → JSON."""
     try:
         import aiohttp
     except ImportError:
-        log.warning("aiohttp nicht installiert – Captcha-Verifikation übersprungen.")
-        return {"success": True}  # fail-open wenn keine Netzwerk-Library
+        log.warning("aiohttp not installed – captcha verification skipped.")
+        return {"success": True}  # fail-open when no network library available
 
     async with aiohttp.ClientSession() as session:
         async with session.post(url, data=data, timeout=aiohttp.ClientTimeout(total=8)) as resp:
@@ -297,10 +297,10 @@ async def _http_post_form(url: str, data: dict) -> dict:
 
 
 async def _verify_hcaptcha(form: dict, captcha_section: dict) -> tuple[bool, str]:
-    """hCaptcha-Serververifikation."""
+    """hCaptcha server-side verification."""
     token = form.get("h-captcha-response", "")
     if not token:
-        return False, "Bitte das hCaptcha lösen."
+        return False, "Please solve the hCaptcha."
     resp = await _http_post_form(
         captcha_section.get("hcaptcha_verify_url", "https://hcaptcha.com/siteverify"),
         {
@@ -310,15 +310,15 @@ async def _verify_hcaptcha(form: dict, captcha_section: dict) -> tuple[bool, str
     )
     if resp.get("success"):
         return True, ""
-    errors = ", ".join(resp.get("error-codes", ["unbekannt"]))
-    return False, f"hCaptcha-Fehler: {errors}."
+    errors = ", ".join(resp.get("error-codes", ["unknown"]))
+    return False, f"hCaptcha error: {errors}."
 
 
 async def _verify_friendly(form: dict, captcha_section: dict) -> tuple[bool, str]:
-    """Friendly Captcha v2 Serververifikation."""
+    """Friendly Captcha v2 server-side verification."""
     token = form.get("frc-captcha-response", "")
     if not token:
-        return False, "Bitte das Friendly Captcha lösen."
+        return False, "Please solve the Friendly Captcha."
     try:
         import aiohttp
         async with aiohttp.ClientSession() as session:
@@ -335,18 +335,18 @@ async def _verify_friendly(form: dict, captcha_section: dict) -> tuple[bool, str
     except ImportError:
         return True, ""  # fail-open
     except Exception as exc:
-        log.warning("Friendly Captcha Fehler: %s", exc)
-        return False, "Captcha-Prüfung fehlgeschlagen."
+        log.warning("Friendly Captcha error: %s", exc)
+        return False, "Captcha verification failed."
     if data.get("success"):
         return True, ""
-    return False, "Friendly Captcha nicht gelöst."
+    return False, "Friendly Captcha not solved."
 
 
 async def _verify_mcaptcha(form: dict, captcha_section: dict) -> tuple[bool, str]:
-    """mCaptcha Serververifikation (selbstgehostete Instanz)."""
+    """mCaptcha server-side verification (self-hosted instance)."""
     token = form.get("mcaptcha__token", "")
     if not token:
-        return False, "Bitte das mCaptcha lösen."
+        return False, "Please solve the mCaptcha."
     verify_url = captcha_section.get("mcaptcha_url", "").rstrip("/") + "/api/v1/pow/siteverify"
     resp = await _http_post_form(verify_url, {
         "token":  token,
@@ -355,18 +355,18 @@ async def _verify_mcaptcha(form: dict, captcha_section: dict) -> tuple[bool, str
     })
     if resp.get("valid"):
         return True, ""
-    return False, "mCaptcha nicht gelöst."
+    return False, "mCaptcha not solved."
 
 
 async def _verify_mosparo(form: dict, captcha_section: dict) -> tuple[bool, str]:
-    """mosparo Serververifikation."""
+    """mosparo server-side verification."""
     submit_token     = form.get("_mosparo_submitToken", "")
     validation_token = form.get("_mosparo_validationToken", "")
     if not submit_token or not validation_token:
-        return False, "Bitte das mosparo-Formular korrekt ausfüllen."
+        return False, "Please fill in the mosparo form correctly."
     try:
         import aiohttp
-        # Signatur erstellen (HMAC-SHA256 über submitToken:validationToken)
+        # Build signature (HMAC-SHA256 over submitToken:validationToken)
         private_key = captcha_section.get("mosparo_private_key", "")
         sig = hmac.new(
             private_key.encode(),
@@ -385,18 +385,18 @@ async def _verify_mosparo(form: dict, captcha_section: dict) -> tuple[bool, str]
     except ImportError:
         return True, ""
     except Exception as exc:
-        log.warning("mosparo Fehler: %s", exc)
-        return False, "Captcha-Prüfung fehlgeschlagen."
+        log.warning("mosparo error: %s", exc)
+        return False, "Captcha verification failed."
     if data.get("valid"):
         return True, ""
-    return False, "mosparo-Prüfung fehlgeschlagen."
+    return False, "mosparo verification failed."
 
 
 async def _verify_turnstile(form: dict, captcha_section: dict) -> tuple[bool, str]:
-    """Cloudflare Turnstile Serververifikation."""
+    """Cloudflare Turnstile server-side verification."""
     token = form.get("cf-turnstile-response", "")
     if not token:
-        return False, "Bitte das Captcha lösen."
+        return False, "Please solve the captcha."
     resp = await _http_post_form(
         captcha_section.get("turnstile_verify_url", "https://challenges.cloudflare.com/turnstile/v0/siteverify"),
         {
@@ -406,5 +406,5 @@ async def _verify_turnstile(form: dict, captcha_section: dict) -> tuple[bool, st
     )
     if resp.get("success"):
         return True, ""
-    errors = ", ".join(resp.get("error-codes", ["unbekannt"]))
-    return False, f"Turnstile-Fehler: {errors}."
+    errors = ", ".join(resp.get("error-codes", ["unknown"]))
+    return False, f"Turnstile error: {errors}."

@@ -1,6 +1,6 @@
-"""Plugin-Manifest-Schema und Validierung (Spec §15).
+"""Plugin manifest schema and validation (spec §15).
 
-Jedes Plugin liefert eine ``manifest.toml`` mit mindestens:
+Each plugin provides a ``manifest.toml`` with at least:
 
     [plugin]
     id          = "my_plugin"
@@ -22,7 +22,7 @@ from pydantic import BaseModel, field_validator
 
 from arborpress.plugins.capabilities import Capability
 
-# Mindest-Core-Versionsformat: "MAJOR.MINOR.PATCH"
+# Minimum core version format: "MAJOR.MINOR.PATCH"
 _SEMVER_RE = r"^\d+\.\d+\.\d+$"
 
 
@@ -40,7 +40,7 @@ class PluginMeta(BaseModel):
     @classmethod
     def _validate_id(cls, v: str) -> str:
         if not v.replace("_", "").replace("-", "").isalnum():
-            raise ValueError(f"Plugin-ID darf nur Buchstaben, Zahlen, - und _ enthalten: {v!r}")
+            raise ValueError(f"Plugin ID may only contain letters, digits, - and _: {v!r}")
         return v
 
     @field_validator("capabilities", mode="before")
@@ -50,11 +50,11 @@ class PluginMeta(BaseModel):
             return [Capability(c) for c in v]
         except ValueError as exc:
             known = [c.value for c in Capability]
-            raise ValueError(f"Unbekannte Capability. Bekannte: {known}") from exc
+            raise ValueError(f"Unknown capability. Known values: {known}") from exc
 
 
 class EntryPoints(BaseModel):
-    """Optionale Entry-Points pro Capability (Klassen- oder Funktionspfad)."""
+    """Optional entry points per capability (class or function path)."""
 
     mfa_provider: str | None = None
     auth_provider: str | None = None
@@ -63,7 +63,7 @@ class EntryPoints(BaseModel):
     federation_extension: str | None = None
     comments_extension: str | None = None
     mail_backend: str | None = None
-    # CLI-Erweiterungsmodul (optional)
+    # CLI extension module (optional)
     cli: str | None = None
 
 
@@ -78,7 +78,7 @@ class PluginManifest(BaseModel):
         return cls.model_validate(data)
 
     def validate_entry_points(self) -> list[str]:
-        """Gibt fehlende Entry-Points für deklarierte Capabilities zurück."""
+        """Return missing entry points for declared capabilities."""
         missing: list[str] = []
         ep_data = self.entry_points.model_dump()
         for cap in self.plugin.capabilities:

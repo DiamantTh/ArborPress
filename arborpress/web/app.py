@@ -1,4 +1,4 @@
-"""Quart-Applikations-Factory (komplett §0–§17)."""
+"""Quart application factory (complete §0–§17)."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from arborpress.web.routes.public import public_bp
 from arborpress.web.routes.sso import sso_bp
 from arborpress.web.security import SecurityHeadersMiddleware
 
-# Paket-Root = arborpress/
+# Package root = arborpress/
 _PKG_ROOT = Path(__file__).parent.parent
 
 
@@ -36,26 +36,26 @@ def create_app() -> Quart:
     )
     app.secret_key = cfg.web.secret_key.get_secret_value()
 
-    # §10 Session-Cookie-Härtung
-    # Secure=True: wird vom Proxy als HTTPS ausgeliefert; im lokalen Dev-Setup
-    # ggf. auf False setzen wenn kein HTTPS vorhanden.
+    # §10 Session cookie hardening
+    # Secure=True: served as HTTPS by the proxy; in a local dev setup
+    # set to False if no HTTPS is available.
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["SESSION_COOKIE_SECURE"] = cfg.web.base_url.startswith("https")
-    # Lebensdauer der Session: kein "permanent" – endet mit Browser-Close
+    # Session lifetime: not "permanent" – ends on browser close
     app.config["PERMANENT_SESSION_LIFETIME"] = cfg.auth.admin_session_ttl
 
     # §7 I18N
     from arborpress.core.i18n import register_i18n
     register_i18n(app)
 
-    # §10 CSRF-Token-Funktion als Jinja2-Global
+    # §10 CSRF token function as Jinja2 global
     from arborpress.auth.roles import has_min_role
     from arborpress.web.security import get_csrf_token
     app.jinja_env.globals["csrf_token"] = get_csrf_token
     app.jinja_env.globals["has_role"] = has_min_role
 
-    # nl2br-Filter (für Kommentar-Anzeige: \n → <br>)
+    # nl2br filter (for comment display: \n → <br>)
     import markupsafe as _mu
 
     def _nl2br(value: str) -> _mu.Markup:
@@ -64,21 +64,21 @@ def create_app() -> Quart:
 
     app.jinja_env.filters["nl2br"] = _nl2br
 
-    # Hilfsfunktion für Template-Zeitvergleiche (z. B. Ablauf-Check in sessions.html)
+    # Helper for template time comparisons (e.g. expiry check in sessions.html)
     from datetime import datetime as _dt
     app.jinja_env.globals["now"] = lambda: _dt.now(UTC)
 
-    # Konfiguration + Session als Jinja2-Globals (für Templates)
+    # Config + session as Jinja2 globals (for templates)
     app.jinja_env.globals["config"] = cfg
-    app.jinja_env.globals["demo_mode"] = False  # Überschrieben per Context-Processor je Request
+    app.jinja_env.globals["demo_mode"] = False  # Overridden by context processor per request
 
-    # Aktives Theme laden und als Jinja2-Global bereitstellen
+    # Load active theme and provide as Jinja2 global
     from arborpress.core.site_settings import get_cached, get_defaults
     from arborpress.themes.manifest import get_active_theme, get_theme_registry
     active_theme = get_active_theme()
     app.jinja_env.globals["theme"] = active_theme
 
-    # Dark-Companion laden (falls konfiguriert) für clientseitigen Toggle
+    # Load dark companion (if configured) for client-side toggle
     _theme_settings = get_cached("theme") or get_defaults("theme")
     _dark_id = active_theme.theme.dark_companion
     _theme_dark = get_theme_registry().get(_dark_id) if _dark_id else None
@@ -87,7 +87,7 @@ def create_app() -> Quart:
     app.jinja_env.globals["theme_auto_dark_start"] = int(_theme_settings.get("auto_dark_start", 19))
     app.jinja_env.globals["theme_auto_dark_end"] = int(_theme_settings.get("auto_dark_end", 6))
 
-    # Hintergrundmuster-Override: per-Request aus Cache gelesen
+    # Background pattern override: read from cache per request
     @app.context_processor
     async def _pattern_context() -> dict:
         from arborpress.core.site_settings import get_cached, get_defaults
@@ -99,15 +99,15 @@ def create_app() -> Quart:
         _css_val = make_pattern_url(_pid, _color, _opacity)
         return {"theme_bg_pattern": _pid, "theme_bg_pattern_css": _css_val}
 
-    # Federation – Per-Request-Context-Processor (Wert aus DB/Cache)
+    # Federation – per-request context processor (value from DB/cache)
     @app.context_processor
     async def _federation_context() -> dict:
         from arborpress.core.site_settings import get_cached, get_defaults
         fed = get_cached("federation") or get_defaults("federation")
         return {"federation_settings": fed}
 
-    # Demo-Modus – Per-Request-Context-Processor liest Cache dynamisch
-    # (wirkt sofort nach Admin-Änderung ohne Neustart)
+    # Demo mode – per-request context processor reads cache dynamically
+    # (takes effect immediately after admin change without restart)
     @app.context_processor
     async def _demo_context() -> dict:
         _demo_cfg = get_cached("demo") or get_defaults("demo")
@@ -117,7 +117,7 @@ def create_app() -> Quart:
 
         reg = get_theme_registry()
         all_t = reg.all()
-        # Haupt-Themes (kein light_companion → keine reinen Dark-Only-Companions)
+        # Main themes (no light_companion → excludes dark-only companions)
         demo_light = [t for t in all_t if t.theme.light_companion is None]
         demo_map   = {t.theme.id: t for t in all_t}
 
@@ -128,7 +128,7 @@ def create_app() -> Quart:
             "demo_theme_map":    demo_map,
         }
 
-        # Theme-Override per Cookie (für SSR-Konsistenz)
+        # Theme override via cookie (for SSR consistency)
         from quart import request as _req
         cookie_id = _req.cookies.get("ap-theme")
         if cookie_id:
@@ -138,7 +138,7 @@ def create_app() -> Quart:
                 ctx["theme"]      = t_override
                 ctx["theme_dark"] = demo_map.get(dark_id) if dark_id else None
         return ctx
-    # Theme-Templates (überschreiben Kern-Templates; §9)
+    # Theme templates (override core templates; §9)
     if active_theme.template_dir:
         from jinja2 import ChoiceLoader, FileSystemLoader
         existing = app.jinja_env.loader
@@ -154,8 +154,8 @@ def create_app() -> Quart:
     # §14 Install-Wizard (vor allen anderen Blueprints registrieren)
     app.register_blueprint(install_bp)
 
-    # §14 Install-Gate: solange .installed fehlt, alle Anfragen nach /install leiten
-    # Ausnahmen: /install selbst, /static/, /health
+    # §14 Install gate: redirect all requests to /install while .installed is missing
+    # Exceptions: /install itself, /static/, /health
     @app.before_request
     async def _install_gate():
         from arborpress.core.config import is_installed
@@ -177,7 +177,7 @@ def create_app() -> Quart:
 
     # §2 / §11 Auth + SSO
     app.register_blueprint(auth_bp, url_prefix="/auth")
-    # §11: SSO-Blueprint registriert; einzelne Routen geben 404 wenn Provider nicht konfiguriert
+    # §11: SSO blueprint registered; individual routes return 404 if provider not configured
     app.register_blueprint(sso_bp, url_prefix="/auth/sso")
 
     # §5 Federation (Well-Known + ActivityPub)
@@ -209,7 +209,7 @@ def create_app() -> Quart:
             _abort(404)
         return await send_from_directory(str(t.static_dir), filename)
 
-    # §10 Security-Headers (innere Middleware – wird zuerst ausgeführt)
+    # §10 Security headers (inner middleware – executed first)
     app.asgi_app = SecurityHeadersMiddleware(app.asgi_app)  # type: ignore[assignment]
 
     # §10 Reverse-Proxy
@@ -240,19 +240,19 @@ def create_app() -> Quart:
                 _log.getLogger("arborpress").warning(
                     "\n"
                     "══════════════════════════════════════════════════════\n"
-                    "  ArborPress ist noch nicht eingerichtet.             \n"
-                    "  Öffne http://… /install im Browser und gib          \n"
-                    "  folgenden Token ein:                                \n"
+                    "  ArborPress has not been set up yet.                \n"
+                    "  Open http://… /install in your browser and enter    \n"
+                    "  the following token:                                \n"
                     "                                                      \n"
                     "  %s                                                  \n"
                     "                                                      \n"
-                    "  Oder lies ihn aus: %s                               \n"
+                    "  Or read it from: %s                                 \n"
                     "══════════════════════════════════════════════════════",
                     token, token_file.resolve(),
                 )
             else:
                 _log.getLogger("arborpress").warning(
-                    "ArborPress nicht eingerichtet – Token liegt in: %s",
+                    "ArborPress not set up – token located at: %s",
                     token_file.resolve(),
                 )
 

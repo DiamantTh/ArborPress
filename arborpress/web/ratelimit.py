@@ -1,14 +1,14 @@
-"""Rate-Limiting via 'limits'-Bibliothek (§10 – Security-First Design Principles).
+"""Rate limiting via the 'limits' library (§10 – Security-First Design Principles).
 
-Verwendet dieselbe Storage-Konfiguration wie CacheSettings:
-  - memory (Standard): In-Process-Dict, kein externer Dienst nötig.
-  - redis: Geteilter Zustand über mehrere Worker-Prozesse/Instanzen hinweg.
-  - Alle anderen Backends (memcached, file, none): Fallback auf MemoryStorage.
+Uses the same storage configuration as CacheSettings:
+  - memory (default): in-process dict, no external service needed.
+  - redis: shared state across multiple worker processes/instances.
+  - All other backends (memcached, file, none): fall back to MemoryStorage.
 
-Fail-open: Bei Storage-Fehlern wird die Anfrage durchgelassen, damit ein
-Ausfall des Cache-Backends nicht zu einem dauerhaften HTTP-429-Regen führt.
-Dieses Verhalten ist für eine einfache Deployment-Umgebung angemessen; in
-Hochsicherheitsumgebungen kann 'fail-closed' (False bei Fehler) gewählt werden.
+Fail-open: on storage errors the request is allowed through, so that a
+cache-backend outage does not cause a permanent HTTP-429 storm.
+This behaviour is appropriate for a simple deployment environment; in
+high-security environments 'fail-closed' (return False on error) can be chosen.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ try:
     _AVAILABLE = True
 except ImportError:  # pragma: no cover
     _AVAILABLE = False
-    log.warning("'limits' nicht installiert – Rate-Limiting deaktiviert")
+    log.warning("'limits' not installed – rate limiting disabled")
 
 # Modul-globaler Singleton: wird beim ersten Aufruf initialisiert
 _limiter: object = None
@@ -45,7 +45,7 @@ def _get_limiter() -> object:
     if cfg.cache.backend == "redis":
         store = _storage.RedisStorage(cfg.cache.redis_url)
     else:
-        # memory, memcached, file, none → zustandsloser In-Process-Speicher
+        # memory, memcached, file, none → stateless in-process storage
         store = _storage.MemoryStorage()
 
     _limiter = _strategies.FixedWindowRateLimiter(store)
@@ -53,16 +53,16 @@ def _get_limiter() -> object:
 
 
 def check_rate_limit(key: str, limit_str: str) -> bool:
-    """Prüft und dekrementiert das Rate-Limit für *key*.
+    """Checks and decrements the rate limit for *key*.
 
     Args:
-        key:       Eindeutiger Identifikator (z.B. ``"auth:127.0.0.1"``).
-        limit_str: Format-String (z.B. ``"10/minute"``), kompatibel mit der
-                   *limits*-Bibliothek und ``AuthSettings.auth_rate_limit``.
+        key:       Unique identifier (e.g. ``"auth:127.0.0.1"``).
+        limit_str: Format string (e.g. ``"10/minute"``), compatible with the
+                   *limits* library and ``AuthSettings.auth_rate_limit``.
 
     Returns:
-        ``True``  – Anfrage liegt innerhalb des Limits (erlaubt).
-        ``False`` – Limit überschritten; Aufrufer soll HTTP 429 zurückgeben.
+        ``True``  – request is within the limit (allowed).
+        ``False`` – limit exceeded; caller should return HTTP 429.
     """
     if not _AVAILABLE:
         return True  # fail-open wenn Bibliothek fehlt
@@ -75,5 +75,5 @@ def check_rate_limit(key: str, limit_str: str) -> bool:
         item = _parse(limit_str)
         return bool(limiter.hit(item, key))  # type: ignore[union-attr]
     except Exception as exc:
-        log.error("Rate-Limit-Prüfung fehlgeschlagen (%s): %s", key, exc)
-        return True  # fail-open bei Storage-Fehler
+        log.error("Rate limit check failed (%s): %s", key, exc)
+        return True  # fail-open on storage error

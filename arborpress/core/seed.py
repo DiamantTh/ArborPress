@@ -1,7 +1,7 @@
-"""Seed-Daten: Beispiel-Posts, -Seiten, Impressum, Datenschutz (§14).
+"""Seed data: example posts, pages, imprint, and privacy policy (§14).
 
-Wird von `arborpress init --seed` oder `arborpress db seed` aufgerufen.
-Idempotent: Prüft vor dem Einfügen, ob Daten bereits vorhanden sind.
+Called by `arborpress init --seed` or `arborpress db seed`.
+Idempotent: checks whether data already exists before inserting.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 log = logging.getLogger("arborpress.seed")
 
 # ---------------------------------------------------------------------------
-# Hilfsfunktionen
+# Helper functions
 # ---------------------------------------------------------------------------
 
 
@@ -34,256 +34,251 @@ def _now() -> datetime:
 
 
 def _md_to_html(md: str) -> str:
-    """Einfaches Markdown→HTML ohne externe Bibliothek (Fallback)."""
+    """Simple Markdown→HTML without an external library (fallback)."""
     try:
         import markdown  # type: ignore
         return markdown.markdown(md, extensions=["fenced_code", "tables", "toc"])
     except ImportError:
-        # Minimaler Fallback: Absätze
+        # Minimal fallback: paragraphs
         paras = md.strip().split("\n\n")
         return "\n".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in paras)
 
 
 # ---------------------------------------------------------------------------
-# Seed-Inhalte
+# Seed content
 # ---------------------------------------------------------------------------
 
-_POST_1_SLUG = "willkommen-bei-arborpress"
-_POST_1_TITLE = "Willkommen bei ArborPress"
+_POST_1_SLUG = "welcome-to-arborpress"
+_POST_1_TITLE = "Welcome to ArborPress"
 _POST_1_MD = """\
-# Willkommen bei ArborPress
+# Welcome to ArborPress
 
-Schön, dass du dabei bist! **ArborPress** ist eine selbstgehostete Blogging-Plattform,
-die du vollständig kontrollierst – ohne Tracking, ohne fremde Server, ohne Kompromisse.
+Glad to have you here! **ArborPress** is a self-hosted blogging platform
+that you control completely – no tracking, no third-party servers, no compromises.
 
-## Was kann ArborPress?
+## What can ArborPress do?
 
-- **WebAuthn-Login** – passwortlose Anmeldung mit Hardwaretoken oder Gerätesensor
-- **ActivityPub-Federation** – deine Beiträge erscheinen im Fediverse (Mastodon, Misskey …)
-- **Mehrsprachigkeit** – Beiträge in verschiedenen Sprachen veröffentlichen
-- **Volltextsuche** – dank PostgreSQL `pg_fts` oder MariaDB FULLTEXT
-- **Plugins** – das System lässt sich einfach erweitern
+- **WebAuthn login** – passwordless sign-in with a hardware token or device sensor
+- **ActivityPub federation** – your posts appear in the Fediverse (Mastodon, Misskey …)
+- **Multilingual** – publish posts in multiple languages
+- **Full-text search** – powered by PostgreSQL `pg_fts` or MariaDB FULLTEXT
+- **Plugins** – the system is easy to extend
 
-## Erste Schritte
+## Getting started
 
-1. Melde dich unter `/auth/register` an und richte deinen WebAuthn-Schlüssel ein
-2. Erstelle deinen ersten echten Beitrag im [Admin-Bereich](/admin/)
-3. Passe das Theme in `config.toml` unter `[web] theme = "dark"` an
+1. Sign up at `/auth/register` and set up your WebAuthn key
+2. Create your first real post in the [admin area](/admin/)
+3. Customize the theme in `config.toml` under `[web] theme = "dark"`
 
-> "Das Web gehört allen." – Tim Berners-Lee
+> "The Web is for everyone." – Tim Berners-Lee
 
-Viel Spaß beim Schreiben!
+Happy writing!
 """
 
-_POST_2_SLUG = "markdown-referenz"
-_POST_2_TITLE = "Markdown-Formatierungsreferenz"
+_POST_2_SLUG = "markdown-reference"
+_POST_2_TITLE = "Markdown Formatting Reference"
 _POST_2_MD = """\
-# Markdown-Formatierungsreferenz
+# Markdown Formatting Reference
 
-Dieser Beitrag zeigt alle unterstützten Formatierungen auf einen Blick.
+This post demonstrates all supported formatting options at a glance.
 
-## Überschriften
+## Headings
 
-# H1 – Seitenüberschrift
-## H2 – Abschnittsüberschrift
-### H3 – Unterabschnitt
+# H1 – Page heading
+## H2 – Section heading
+### H3 – Subsection
 
-## Textformatierung
+## Text formatting
 
-**Fett**, *kursiv*, ~~durchgestrichen~~, `Inline-Code`, [Link](https://arborpress.dev)
+**Bold**, *italic*, ~~strikethrough~~, `inline code`, [Link](https://arborpress.dev)
 
-## Listen
+## Lists
 
-- Erster Punkt
-- Zweiter Punkt
-  - Eingerückt
-- Dritter Punkt
+- First item
+- Second item
+  - Indented
+- Third item
 
-1. Nummerierter Punkt
-2. Noch einer
+1. Numbered item
+2. Another one
 
-## Zitat
+## Block quote
 
-> Das ist ein Blockzitat über mehrere Zeilen.
-> Es kann mehrere Absätze enthalten.
+> This is a block quote spanning multiple lines.
+> It can contain multiple paragraphs.
 
-## Code-Block
+## Code block
 
 ```python
 def hello(name: str) -> str:
-    return f"Hallo, {name}!"
+    return f"Hello, {name}!"
 
-print(hello("Welt"))
+print(hello("World"))
 ```
 
-## Tabelle
+## Table
 
-| Spalte A | Spalte B | Spalte C |
+| Column A | Column B | Column C |
 |----------|----------|----------|
-| Wert 1   | Wert 2   | Wert 3   |
+| Value 1  | Value 2  | Value 3  |
 | Alpha    | Beta     | Gamma    |
 
-## Bild
+## Image
 
-![Platzhalter](https://picsum.photos/seed/arborpress/720/360)
+![Placeholder](https://picsum.photos/seed/arborpress/720/360)
 
 ---
 
-*Letztes Update: automatisch beim Init eingefügt.*
+*Last update: inserted automatically on init.*
 """
 
 _IMPRESSUM_SLUG = "imprint"
-_IMPRESSUM_TITLE = "Impressum"
+_IMPRESSUM_TITLE = "Imprint"
 _IMPRESSUM_MD = """\
 # Imprint
 
-**Angaben gemäß § 5 TMG**
+**Information according to § 5 TMG**
 
-Muster Max  
-Musterstraße 1  
-12345 Musterstadt  
-Deutschland
+Max Sample  
+Sample Street 1  
+12345 Sample City  
+Germany
 
-**Kontakt:**  
-E-Mail: kontakt@beispiel.de  
-Telefon: +49 (0)123 456789
+**Contact:**  
+E-Mail: contact@example.com  
+Phone: +49 (0)123 456789
 
-**Verantwortlich für den Inhalt nach § 55 Abs. 2 RStV:**  
-Muster Max  
-Musterstraße 1  
-12345 Musterstadt
+**Responsible for content according to § 55 Para. 2 RStV:**  
+Max Sample  
+Sample Street 1  
+12345 Sample City
 
 ---
 
-## Haftungsausschluss
+## Disclaimer
 
-### Haftung für Inhalte
+### Liability for content
 
-Die Inhalte dieser Seite wurden mit größter Sorgfalt erstellt. Für die Richtigkeit,
-Vollständigkeit und Aktualität der Inhalte übernehmen wir keine Gewähr.
-Als Diensteanbieter sind wir gemäß § 7 Abs. 1 TMG für eigene Inhalte auf
-diesen Seiten nach den allgemeinen Gesetzen verantwortlich.
+The contents of this page have been created with the utmost care. We assume no
+liability for the correctness, completeness, and up-to-dateness of the content.
+As a service provider, we are responsible for our own content on these pages
+in accordance with § 7 Para. 1 TMG under the general laws.
 
-### Haftung für Links
+### Liability for links
 
-Unser Angebot enthält Links zu externen Websites Dritter, auf deren Inhalte wir
-keinen Einfluss haben. Deshalb können wir für diese fremden Inhalte auch keine
-Gewähr übernehmen.
+Our website contains links to external third-party websites whose content we
+have no influence over. We therefore cannot assume any liability for this
+third-party content.
 
-### Urheberrecht
+### Copyright
 
-Die durch die Seitenbetreiber erstellten Inhalte und Werke auf diesen Seiten
-unterliegen dem deutschen Urheberrecht.
+The content and works created by the site operators on these pages are subject
+to German copyright law.
 
-> **Hinweis:** Bitte passe diese Angaben deinen tatsächlichen Daten an.
-> Das Impressum dient nur als Vorlage.
+> **Note:** Please adapt this information to your actual details.
+> The imprint serves only as a template.
 """
 
 _PRIVACY_SLUG = "privacy"
-_PRIVACY_TITLE = "Datenschutzerklärung"
+_PRIVACY_TITLE = "Privacy Policy"
 _PRIVACY_MD = """\
 # Privacy Policy
 
-## 1. Verantwortlicher
+## 1. Controller
 
-Verantwortlich für die Datenverarbeitung auf dieser Website:
+The controller responsible for data processing on this website:
 
-Muster Max  
-Musterstraße 1  
-12345 Musterstadt  
-E-Mail: datenschutz@beispiel.de
+Max Sample  
+Sample Street 1  
+12345 Sample City  
+E-Mail: privacy@example.com
 
-## 2. Erhebung und Verarbeitung personenbezogener Daten
+## 2. Collection and processing of personal data
 
-### Server-Logfiles
+### Server log files
 
-Beim Besuch unserer Website werden automatisch Informationen in sogenannten
-Server-Logfiles gespeichert, die Ihr Browser übermittelt:
+When you visit our website, information is automatically stored in server log
+files that your browser transmits:
 
-- Browsertyp und -version
-- Betriebssystem
-- Referrer-URL
-- Hostname des zugreifenden Rechners
-- Uhrzeit der Serveranfrage
-- IP-Adresse (anonymisiert)
+- Browser type and version
+- Operating system
+- Referrer URL
+- Hostname of the accessing computer
+- Time of the server request
+- IP address (anonymised)
 
-Diese Daten werden nicht mit anderen Datenquellen zusammengeführt.
-Grundlage ist Art. 6 Abs. 1 lit. f DSGVO.
+This data is not merged with other data sources.
+Legal basis: Art. 6 Para. 1 lit. f GDPR.
 
 ### Cookies
 
-Diese Website verwendet ausschließlich technisch notwendige Cookies (Session-Cookie
-für eingeloggte Benutzer). Es werden keine Tracking- oder Werbe-Cookies eingesetzt.
+This website uses only technically necessary cookies (session cookie
+for logged-in users). No tracking or advertising cookies are used.
 
-## 3. Kontaktformular / E-Mail
+## 3. Contact form / e-mail
 
-Wenn Sie uns per E-Mail kontaktieren, werden Ihre Angaben zur Bearbeitung der
-Anfrage und für mögliche Anschlussfragen gespeichert. Grundlage: Art. 6 Abs. 1
-lit. b DSGVO (Vertragserfüllung) oder Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse).
+If you contact us by e-mail, your details will be stored to process your
+request and for possible follow-up questions. Legal basis: Art. 6 Para. 1
+lit. b GDPR (contract fulfilment) or Art. 6 Para. 1 lit. f GDPR (legitimate interest).
 
-## 4. Benutzerkonten (WebAuthn)
+## 4. User accounts (WebAuthn)
 
-Bei der Registrierung wird ein kryptographischer öffentlicher Schlüssel (WebAuthn
-Credential) gespeichert. Es werden keine Passwörter gespeichert. Biometrische Daten
-werden ausschließlich lokal auf Ihrem Gerät verarbeitet und verlassen es nicht.
+During registration, a cryptographic public key (WebAuthn credential) is stored.
+No passwords are stored. Biometric data is processed exclusively locally on your
+device and never leaves it.
 
-Gespeicherte Daten: Benutzername, öffentlicher Schlüssel, Zeitpunkt der Registrierung
-und letzten Anmeldung.
+Stored data: username, public key, time of registration and last login.
 
-Grundlage: Art. 6 Abs. 1 lit. b DSGVO.
+Legal basis: Art. 6 Para. 1 lit. b GDPR.
 
-## 5. Ihre Rechte
+## 5. Your rights
 
-Sie haben gemäß DSGVO folgende Rechte:
+Under GDPR you have the following rights:
 
-- **Recht auf Auskunft** (Art. 15 DSGVO)
-- **Recht auf Berichtigung** (Art. 16 DSGVO)
-- **Recht auf Löschung** (Art. 17 DSGVO)
-- **Recht auf Einschränkung der Verarbeitung** (Art. 18 DSGVO)
-- **Recht auf Datenübertragbarkeit** (Art. 20 DSGVO)
-- **Widerspruchsrecht** (Art. 21 DSGVO)
+- **Right of access** (Art. 15 GDPR)
+- **Right to rectification** (Art. 16 GDPR)
+- **Right to erasure** (Art. 17 GDPR)
+- **Right to restriction of processing** (Art. 18 GDPR)
+- **Right to data portability** (Art. 20 GDPR)
+- **Right to object** (Art. 21 GDPR)
 
-Zur Ausübung Ihrer Rechte wenden Sie sich an: datenschutz@beispiel.de
+To exercise your rights, please contact: privacy@example.com
 
-Sie haben außerdem das Recht, sich bei einer Datenschutz-Aufsichtsbehörde zu
-beschweren.
+You also have the right to lodge a complaint with a data protection supervisory authority.
 
-## 6. Keine Weitergabe an Dritte
+## 6. No disclosure to third parties
 
-Personenbezogene Daten werden nicht an Dritte weitergegeben, sofern keine gesetzliche
-Verpflichtung besteht.
+Personal data will not be passed on to third parties unless there is a legal obligation.
 
 ## 7. Federation (ActivityPub)
 
-Falls die Federation aktiviert ist, werden veröffentlichte Beiträge an follower
-in anderen Fediverse-Instanzen übermittelt. Dies umfasst Beitragstitel, Inhalt,
-Veröffentlichungszeitpunkt und Autorenname. Die Übermittlung basiert auf Art. 6
-Abs. 1 lit. b DSGVO (Nutzungsvertrag).
+If federation is enabled, published posts are transmitted to followers in other
+Fediverse instances. This includes post title, content, publication time, and
+author name. The transmission is based on Art. 6 Para. 1 lit. b GDPR (user agreement).
 
 ---
 
-> **Hinweis:** Bitte passe diese Datenschutzerklärung deinen tatsächlichen
-> Verarbeitungsaktivitäten an. Dieser Text ist eine Vorlage und ersetzt keine
-> Rechtsberatung.
+> **Note:** Please adapt this privacy policy to your actual processing activities.
+> This text is a template and does not replace legal advice.
 
-*Stand: {{ date }}*
+*As of: {{ date }}*
 """
 
 
 # ---------------------------------------------------------------------------
-# Seed-Funktion
+# Seed function
 # ---------------------------------------------------------------------------
 
 
 async def seed_database(db: AsyncSession, *, force: bool = False) -> dict[str, int]:
-    """Fügt Beispielinhalte ein.
+    """Insert example content.
 
     Args:
-        db:    Aktive AsyncSession
-        force: Wenn True, wird auch bei vorhandenen Daten neu eingefügt
+        db:    Active AsyncSession
+        force: If True, re-inserts even when data already exists
 
     Returns:
-        Dict mit eingefügten Datensätzen pro Tabelle.
+        Dict with inserted records per table.
     """
     from arborpress.models.content import Page, PageType, Post, PostStatus, Tag
 
@@ -293,9 +288,9 @@ async def seed_database(db: AsyncSession, *, force: bool = False) -> dict[str, i
     existing_tags = (await db.execute(select(Tag))).scalars().all()
     tag_slugs = {t.slug for t in existing_tags}
     seed_tags = [
-        Tag(slug="neuigkeiten", label="Neuigkeiten", lang="de"),
-        Tag(slug="tutorial",    label="Tutorial",    lang="de"),
-        Tag(slug="meta",        label="Meta",        lang="de"),
+        Tag(slug="news",     label="News",     lang="en"),
+        Tag(slug="tutorial", label="Tutorial", lang="en"),
+        Tag(slug="meta",     label="Meta",     lang="en"),
     ]
     created_tags: dict[str, Tag] = {}
     for tag in seed_tags:
@@ -321,13 +316,13 @@ async def seed_database(db: AsyncSession, *, force: bool = False) -> dict[str, i
             title=_POST_1_TITLE,
             body_md=_POST_1_MD,
             body_html=_md_to_html(_POST_1_MD),
-            excerpt="Entdecke ArborPress – eine selbstgehostete Blogging-Plattform "
-                    "mit WebAuthn-Login, ActivityPub und voller Kontrolle über deine Daten.",
+            excerpt="Discover ArborPress – a self-hosted blogging platform "
+                    "with WebAuthn login, ActivityPub, and full control over your data.",
             status=PostStatus.PUBLISHED,
-            lang="de",
+            lang="en",
             published_at=_now(),
         )
-        tags_for_post1 = [created_tags[s] for s in ("neuigkeiten", "meta") if s in created_tags]
+        tags_for_post1 = [created_tags[s] for s in ("news", "meta") if s in created_tags]
         post1.tags = tags_for_post1
         db.add(post1)
         inserted["posts"] += 1
@@ -341,10 +336,10 @@ async def seed_database(db: AsyncSession, *, force: bool = False) -> dict[str, i
             title=_POST_2_TITLE,
             body_md=_POST_2_MD,
             body_html=_md_to_html(_POST_2_MD),
-            excerpt="Alle unterstützten Formatierungen auf einen Blick: "
-                    "Überschriften, Listen, Code-Blöcke, Tabellen und mehr.",
+            excerpt="All supported formatting options at a glance: "
+                    "headings, lists, code blocks, tables, and more.",
             status=PostStatus.PUBLISHED,
-            lang="de",
+            lang="en",
             published_at=_now(),
         )
         tags_for_post2 = [created_tags[s] for s in ("tutorial", "meta") if s in created_tags]
@@ -372,7 +367,7 @@ async def seed_database(db: AsyncSession, *, force: bool = False) -> dict[str, i
                 body_md=md_rendered,
                 body_html=_md_to_html(md_rendered),
                 page_type=ptype,
-                lang="de",
+                lang="en",
                 is_published=True,
                 show_in_footer=True,
                 noindex=(ptype == PageType.IMPRESSUM),
@@ -388,5 +383,5 @@ async def seed_database(db: AsyncSession, *, force: bool = False) -> dict[str, i
     )
 
     await db.commit()
-    log.info("Seed abgeschlossen: %s", inserted)
+    log.info("Seed completed: %s", inserted)
     return inserted

@@ -1,5 +1,5 @@
 # arborpress/models/__init__.py
-# Alle ORM-Modelle importieren, damit SQLAlchemy metadata vollständig ist
+# Import all ORM models so that SQLAlchemy metadata is complete
 from arborpress.models.content import (  # noqa: F401
     Category,
     Comment,

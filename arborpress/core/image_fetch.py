@@ -49,7 +49,7 @@ _MAX_SIZE: int = 20 * 1024 * 1024  # 20 MiB
 _TIMEOUT: float = 15.0
 
 
-# ─── Öffentliche Funktion ─────────────────────────────────────────────────────
+# ─── Public Function ─────────────────────────────────────────────────────────
 
 
 async def download_and_store(
@@ -141,7 +141,7 @@ async def download_and_store(
 
     now = datetime.now(UTC)
     yyyy, mm = now.year, now.month
-    filename = f"{digest[:24]}{ext}"   # 24 Hex-Zeichen reichen für Eindeutigkeit
+    filename = f"{digest[:24]}{ext}"   # 24 hex characters suffice for uniqueness
     storage_path = f"{yyyy}/{mm:02d}/{filename}"
     dest_dir = cfg.web.media_dir / str(yyyy) / f"{mm:02d}"
     dest_path = dest_dir / filename

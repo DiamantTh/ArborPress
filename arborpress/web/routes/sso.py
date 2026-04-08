@@ -1,14 +1,14 @@
-"""OAuth2/OIDC-Client (§11 – External Login, Optional Only).
+"""OAuth2/OIDC client (§11 – external login, optional only).
 
-§11 Constraints:
-- Nur sichtbar wenn konfiguriert
-- Kein automatischer Privileg-Eskalation via SSO
-- Operational-Accounts können SSO deaktiviert haben
-- Separater Button (nicht Teil des WebAuthn-Flows)
+§11 constraints:
+- Only visible when configured
+- No automatic privilege escalation via SSO
+- Operational accounts may have SSO disabled
+- Separate button (not part of the WebAuthn flow)
 
-Routen:
-  /auth/sso/{provider}           – Redirect zu IdP
-  /auth/sso/{provider}/callback  – Callback-Verarbeitung
+Routes:
+  /auth/sso/{provider}           – Redirect to IdP
+  /auth/sso/{provider}/callback  – Callback processing
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ sso_bp = Blueprint("sso", __name__)
 
 
 def _get_provider_config(provider: str) -> dict | None:
-    """Lädt Provider-Konfiguration – gibt None zurück wenn nicht konfiguriert."""
+    """Loads provider configuration – returns None if not configured."""
     # TODO: Aus Settings laden
     # §11: Modul bleibt verborgen wenn nicht konfiguriert
     return None
@@ -128,7 +128,7 @@ async def sso_callback(provider: str) -> tuple:
             headers={"Authorization": f"Bearer {access_token}"},
         )
         userinfo_resp.raise_for_status()
-        # TODO: §11 Claims aus userinfo für rollenbasierte Zuordnung nutzen
+        # TODO: §11 Claims from userinfo for role-based mapping
         _userinfo: dict = userinfo_resp.json()
 
     # §11: Claims → interne Rolle (kein automatischer Privileg-Eskalation)
@@ -141,6 +141,6 @@ async def sso_callback(provider: str) -> tuple:
         internal_role,
     )
 
-    # TODO: User anlegen/verknüpfen, Session setzen
-    # §11: Operational-Konten nie via SSO (account.sso_disabled prüfen)
+    # TODO: Create/link user, set session
+    # §11: Operational accounts never via SSO (check account.sso_disabled)
     return jsonify({"status": "not_fully_implemented", "role": internal_role}), 200

@@ -1,15 +1,15 @@
-"""DB-Session-Factory (SQLAlchemy async).
+"""DB session factory (SQLAlchemy async).
 
-Unterstützte Backends:
-  postgresql+asyncpg://...     PostgreSQL (Produktion, empfohlen)
+Supported backends:
+  postgresql+asyncpg://...     PostgreSQL (production, recommended)
   mysql+aiomysql://...         MariaDB ≥ 11 / MySQL ≥ 8
-  sqlite+aiosqlite:///...      SQLite (Entwicklung / Tests; Dep: aiosqlite)
-  sqlite+aiosqlite:///:memory: In-Memory-SQLite (nur Unit-Tests)
+  sqlite+aiosqlite:///...      SQLite (development / tests; dep: aiosqlite)
+  sqlite+aiosqlite:///:memory: In-memory SQLite (unit tests only)
 
-SQLite-Hinweise:
-  - pool_size wird ignoriert (StaticPool für :memory:, NullPool für Datei-SQLite)
-  - WAL-Modus und Foreign-Keys werden automatisch aktiviert
-  - Nicht für Produktiv-Betrieb mit mehreren Worker-Prozessen geeignet
+SQLite notes:
+  - pool_size is ignored (StaticPool for :memory:, NullPool for file SQLite)
+  - WAL mode and foreign keys are enabled automatically
+  - Not suitable for production use with multiple worker processes
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 class Base(DeclarativeBase):
-    """Basis für alle ORM-Modelle."""
+    """Base class for all ORM models."""
 
 
 def get_engine() -> AsyncEngine:
@@ -45,7 +45,7 @@ def get_engine() -> AsyncEngine:
         echo = cfg.db.echo
 
         if cfg.db.is_sqlite:
-            # SQLite: kein Connection-Pool, WAL + FK via connect_args/event
+            # SQLite: no connection pool, WAL + FK via connect_args/event
             from sqlalchemy import event as sa_event
             from sqlalchemy.pool import NullPool, StaticPool
 
@@ -63,7 +63,7 @@ def get_engine() -> AsyncEngine:
                 poolclass=pool_cls,
             )
 
-            # WAL-Modus und Foreign-Key-Enforcement für SQLite aktivieren
+            # Enable WAL mode and foreign key enforcement for SQLite
 
             @sa_event.listens_for(_engine.sync_engine, "connect")
             def _sqlite_pragmas(dbapi_conn: object, _: object) -> None:
@@ -72,7 +72,7 @@ def get_engine() -> AsyncEngine:
                 cursor.execute("PRAGMA foreign_keys=ON")
                 cursor.close()
 
-            log.info("SQLite-Backend: %s (WAL + FK aktiviert)", url)
+            log.info("SQLite backend: %s (WAL + FK enabled)", url)
         else:
             _engine = create_async_engine(
                 url,
@@ -94,14 +94,14 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """Dependency-Injection-Helper für Routen / CLI."""
+    """Dependency-injection helper for routes / CLI."""
     factory = get_session_factory()
     async with factory() as session:
         yield session
 
 
 async def create_all_tables() -> None:
-    """Erstellt alle Tabellen (dev/test – produktiv: Alembic)."""
+    """Create all tables (dev/test – production: Alembic)."""
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

@@ -35,10 +35,10 @@ class MailQueue(Base):
     idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     recipient: Mapped[str] = mapped_column(String(254), nullable=False)
     subject: Mapped[str] = mapped_column(String(512), nullable=False)
-    # Text-Body (PGP-verschlüsselt wenn recipient.pgp_encrypt_mail)
+    # Text body (PGP-encrypted when recipient.pgp_encrypt_mail)
     body_text: Mapped[str] = mapped_column(Text, nullable=False)
     body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # OpenPGP §13 – verschlüsselter Payload nur wenn aktiviert
+    # OpenPGP §13 – encrypted payload only when enabled
     pgp_encrypted: Mapped[bool] = mapped_column(Boolean, default=False)
     # Kein sensibles Logging – nur Metadaten
     status: Mapped[MailStatus] = mapped_column(

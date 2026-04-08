@@ -1,37 +1,37 @@
-"""oEmbed-Fetch mit Datenbank-Cache für externe Post-Einbettungen.
+"""oEmbed fetch with database cache for external post embeds.
 
-Architektur (Mastodon-Ansatz)
------------------------------
-Der Autor schreibt im Markdown::
+Architecture (Mastodon approach)
+--------------------------------
+The author writes in Markdown::
 
     {{embed:https://twitter.com/user/status/123}}
 
-``render_md_async()`` erkennt das Muster und fragt ``get_embed_html()`` ab:
+``render_md_async()`` detects the pattern and queries ``get_embed_html()``:
 
-1. DB-Cache vorhanden und nicht abgelaufen → sofort zurückgeben (kein Netz).
-2. Cache-Miss → httpx-Request an oEmbed-Endpoint des Anbieters.
-3. ``<script>``, ``<noscript>`` und ``<iframe>``-Tags werden **entfernt**.
-4. Sanitisiertes HTML in der DB persistieren (Standard-TTL: 24 h).
+1. DB cache present and not expired → return immediately (no network).
+2. Cache miss → httpx request to the provider's oEmbed endpoint.
+3. ``<script>``, ``<noscript>`` and ``<iframe>`` tags are **removed**.
+4. Persist sanitised HTML in the DB (default TTL: 24 h).
 
-DSGVO-Konformität
------------------
-Kein Browser-Request landet bei Twitter / Meta / Google.
-Der ArborPress-Server holt das Embed-HTML einmalig serverseitig.
-Ohne ``<script src="platform.twitter.com/...">`` sieht der Besucher
-ein statisches ``<blockquote>``-Element – kein Tracking, kein Cookie.
-Facebook-/Instagram-``<iframe>``-Embeds werden vollständig entfernt;
-der Fallback in ``render_md_async`` liefert einen Textlink.
+GDPR Compliance
+---------------
+No browser request reaches Twitter / Meta / Google.
+The ArborPress server fetches the embed HTML once server-side.
+Without ``<script src="platform.twitter.com/...">`` the visitor sees
+a static ``<blockquote>`` element – no tracking, no cookie.
+Facebook/Instagram ``<iframe>`` embeds are removed entirely;
+the fallback in ``render_md_async`` provides a text link.
 
-Unterstützte Anbieter
----------------------
+Supported Providers
+-------------------
 - Twitter / X   (twitter.com, x.com)
 - YouTube       (youtube.com, youtu.be)
 - Vimeo         (vimeo.com)
-- Instagram     (instagram.com – öffentliche Posts, kein Token erforderlich)
-- Mastodon      (beliebige Instanz via /api/oembed)
+- Instagram     (instagram.com – public posts, no token required)
+- Mastodon      (any instance via /api/oembed)
 - Bluesky       (bsky.app)
 
-Eigene Provider via ``register_provider()`` hinzufügbar.
+Custom providers can be added via ``register_provider()``.
 """
 
 from __future__ import annotations
@@ -52,21 +52,21 @@ from arborpress.models.content import OEmbedCache
 
 log = logging.getLogger("arborpress.oembed")
 
-# ─── Typen ────────────────────────────────────────────────────────────────────
+# ─── Types ────────────────────────────────────────────────────────────────────
 
 
 class OEmbedProvider(NamedTuple):
-    """Beschreibt einen oEmbed-Anbieter."""
+    """Describes an oEmbed provider."""
     name: str
-    # Regex auf die Post-URL (nicht den oEmbed-Endpoint)
+    # Regex for the post URL (not the oEmbed endpoint)
     url_pattern: re.Pattern
-    # Basis-URL des oEmbed-Endpoints
+    # Base URL of the oEmbed endpoint
     endpoint: str
-    # Zusätzliche Query-Params (z.B. omit_script=1 bei Twitter)
+    # Additional query params (e.g. omit_script=1 for Twitter)
     extra_params: dict[str, str] = {}
 
 
-# ─── Bekannte Anbieter ─────────────────────────────────────────────────────────
+# ─── Known Providers ─────────────────────────────────────────────────────────
 
 _PROVIDERS: list[OEmbedProvider] = [
     OEmbedProvider(
@@ -107,17 +107,17 @@ _PROVIDERS: list[OEmbedProvider] = [
 
 
 def register_provider(provider: OEmbedProvider) -> None:
-    """Registriert einen zusätzlichen oEmbed-Anbieter (Plugin-Hook)."""
+    """Registers an additional oEmbed provider (plugin hook)."""
     _PROVIDERS.append(provider)
 
 
 def _match_provider(url: str) -> OEmbedProvider | None:
-    """Gibt den passenden Anbieter für *url* zurück, oder None."""
+    """Returns the matching provider for *url*, or None."""
     for p in _PROVIDERS:
         if p.url_pattern.match(url):
             return p
 
-    # Mastodon: generischer Fallback für beliebige Instanzen
+    # Mastodon: generic fallback for arbitrary instances
     parsed = urlparse(url)
     if parsed.path.startswith("/@") or "/objects/" in parsed.path:
         return OEmbedProvider(
@@ -129,7 +129,7 @@ def _match_provider(url: str) -> OEmbedProvider | None:
     return None
 
 
-# ─── HTML-Bereinigung ─────────────────────────────────────────────────────────
+# ─── HTML Sanitisation ─────────────────────────────────────────────────────────
 
 _SCRIPT_RE = re.compile(
     r"<(script|noscript|iframe)[^>]*>.*?</\1\s*>", re.DOTALL | re.IGNORECASE
@@ -137,11 +137,11 @@ _SCRIPT_RE = re.compile(
 
 
 def _strip_scripts(html: str) -> str:
-    """Entfernt alle <script>-, <noscript>- und <iframe>-Tags (inkl. Inhalt)."""
+    """Removes all <script>, <noscript>, and <iframe> tags (including content)."""
     return _SCRIPT_RE.sub("", html).strip()
 
 
-# ─── Kern-Logik (DB-Cache) ────────────────────────────────────────────────────
+# ─── Core Logic (DB Cache) ────────────────────────────────────────────────────
 
 _DEFAULT_TTL: timedelta = timedelta(hours=24)
 _TIMEOUT: float = 8.0
@@ -152,20 +152,20 @@ async def get_embed_html(
     db: AsyncSession,
     ttl: timedelta = _DEFAULT_TTL,
 ) -> str | None:
-    """Gibt sanitisiertes oEmbed-HTML für *url* zurück.
+    """Returns sanitised oEmbed HTML for *url*.
 
-    Der Abruf erfolgt einmalig serverseitig; das Ergebnis wird in der DB
-    gespeichert (``oembed_cache``-Tabelle).  Kein Browser-Request an Dritte.
+    The fetch is performed once server-side; the result is stored in the
+    DB (``oembed_cache`` table).  No browser request to third parties.
 
     Args:
-        url: Öffentliche Post-URL (Twitter, YouTube, …).
-        db:  Aktive AsyncSession – wird für Lesen **und** Schreiben genutzt.
-             Der Aufrufer muss committen (oder autocommit verwenden).
-        ttl: Cache-Lebensdauer (Standard: 24 h).
+        url: Public post URL (Twitter, YouTube, …).
+        db:  Active AsyncSession – used for both reading **and** writing.
+             The caller must commit (or use autocommit).
+        ttl: Cache lifetime (default: 24 h).
 
     Returns:
-        HTML-Fragment als String, oder ``None`` wenn kein Anbieter passt
-        oder der Fetch fehlschlägt.
+        HTML fragment as string, or ``None`` if no provider matches
+        or the fetch fails.
     """
     now = datetime.now(UTC)
 
@@ -178,10 +178,10 @@ async def get_embed_html(
         log.debug("oEmbed DB-Cache-Hit: %s", url)
         return cached.html
 
-    # ── Anbieter bestimmen ────────────────────────────────────────────────
+    # ── Determine provider ──────────────────────────────────────────────────────────────
     provider = _match_provider(url)
     if provider is None:
-        log.debug("oEmbed: kein Anbieter für %s", url)
+        log.debug("oEmbed: no provider for %s", url)
         return None
 
     # ── HTTP-Fetch ────────────────────────────────────────────────────────
@@ -198,12 +198,12 @@ async def get_embed_html(
             resp.raise_for_status()
             data = resp.json()
     except (httpx.HTTPError, json.JSONDecodeError, ValueError) as exc:
-        log.warning("oEmbed-Fetch fehlgeschlagen für %s: %s", url, exc)
+        log.warning("oEmbed fetch failed for %s: %s", url, exc)
         return None
 
     raw_html: str = data.get("html", "")
     if not raw_html:
-        log.debug("oEmbed: kein 'html' in Antwort für %s", url)
+        log.debug("oEmbed: no 'html' in response for %s", url)
         return None
 
     clean_html = _strip_scripts(raw_html)

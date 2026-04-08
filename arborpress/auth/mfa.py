@@ -1,7 +1,7 @@
-"""TOTP/HOTP-Service (§3 – system-level MFA module).
+"""TOTP/HOTP service (§3 – system-level MFA module).
 
-SHA-256 minimum, 6–8 Stellen konfigurierbar.
-Mehrere MFA-Geräte pro Account möglich (benannt, max. MFA_MAX_DEVICES).
+SHA-256 minimum, 6–8 digits configurable.
+Multiple MFA devices per account supported (named, max. MFA_MAX_DEVICES).
 """
 
 from __future__ import annotations
@@ -18,20 +18,20 @@ from arborpress.logging.config import get_audit_logger
 log = logging.getLogger("arborpress.auth.mfa")
 audit = get_audit_logger()
 
-# §3: SHA-256 minimum; 8 Digits als Default
+# §3: SHA-256 minimum; 8 digits as default
 _DIGITS = 8
 _DIGEST = "sha256"
-_INTERVAL = 30  # Sekunden TOTP-Fenster
+_INTERVAL = 30  # TOTP window in seconds
 
-# Maximale Anzahl MFA-Geräte (TOTP+HOTP+Plugin) pro Account
+# Maximum number of MFA devices (TOTP+HOTP+plugin) per account
 MFA_MAX_DEVICES: int = 20
 
 
 class TOTPService:
-    """TOTP-Enrollment und -Verification (§3)."""
+    """TOTP enrollment and verification (§3)."""
 
     def generate_secret(self) -> bytes:
-        """Erzeugt ein neues TOTP-Secret (32 Bytes, Base32-codiert)."""
+        """Generate a new TOTP secret (32 bytes, Base32-encoded)."""
         return base64.b32encode(os.urandom(32))
 
     def provisioning_uri(
@@ -71,19 +71,19 @@ class TOTPService:
 
 
 class HOTPService:
-    """HOTP-Enrollment und -Verification (§3).
+    """HOTP enrollment and verification (§3).
 
-    HOTP (HMAC-based One-Time Password, RFC 4226) eignet sich besonders für
-    Hardware-Token ohne Echtzeituhr (z. B. YubiKey im HOTP-Modus).
-    Der Counter-Stand wird pro Gerät in der DB gespeichert und bei jedem
-    erfolgreichen Verify um 1 erhöht (im `MFADevice` als extra_data-JSON).
+    HOTP (HMAC-based One-Time Password, RFC 4226) is particularly suited for
+    hardware tokens without a real-time clock (e.g. YubiKey in HOTP mode).
+    The counter is stored per device in the DB and incremented by 1 after each
+    successful verify (stored in `MFADevice` as extra_data JSON).
 
-    Wichtig: Der Counter im Backend muss nach jedem erfolgreichen Verify
-    persistiert werden, bevor eine Antwort gesendet wird.
+    Important: the counter in the backend must be persisted after each successful
+    verify before a response is sent.
     """
 
     def generate_secret(self) -> bytes:
-        """Erzeugt ein neues HOTP-Secret (32 Bytes, Base32-codiert)."""
+        """Generate a new HOTP secret (32 bytes, Base32-encoded)."""
         return base64.b32encode(os.urandom(32))
 
     def provisioning_uri(
@@ -107,14 +107,14 @@ class HOTPService:
         user_id: str,
         look_ahead: int = 10,
     ) -> tuple[bool, int]:
-        """Verifiziert einen HOTP-Code.
+        """Verify an HOTP code.
 
         Args:
-            counter:    Aktueller Counter-Stand (aus DB).
-            look_ahead: Anzahl zukünftiger Counter-Werte prüfen (Drift-Toleranz).
+            counter:    Current counter value (from DB).
+            look_ahead: Number of future counter values to check (drift tolerance).
 
         Returns:
-            (ok, new_counter) – neuer Counter muss von Caller persistiert werden.
+            (ok, new_counter) – new counter must be persisted by the caller.
         """
         hotp = pyotp.HOTP(secret.decode(), digits=_DIGITS, digest=_DIGEST)
         for offset in range(look_ahead + 1):
@@ -130,12 +130,12 @@ class HOTPService:
 
 
 class BackupCodeService:
-    """Backup-Code-Verwaltung (§2 / §3 – one-time recovery)."""
+    """Backup code management (§2 / §3 – one-time recovery)."""
 
     def generate_codes(self, count: int = 10) -> tuple[list[str], list[str]]:
-        """Gibt (plaintext_codes, hashed_codes) zurück.
+        """Return (plaintext_codes, hashed_codes).
 
-        Plaintext wird dem Benutzer einmalig gezeigt und danach verworfen.
+        Plaintext is shown to the user once and then discarded.
         """
         from argon2 import PasswordHasher
 

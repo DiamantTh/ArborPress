@@ -1,12 +1,12 @@
-"""SiteSetting – laufzeitveränderliche Einstellungen in der Datenbank.
+"""SiteSetting – runtime-mutable settings stored in the database.
 
-Speichert alle nicht-infrastrukturellen Konfigurationswerte.
-Jede Sektion (mail, comments, captcha, theme, …) ist eine Zeile:
+Stores all non-infrastructure configuration values.
+Each section (mail, comments, captcha, theme, …) is one row:
   key  = "captcha"
   value = '{"default_type": "custom", "custom_questions": [...]}'
 
-Infrastruktur-Einstellungen (DB-URL, HTTP-Port, Secret-Key, Auth-TTL, Logging)
-verbleiben in config.toml – sie werden vor DB-Verbindung benötigt.
+Infrastructure settings (DB URL, HTTP port, secret key, auth TTL, logging)
+remain in config.toml – they are required before the DB connection is made.
 """
 
 from __future__ import annotations
@@ -21,14 +21,14 @@ from arborpress.core.db import Base
 
 
 class SiteSetting(Base):
-    """Eine Einstellungssektion (JSON-Blob)."""
+    """A settings section (JSON blob)."""
 
     __tablename__ = "site_settings"
 
-    # z.B. "mail", "captcha", "comments", "theme", "federation", "general"
+    # e.g. "mail", "captcha", "comments", "theme", "federation", "general"
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
 
-    # JSON-kodiertes dict mit den Einstellungen dieser Sektion
+    # JSON-encoded dict with the settings for this section
     value: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
 
     updated_at: Mapped[datetime.datetime] = mapped_column(

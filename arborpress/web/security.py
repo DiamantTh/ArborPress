@@ -1,18 +1,18 @@
-"""Security-Middleware + CSRF-Schutz (§10 – Security-First Design Principles).
+"""Security middleware + CSRF protection (§10 – Security-First Design Principles).
 
-- Strict CSP (keine remote-Includes, keine Inline-Scripts)
-- CSRF-Token für alle state-ändernden Admin/Auth-Formulare
+- Strict CSP (no remote includes, no inline scripts)
+- CSRF token for all state-changing admin/auth forms
 - frame-ancestors 'none'
-- no-store für Admin/Auth-Routen
-- korrekte Cache-Control für statische Medien
+- no-store for admin/auth routes
+- correct Cache-Control for static media
 - X-Permitted-Cross-Domain-Policies: none
 
-HSTS wird bewusst NICHT von der App gesetzt. ArborPress läuft hinter einem
-Reverse-Proxy (nginx/Apache/Traefik), der TLS terminiert. Nur der Proxy weiß,
-ob der Client tatsächlich HTTPS nutzt. Direktverbindungen über HTTP (z. B.
-lokale Entwicklung) dürfen keinen HSTS-Header erhalten – Browser würden ihn
-zwar ignorieren, das Konzept wäre aber falsch. → HSTS kommt vom Proxy.
-Siehe docs/proxy/*.conf.
+HSTS is deliberately NOT set by the app. ArborPress runs behind a reverse
+proxy (nginx/Apache/Traefik) that terminates TLS. Only the proxy knows
+whether the client is actually using HTTPS. Direct connections over HTTP (e.g.
+local development) must not receive an HSTS header – browsers would ignore it
+but the concept would be wrong. → HSTS comes from the proxy.
+See docs/proxy/*.conf.
 """
 
 from __future__ import annotations
@@ -34,18 +34,18 @@ CSRF_FORM_FIELD = "_csrf"  # hidden-input-Name in Templates
 
 
 def get_csrf_token() -> str:
-    """Gibt den CSRF-Token der aktuellen Session zurück; generiert ihn on-demand."""
+    """Returns the CSRF token for the current session; generates it on demand."""
     if _CSRF_SESSION_KEY not in session:
         session[_CSRF_SESSION_KEY] = secrets.token_hex(32)
     return session[_CSRF_SESSION_KEY]
 
 
 async def validate_csrf() -> None:
-    """Prüft CSRF-Token; bricht mit HTTP 403 ab wenn ungültig.
+    """Validates the CSRF token; aborts with HTTP 403 if invalid.
 
-    Akzeptiert Token aus:
-      1. HTML-Formularen  (POST-Body-Feld ``_csrf``)
-      2. AJAX/SPA-Requests (Header ``X-CSRF-Token``)
+    Accepts tokens from:
+      1. HTML forms  (POST body field ``_csrf``)
+      2. AJAX/SPA requests (header ``X-CSRF-Token``)
     """
     expected = session.get(_CSRF_SESSION_KEY)
     form = await request.form
@@ -54,15 +54,15 @@ async def validate_csrf() -> None:
         or request.headers.get("X-CSRF-Token", "")
     )
     if not expected or not submitted or not secrets.compare_digest(expected, submitted):
-        abort(403, "CSRF-Token ungültig oder fehlend")
+        abort(403, "CSRF token invalid or missing")
 
 
 # ---------------------------------------------------------------------------
 # CSP / Security-Header (§10)
 # ---------------------------------------------------------------------------
 
-# Kein 'unsafe-inline' für scripts; 'unsafe-inline' für styles ist akzeptabel
-# (kein Script-Injection via CSS möglich), kann via Nonce später schärfer werden.
+# No 'unsafe-inline' for scripts; 'unsafe-inline' for styles is acceptable
+# (no script injection via CSS possible), can be tightened later via nonce.
 _CSP_DEFAULT = (
     "default-src 'self'; "
     "script-src 'self'; "
@@ -78,18 +78,18 @@ _CSP_DEFAULT = (
     "upgrade-insecure-requests;"
 )
 
-# §10 Admin/Auth: kein Caching
+# §10 Admin/Auth: no caching
 _NO_STORE = "no-store, no-cache, must-revalidate, private"
-# §10 Statische Medien: aggressiv cachen
+# §10 Static media: aggressive caching
 _MEDIA_CACHE = "public, max-age=31536000, immutable"
 
 
 class SecurityHeadersMiddleware:
-    """ASGI-Middleware: Security-Header nach §10.
+    """ASGI middleware: security headers per §10.
 
-    - Alle Antworten erhalten Basis-Security-Header.
-    - Admin- und Auth-Pfade erhalten no-store.
-    - Media-Pfade erhalten aggressive Cache-Control.
+    - All responses receive base security headers.
+    - Admin and auth paths receive no-store.
+    - Media paths receive aggressive Cache-Control.
     """
 
     def __init__(self, app: Any) -> None:
@@ -126,9 +126,9 @@ class SecurityHeadersMiddleware:
             ("Content-Security-Policy", _CSP_DEFAULT),
             ("Permissions-Policy", "geolocation=(), camera=(), microphone=(), payment=()"),
             ("X-Permitted-Cross-Domain-Policies", "none"),
-            # HSTS wird NICHT hier gesetzt. ArborPress läuft hinter einem Proxy,
-            # der TLS terminiert. Nur der Proxy kennt das tatsächliche Transportprotokoll.
-            # HSTS muss ausschließlich vom Proxy kommen – siehe docs/proxy/*.conf.
+            # HSTS is NOT set here. ArborPress runs behind a proxy that
+            # terminates TLS. Only the proxy knows the actual transport protocol.
+            # HSTS must come exclusively from the proxy – see docs/proxy/*.conf.
         ]
 
         # §8 Admin/Auth: no-store + noindex
@@ -136,7 +136,7 @@ class SecurityHeadersMiddleware:
             headers.append(("Cache-Control", _NO_STORE))
             headers.append(("X-Robots-Tag", "noindex, nofollow"))
 
-        # §6 Media: aggressives Caching
+        # §6 Media: aggressive caching
         elif path.startswith("/media/"):
             headers.append(("Cache-Control", _MEDIA_CACHE))
 

@@ -1,15 +1,15 @@
-"""Auth-Routen – WebAuthn-Registrierung und -Login (§2).
+"""Auth routes – WebAuthn registration and login (§2).
 
-Endpunkte:
-  POST /auth/register/begin       – Challenge für Credential-Registrierung
-  POST /auth/register/complete    – Verifikation + DB-Persistierung
-  POST /auth/login/begin          – Challenge für Login
-  POST /auth/login/complete       – Verifikation + Session anlegen
-  POST /auth/logout               – Session beenden
-  POST /auth/stepup/begin         – Step-up-Challenge (§2 sudo-mode)
-  POST /auth/stepup/complete      – Step-up bestätigen
-  GET  /auth/login                – Login-HTML-Seite
-  GET  /auth/register             – Registrierungs-HTML-Seite
+Endpoints:
+  POST /auth/register/begin       – Challenge for credential registration
+  POST /auth/register/complete    – Verification + DB persistence
+  POST /auth/login/begin          – Challenge for login
+  POST /auth/login/complete       – Verification + session creation
+  POST /auth/logout               – End session
+  POST /auth/stepup/begin         – Step-up challenge (§2 sudo-mode)
+  POST /auth/stepup/complete      – Confirm step-up
+  GET  /auth/login                – Login HTML page
+  GET  /auth/register             – Registration HTML page
 """
 
 from __future__ import annotations
@@ -35,10 +35,10 @@ auth_bp = Blueprint("auth", __name__, template_folder="../../templates")
 
 @auth_bp.before_request
 async def _auth_csrf_check() -> None:
-    """CSRF-Schutz für HTML-Form-POSTs (§10).
+    """CSRF protection for HTML form POSTs (§10).
 
-    JSON-API-Requests (WebAuthn challenge/response) werden ausgenommen und
-    stattdessen durch den Origin/Referer-Check in _origin_check() gesichert.
+    JSON API requests (WebAuthn challenge/response) are excluded and
+    instead secured by the Origin/Referer check in _origin_check().
     """
     if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
         return
@@ -58,10 +58,10 @@ _RATE_LIMITED_PATHS = frozenset({
 
 @auth_bp.before_request
 async def _rate_limit_auth():
-    """IP-basiertes Rate-Limiting für sensible Auth-Endpunkte (§10).
+    """IP-based rate limiting for sensitive auth endpoints (§10).
 
-    Nutzt ``AuthSettings.auth_rate_limit`` (Standard: ``"10/minute"``).
-    Gibt HTTP 429 + ``Retry-After: 60`` zurück wenn das Limit überschritten wird.
+    Uses ``AuthSettings.auth_rate_limit`` (default: ``"10/minute"``).
+    Returns HTTP 429 + ``Retry-After: 60`` if the limit is exceeded.
     """
     if request.method != "POST" or request.path not in _RATE_LIMITED_PATHS:
         return
@@ -85,7 +85,7 @@ def _get_webauthn() -> WebAuthnService:
     from urllib.parse import urlparse
     parsed = urlparse(cfg.web.base_url)
     _host = parsed.hostname or "localhost"
-    # WebAuthn-Spec: rp_id muss ASCII/Punycode – kein Unicode für IDN-Domains
+    # WebAuthn spec: rp_id must be ASCII/Punycode – no Unicode for IDN domains
     if _host not in ("localhost", "127.0.0.1", "::1"):
         try:
             import idna as _idna  # idna>=3.7 (IDNA 2008)
@@ -129,13 +129,13 @@ async def register_begin():
 
     user_name: str = data["user_name"].strip()
     if not user_name or len(user_name) > 64:
-        abort(400, "user_name ungültig")
+        abort(400, "user_name invalid")
 
     wa = _get_webauthn()
 
     async for db in get_db_session():
         from arborpress.models.user import User
-        # Prüfen ob User bereits existiert
+        # Check whether user already exists
         stmt = select(User).where(User.username == user_name)
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
@@ -149,7 +149,7 @@ async def register_begin():
             db.add(user)
             await db.flush()  # ID generieren ohne commit
 
-        # Existierende Credentials für exclude_credentials
+        # Existing credentials for exclude_credentials
         from arborpress.models.user import WebAuthnCredential
         cred_stmt = select(WebAuthnCredential.credential_id).where(
             WebAuthnCredential.user_id == user.id
@@ -167,7 +167,7 @@ async def register_begin():
             existing_credentials=existing,
         )
 
-        # Challenge + User-ID in Session (§10 kein Offenlegung nach außen)
+        # Challenge + user ID in session (§10 no disclosure externally)
         session["reg_challenge"] = opts.challenge
         session["reg_user_id"] = str(user.id)
 
@@ -178,7 +178,7 @@ async def register_begin():
 
 @auth_bp.post("/register/complete")
 async def register_complete():
-    """Schließt die WebAuthn-Registrierung ab und speichert Credential (§2)."""
+    """Completes WebAuthn registration and stores credential (§2)."""
     from webauthn.helpers.structs import RegistrationCredential
 
     raw = await request.get_json()
@@ -197,7 +197,7 @@ async def register_complete():
         log.warning("WebAuthn-Registrierung fehlgeschlagen: %s", exc)
         abort(400, "Registrierung fehlgeschlagen")
 
-    label: str = raw.get("label") or "Sicherheitsschlüssel"
+    label: str = raw.get("label") or "Security key"
 
     async for db in get_db_session():
         from arborpress.models.user import User, WebAuthnCredential
@@ -302,7 +302,7 @@ async def login_complete():
                 current_sign_count=db_cred.sign_count,
             )
         except Exception as exc:
-            log.warning("WebAuthn-Auth fehlgeschlagen für user=%s: %s", user.username, exc)
+            log.warning("WebAuthn auth failed for user=%s: %s", user.username, exc)
             await emit_fail(user.id)
             abort(401, "Authentifizierung fehlgeschlagen")
 
@@ -400,16 +400,16 @@ async def breakglass_login():
             or not user.legacy_password_hash
         )
         if user_invalid:
-            # Timing-Safe: trotzdem dummy-hash prüfen um Timing-Angriffe zu erschweren
+            # Timing-safe: run dummy-hash check anyway to harden against timing attacks
             from arborpress.auth.breakglass import _hasher
             try:
                 _hasher.verify("$argon2id$dummy", password)
             except Exception as _e:  # noqa: BLE001
                 log.debug("Dummy-Verifikation (erwartet): %s", _e)
-            abort(401, "Ungültige Anmeldedaten")
+            abort(401, "Invalid credentials")
 
         if not verify_password(user.legacy_password_hash, password, admin_id=str(user.id)):
-            abort(401, "Ungültige Anmeldedaten")
+            abort(401, "Invalid credentials")
 
         # Rehash bei veralteten Parametern
         if needs_rehash(user.legacy_password_hash):
@@ -512,7 +512,7 @@ async def stepup_begin():
 
 @auth_bp.post("/stepup/complete")
 async def stepup_complete():
-    """Schließt Step-up ab und gewährt erhöhte Rechte (§2)."""
+    """Completes step-up and grants elevated privileges (§2)."""
     from webauthn.helpers.structs import AuthenticationCredential
 
     raw = await request.get_json()

@@ -1,19 +1,19 @@
-"""DB-Capability-Detection (§12).
+"""DB capability detection (§12).
 
-Erkennt Motor und Version beim Start und setzt Feature-Flags.
+Detects engine and version at startup and sets feature flags.
 
-Unterstützte FTS-Provider (in Priorität):
-  pg_fts              PostgreSQL ts_vector / ts_query (nativ)
-  mariadb_fulltext    MariaDB/MySQL FULLTEXT-Index (nativ)
-  sqlite_fts5         SQLite FTS5 (virtuelle Tabellen, nativ)
-  meilisearch         Externer Dienst – Dep: meilisearch-python-sdk
-  typesense           Externer Dienst – Dep: typesense
-  elasticsearch       Externer Dienst – Dep: elasticsearch[async]
-  manticore           ManticoreSearch (MySQL-Protokoll)
-  fallback            ILIKE/LIKE-Suche (immer verfügbar)
+Supported FTS providers (by priority):
+  pg_fts              PostgreSQL ts_vector / ts_query (native)
+  mariadb_fulltext    MariaDB/MySQL FULLTEXT index (native)
+  sqlite_fts5         SQLite FTS5 (virtual tables, native)
+  meilisearch         External service – dep: meilisearch-python-sdk
+  typesense           External service – dep: typesense
+  elasticsearch       External service – dep: elasticsearch[async]
+  manticore           ManticoreSearch (MySQL protocol)
+  fallback            ILIKE/LIKE search (always available)
 
-Externe FTS-Engine-Konfiguration via config.toml [search]:
-  provider            = "auto"         # auto erkennt nativ; explizit überschreiben
+External FTS engine configuration via config.toml [search]:
+  provider            = "auto"         # auto detects natively; override explicitly
   meilisearch_url     = "http://localhost:7700"
   meilisearch_api_key = ""
   typesense_host      = "localhost"
@@ -40,7 +40,7 @@ log = logging.getLogger("arborpress.db.capabilities")
 
 @dataclass
 class DBCapabilities:
-    """Runtime-Capability-Flags der Datenbank."""
+    """Runtime capability flags of the database."""
 
     engine_name: str = ""        # "postgresql" | "mysql" | "sqlite"
     version_string: str = ""
@@ -66,9 +66,9 @@ class DBCapabilities:
 
 
 async def detect_capabilities(engine: AsyncEngine) -> DBCapabilities:
-    """Fragt Datenbankversion ab und setzt Feature-Flags (§12).
+    """Queries the database version and sets feature flags (§12).
 
-    Erkennt zusätzlich konfigurierte externe FTS-Engines.
+    Also detects configured external FTS engines.
     """
     from sqlalchemy import text as sa_text
 
@@ -125,8 +125,8 @@ async def detect_capabilities(engine: AsyncEngine) -> DBCapabilities:
             if m:
                 caps.major, caps.minor = int(m.group(1)), int(m.group(2))
 
-            # FTS5 ist seit SQLite 3.9 verfügbar (released 2015)
-            # Prüfen ob FTS5-Extension tatsächlich kompiliert ist
+            # FTS5 has been available since SQLite 3.9 (released 2015)
+            # Check whether FTS5 extension is actually compiled
             fts5_available = False
             try:
                 await conn.execute(sa_text(
@@ -136,7 +136,7 @@ async def detect_capabilities(engine: AsyncEngine) -> DBCapabilities:
                 await conn.execute(sa_text("DROP TABLE IF EXISTS _fts5_check"))
                 fts5_available = True
             except Exception:
-                log.debug("SQLite FTS5 nicht verfügbar", exc_info=True)
+                log.debug("SQLite FTS5 not available", exc_info=True)
 
             caps.fts_available = fts5_available
             caps.fts_provider = "sqlite_fts5" if fts5_available else "fallback"
@@ -148,7 +148,7 @@ async def detect_capabilities(engine: AsyncEngine) -> DBCapabilities:
             caps.window_funcs = caps.major >= 3 and caps.minor >= 25
 
     # -----------------------------------------------------------------------
-    # Externe FTS-Engine erkennen (optional, überschreibt nativen Provider)
+    # Detect external FTS engine (optional, overrides native provider)
     # -----------------------------------------------------------------------
     caps.external_fts = await _detect_external_fts()
     if caps.external_fts:
@@ -167,9 +167,9 @@ async def detect_capabilities(engine: AsyncEngine) -> DBCapabilities:
 
 
 async def _detect_external_fts() -> str:
-    """Prüft konfigurierte externe FTS-Engine auf Erreichbarkeit.
+    """Checks configured external FTS engine for reachability.
 
-    Gibt den Provider-Namen zurück oder "" wenn keine konfiguriert/erreichbar.
+    Returns the provider name or "" if none configured/reachable.
     """
     try:
         from arborpress.core.site_settings import get_cached, get_defaults
@@ -177,7 +177,7 @@ async def _detect_external_fts() -> str:
         provider = search.get("provider", "auto")
 
         if provider == "auto":
-            return ""  # Nativ wird in detect_capabilities() gesetzt
+            return ""  # Native is set in detect_capabilities()
 
         if provider == "meilisearch":
             return await _check_meilisearch(search)
@@ -186,9 +186,9 @@ async def _detect_external_fts() -> str:
         if provider == "elasticsearch":
             return await _check_elasticsearch(search)
         if provider == "manticore":
-            return "manticore"  # Kein HTTP-Check hier (MySQL-Protokoll)
+            return "manticore"  # No HTTP check here (MySQL protocol)
     except Exception as exc:
-        log.debug("Externe FTS-Erkennung fehlgeschlagen: %s", exc)
+        log.debug("External FTS detection failed: %s", exc)
     return ""
 
 
@@ -201,7 +201,7 @@ async def _check_meilisearch(cfg: dict) -> str:
             if r.status_code == 200:
                 return "meilisearch"
     except Exception:
-        log.debug("Meilisearch nicht erreichbar: %s", url)
+        log.debug("Meilisearch not reachable: %s", url)
     return ""
 
 
@@ -219,7 +219,7 @@ async def _check_typesense(cfg: dict) -> str:
             if r.status_code == 200:
                 return "typesense"
     except Exception:
-        log.debug("Typesense nicht erreichbar: %s:%s", host, port)
+        log.debug("Typesense not reachable: %s:%s", host, port)
     return ""
 
 
@@ -232,7 +232,7 @@ async def _check_elasticsearch(cfg: dict) -> str:
             if r.status_code == 200:
                 return "elasticsearch"
     except Exception:
-        log.debug("Elasticsearch nicht erreichbar: %s", url)
+        log.debug("Elasticsearch not reachable: %s", url)
     return ""
 
 
@@ -244,10 +244,10 @@ _caps: DBCapabilities | None = None
 
 
 def get_capabilities() -> DBCapabilities:
-    """Gibt gecachte Capabilities zurück (nach detect_capabilities() initialisiert)."""
+    """Returns cached capabilities (initialised after detect_capabilities())."""
     if _caps is None:
         raise RuntimeError(
-            "DB-Capabilities noch nicht initialisiert. detect_capabilities() aufrufen."
+            "DB capabilities not yet initialised. Call detect_capabilities() first."
         )
     return _caps
 

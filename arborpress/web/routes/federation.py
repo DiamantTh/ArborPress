@@ -59,7 +59,7 @@ async def webfinger() -> tuple:
     # acct:handle@domain
     handle = resource.removeprefix("acct:").split("@")[0].lstrip("@")
     # TODO: User-Lookup, OPERATIONAL-Accounts → 404
-    # §4: Operational-Konten dürfen nicht via WebFinger auffindbar sein
+    # §4: Operational accounts must not be discoverable via WebFinger
     base = get_settings().web.base_url.rstrip("/")
 
     jrd = {
@@ -168,7 +168,7 @@ async def ap_inbox(handle: str) -> tuple:
         )
 
     audit.info("AP inbox received | handle=%s type=%s", handle, raw.get("type"))
-    # TODO: Inbox-Verarbeitung (HTTP Signature prüfen, Aktivität verarbeiten)
+    # TODO: Inbox processing (verify HTTP Signature, process activity)
     return jsonify({"status": "accepted"}), 202
 
 

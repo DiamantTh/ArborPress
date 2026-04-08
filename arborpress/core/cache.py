@@ -1,16 +1,16 @@
-"""Cache-Backend-Abstraktion (§12 / §14 cache).
+"""Cache backend abstraction (§12 / §14 cache).
 
-Unterstützte Backends:
-  memory       – asyncio-kompatibles In-Process-Dict (Default, kein Dep)
+Supported backends:
+  memory       – asyncio-compatible in-process dict (default, no dep)
   redis        – redis-py async (optional: pip install redis)
   memcached    – aiomcache (optional: pip install aiomcache)
-  file         – JSON-Dump in Verzeichnis (persistent, kein externer Dienst)
-  none         – deaktiviert (jeder GET liefert None)
+  file         – JSON dump in directory (persistent, no external service)
+  none         – disabled (every GET returns None)
 
-Konfiguration via config.toml [cache]:
+Configuration via config.toml [cache]:
   backend      = "memory"           # memory|redis|memcached|file|none
-  ttl          = 300                # Standard-TTL in Sekunden
-  prefix       = "ap:"              # Key-Präfix
+  ttl          = 300                # default TTL in seconds
+  prefix       = "ap:"              # key prefix
   # Redis
   redis_url    = "redis://localhost:6379/0"
   # Memcached
@@ -19,12 +19,12 @@ Konfiguration via config.toml [cache]:
   # File
   file_dir     = "/tmp/arborpress_cache"
 
-Öffentliche API (async):
+Public API (async):
   cache_get(key)               -> Any | None
   cache_set(key, value, ttl?)  -> None
   cache_delete(key)            -> None
   cache_flush()                -> None
-  cache_backend_info()         -> str        (für CLI/Admin)
+  cache_backend_info()         -> str        (for CLI/admin)
 """
 
 from __future__ import annotations
@@ -39,12 +39,12 @@ from typing import Any
 log = logging.getLogger("arborpress.cache")
 
 # ---------------------------------------------------------------------------
-# Backend-Protokoll
+# Backend protocol
 # ---------------------------------------------------------------------------
 
 
 class CacheBackend:
-    """Basis-Interface – alle Backends implementieren diese Methoden."""
+    """Base interface – all backends implement these methods."""
 
     async def get(self, key: str) -> Any | None:  # noqa: ANN401
         raise NotImplementedError
@@ -68,7 +68,7 @@ class CacheBackend:
 
 
 class NoneBackend(CacheBackend):
-    """Deaktivierter Cache – jeder GET liefert None."""
+    """Disabled cache – every GET returns None."""
 
     async def get(self, key: str) -> None:
         return None
@@ -92,7 +92,7 @@ class NoneBackend(CacheBackend):
 
 
 class MemoryBackend(CacheBackend):
-    """In-Process-Dict mit TTL-Verfolgung. Thread-/Coroutine-sicher via asyncio.Lock."""
+    """In-process dict with TTL tracking. Thread/coroutine-safe via asyncio.Lock."""
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
@@ -146,7 +146,7 @@ class RedisBackend(CacheBackend):
                 import redis.asyncio as aioredis
             except ImportError as exc:
                 raise RuntimeError(
-                    "redis-Backend benötigt 'redis'. pip install 'redis[hiredis]'"
+                    "redis backend requires 'redis'. pip install 'redis[hiredis]'"
                 ) from exc
             self._client = aioredis.from_url(self._url, decode_responses=False)
         return self._client
@@ -178,7 +178,7 @@ class RedisBackend(CacheBackend):
 
     async def flush(self) -> None:
         r = await self._ensure()
-        # Nur Keys mit Präfix löschen
+        # Delete only keys with this prefix
         keys = await r.keys(f"{self._prefix}*")
         if keys:
             await r.delete(*keys)
@@ -207,13 +207,13 @@ class MemcachedBackend(CacheBackend):
                 import aiomcache
             except ImportError as exc:
                 raise RuntimeError(
-                    "memcached-Backend benötigt 'aiomcache'. pip install aiomcache"
+                    "memcached backend requires 'aiomcache'. pip install aiomcache"
                 ) from exc
             self._client = aiomcache.Client(self._host, self._port)
         return self._client
 
     def _k(self, key: str) -> bytes:
-        # Memcached: keine Leerzeichen/Steuerzeichen, max 250 Zeichen
+        # Memcached: no spaces/control chars, max 250 characters
         k = f"{self._prefix}{key}"[:250]
         return k.encode()
 
@@ -250,10 +250,10 @@ class MemcachedBackend(CacheBackend):
 
 
 class FileBackend(CacheBackend):
-    """Einfaches dateibasiertes Backend – JSON-Dateien pro Key.
+    """Simple file-based backend – one JSON file per key.
 
-    Sinnvoll für Single-Server-Deployments ohne Redis, wenn Cache für
-    Neustarts erhalten bleiben soll (z. B. Markdown-Render-Cache).
+    Useful for single-server deployments without Redis when the cache
+    should survive restarts (e.g. markdown render cache).
     """
 
     def __init__(self, directory: str, prefix: str = "ap_") -> None:
@@ -262,7 +262,7 @@ class FileBackend(CacheBackend):
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
-        # Unsafe Zeichen ersetzen
+        # Replace unsafe characters
         safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in key)
         return self._dir / f"{self._prefix}{safe}.cache"
 
@@ -288,7 +288,7 @@ class FileBackend(CacheBackend):
         try:
             p.write_text(json.dumps(payload, default=str), encoding="utf-8")
         except OSError as exc:
-            log.warning("FileCache.set fehlgeschlagen: %s", exc)
+            log.warning("FileCache.set failed: %s", exc)
 
     async def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)
@@ -311,7 +311,7 @@ _default_ttl: int = 300
 
 
 def _build_backend() -> CacheBackend:
-    """Liest config und baut das konfigurierte Backend."""
+    """Read config and build the configured backend."""
     try:
         from arborpress.core.config import get_settings
         cfg = get_settings()
@@ -336,27 +336,27 @@ def _build_backend() -> CacheBackend:
         # Default: memory
         return MemoryBackend()
     except Exception as exc:
-        log.warning("Cache-Konfiguration fehlgeschlagen (%s) – nutze Memory-Backend", exc)
+        log.warning("Cache configuration failed (%s) – using memory backend", exc)
         return MemoryBackend()
 
 
 def get_backend() -> CacheBackend:
-    """Gibt das initialisierte Backend zurück (Lazy-Init)."""
+    """Return the initialized backend (lazy init)."""
     global _backend
     if _backend is None:
         _backend = _build_backend()
-        log.info("Cache-Backend: %s", _backend.info())
+        log.info("Cache backend: %s", _backend.info())
     return _backend
 
 
 def reset_backend(new_backend: CacheBackend | None = None) -> None:
-    """Cache-Backend zurücksetzen (z. B. nach Konfig-Änderung oder in Tests)."""
+    """Reset cache backend (e.g. after config change or in tests)."""
     global _backend
     _backend = new_backend
 
 
 # ---------------------------------------------------------------------------
-# Convenience-Funktionen (öffentliche API)
+# Convenience functions (public API)
 # ---------------------------------------------------------------------------
 
 

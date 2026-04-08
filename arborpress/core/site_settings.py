@@ -1,25 +1,25 @@
-"""Zugriff auf DB-gespeicherte Site-Einstellungen.
+"""Access to database-stored site settings.
 
-Alle nicht-infrastrukturellen Konfigurationswerte werden hier verwaltet.
-config.toml enthält nur noch: [db], [web] (host/port/secret), [auth], [logging], [plugins].
+All non-infrastructure configuration values are managed here.
+config.toml only retains: [db], [web] (host/port/secret), [auth], [logging], [plugins].
 
-Sektionen und ihre Defaults:
-  general    – Blog-Titel, Beschreibung, Sprache, Posts/Seite
-  theme      – Aktives Theme, externer Themes-Ordner
-  mail       – SMTP-Backend, Host, Port, Credentials, From-Adresse
-  comments   – Moderation, E-Mail-Bestätigung, Rate-Limit
-  captcha    – Typ, eigene Fragen, Provider-Keys
-  federation – ActivityPub-Modus, Instanzname
-  search     – FTS-Provider
+Sections and their defaults:
+  general    – blog title, description, language, posts per page
+  theme      – active theme, external themes folder
+  mail       – SMTP backend, host, port, credentials, from address
+  comments   – moderation, e-mail confirmation, rate limit
+  captcha    – type, custom questions, provider keys
+  federation – ActivityPub mode, instance name
+  search     – FTS provider
 
-Öffentliche API (async):
-  get_section(section, db)                → dict (Defaults + DB merged)
+Public API (async):
+  get_section(section, db)                → dict (defaults + DB merged)
   save_section(section, data, db, by="") → None
   invalidate_cache(section=None)         → None
 
-Sync-Hilfsfunktionen:
-  get_defaults(section)  → dict  (nur Defaults, ohne DB)
-  get_cached(section)    → dict | None  (nur Cache, None wenn nicht befüllt)
+Sync helpers:
+  get_defaults(section)  → dict  (defaults only, without DB)
+  get_cached(section)    → dict | None  (cache only, None if not populated)
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from typing import Any
 log = logging.getLogger("arborpress.site_settings")
 
 # ---------------------------------------------------------------------------
-# Defaults – werden mit DB-Werten gemergt (DB überschreibt Defaults)
+# Defaults – merged with DB values (DB overrides defaults)
 # ---------------------------------------------------------------------------
 
 _DEFAULTS: dict[str, dict[str, Any]] = {
@@ -43,13 +43,13 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "theme": {
         "active":          "default",
-        "themes_dir":      "content/themes",      # relativ zum Arbeitsverzeichnis
-        "auto_dark":       False,          # automatisch Dark-Companion ab/bis Uhrzeit aktivieren
-        "auto_dark_start": 19,             # Stunde (0–23), ab der das Dark-Theme gilt
-        "auto_dark_end":   6,              # Stunde (0–23), bis zu der das Dark-Theme gilt
-        # Hintergrundmuster-Override ("auto" = Theme-eigene --bg-pattern-Variable)
+        "themes_dir":      "content/themes",      # relative to working directory
+        "auto_dark":       False,          # automatically activate dark companion between hours
+        "auto_dark_start": 19,             # hour (0–23) from which dark theme applies
+        "auto_dark_end":   6,              # hour (0–23) until which dark theme applies
+        # Background pattern override ("auto" = theme's own --bg-pattern variable)
         "bg_pattern":       "auto",        # none | auto | hexagon | diamond | triangle | ...
-        "bg_pattern_color": "",            # Hex-Farbe, leer = Theme-Akzentfarbe
+        "bg_pattern_color": "",            # hex color, empty = theme accent color
         "bg_pattern_opacity": 0.07,        # 0–1
     },
     "mail": {
@@ -57,9 +57,9 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "smtp_host":        "localhost",
         "smtp_port":        587,
         "smtp_user":        "",
-        "smtp_password":    "",       # wird NICHT im Browser angezeigt
-        "smtp_tls":         False,    # echte TLS (Port 465)
-        "smtp_starttls":    True,     # STARTTLS-Upgrade (Port 587)
+        "smtp_password":    "",       # NOT displayed in the browser
+        "smtp_tls":         False,    # real TLS (port 465)
+        "smtp_starttls":    True,     # STARTTLS upgrade (port 587)
         "from_address":     "noreply@example.com",
         "from_name":        "ArborPress",
         "pgp_sign_enabled": False,
@@ -73,16 +73,16 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "require_admin_approval":     True,
         "notify_admin_email":         "",
         "rate_limit_per_hour":        10,
-        "blocklist":                  "",   # Zeilengetrennte Schlüsselwörter / E-Mails / IPs
+        "blocklist":                  "",   # newline-separated keywords / emails / IPs
     },
     "captcha": {
         "default_type": "custom",   # none|math|custom|hcaptcha|friendly_captcha|…
         "custom_questions": [
-            {"q": "Wie heißt dieses CMS?",             "a": "arborpress"},
-            {"q": "Welche Farbe hat Gras?",             "a": "grün"},
-            {"q": "Wie viele Beine hat eine Katze?",   "a": "4"},
-            {"q": "Was ist das Gegenteil von schwarz?","a": "weiß"},
-            {"q": "Wie viele Tage hat eine Woche?",    "a": "7"},
+            {"q": "What is this CMS called?",        "a": "arborpress"},
+            {"q": "What color is grass?",             "a": "green"},
+            {"q": "How many legs does a cat have?",   "a": "4"},
+            {"q": "What is the opposite of black?",   "a": "white"},
+            {"q": "How many days does a week have?",  "a": "7"},
         ],
         # hCaptcha
         "hcaptcha_site_key":   "",
@@ -92,7 +92,7 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "friendly_sitekey":   "",
         "friendly_api_key":   "",
         "friendly_verify_url": "https://global.frcapi.com/api/v2/captcha/siteverify",
-        # ALTCHA (selbstgehostet, kein externer Dienst)
+        # ALTCHA (self-hosted, no external service)
         "altcha_hmac_key":    "",
         "altcha_max_number":  1_000_000,
         "altcha_algorithm":   "SHA-256",
@@ -114,21 +114,21 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "instance_name":        "ArborPress",
         "instance_description": "",
         "contact_email":        "",
-        # Sichtbarkeit
-        "followers_visible":           True,   # Follower-Liste öffentlich sichtbar
-        "following_visible":           True,   # Following-Liste öffentlich sichtbar
-        "allow_per_account_federation": True,  # Accounts können Fediverse-Opt-out nutzen
-        # Follow-Kontrolle
-        "require_approval_to_follow":  False,  # Follow-Anfragen manuell bestätigen
-        # Inhalte
-        "federate_tags":               True,   # Hashtag-Aktivitäten federieren
-        "federate_media":              False,  # Medien-Attachments in AP-Objekten senden
-        "max_note_length":             500,    # Zeichenlimit für AP-Notizen/Replies
-        # Sicherheit
-        "require_http_signature":      True,   # Unsigned Inbox-Requests ablehnen
-        "authorized_fetch":            False,  # Outbox/Actor nur mit Signatur abrufbar
-        "inbox_blocklist_domains":     [],     # Domains, von denen kein Inlet akzeptiert
-        "allowlist_mode":              False,  # Nur Allowlist-Domains akzeptiert
+        # Visibility
+        "followers_visible":           True,   # followers list publicly visible
+        "following_visible":           True,   # following list publicly visible
+        "allow_per_account_federation": True,  # accounts can opt out of fediverse
+        # Follow control
+        "require_approval_to_follow":  False,  # confirm follow requests manually
+        # Content
+        "federate_tags":               True,   # federate hashtag activities
+        "federate_media":              False,  # send media attachments in AP objects
+        "max_note_length":             500,    # character limit for AP notes/replies
+        # Security
+        "require_http_signature":      True,   # reject unsigned inbox requests
+        "authorized_fetch":            False,  # outbox/actor only retrievable with signature
+        "inbox_blocklist_domains":     [],     # domains from which no inbox is accepted
+        "allowlist_mode":              False,  # only allowlisted domains accepted
     },
     "search": {
         # Provider: auto|pg_fts|mariadb_fulltext|sqlite_fts5
@@ -147,31 +147,31 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "manticore_url":     "mysql://localhost:9306",
     },
     "demo": {
-        "enabled":        False,   # Demo-Modus: Besucher können Theme wechseln
-        "show_banner":    True,    # Hinweis-Banner oben anzeigen
-        "allow_all_themes": True,  # Alle Themes zeigen (auch Dark-Only)
+        "enabled":        False,   # demo mode: visitors can switch themes
+        "show_banner":    True,    # show info banner at the top
+        "allow_all_themes": True,  # show all themes (including dark-only)
     },
 }
 
 # ---------------------------------------------------------------------------
-# In-Memory-Cache (section → merged dict)
+# In-memory cache (section → merged dict)
 # ---------------------------------------------------------------------------
 
 _cache: dict[str, dict[str, Any]] = {}
 
 
 def get_defaults(section: str) -> dict[str, Any]:
-    """Gibt die Hard-coded Defaults einer Sektion zurück (synchron, ohne DB)."""
+    """Return the hard-coded defaults for a section (synchronous, no DB)."""
     return dict(_DEFAULTS.get(section, {}))
 
 
 def get_cached(section: str) -> dict[str, Any] | None:
-    """Gibt die gecachte Version zurück, oder None wenn nicht im Cache."""
+    """Return the cached version, or None if not in cache."""
     return _cache.get(section)
 
 
 def invalidate_cache(section: str | None = None) -> None:
-    """Cache leeren – nach einem Speichern oder Anwendungsstart."""
+    """Clear cache – after a save or on application start."""
     if section:
         _cache.pop(section, None)
     else:
@@ -179,14 +179,14 @@ def invalidate_cache(section: str | None = None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Async DB-Operationen
+# Async DB operations
 # ---------------------------------------------------------------------------
 
 async def get_section(section: str, db: Any) -> dict[str, Any]:
-    """Liest eine Einstellungssektion aus der DB.
+    """Read a settings section from the DB.
 
-    Merged DB-Werte mit Defaults (DB überschreibt). Cached in Memory.
-    Wirft keine Exception bei DB-Fehler – fällt auf Defaults zurück.
+    Merges DB values with defaults (DB overrides). Cached in memory.
+    Does not raise on DB error – falls back to defaults.
     """
     if section in _cache:
         return dict(_cache[section])
@@ -206,7 +206,7 @@ async def get_section(section: str, db: Any) -> dict[str, Any]:
             stored = json.loads(row.value)
             merged.update(stored)
     except Exception as exc:
-        log.warning("SiteSettings.get_section(%r) DB-Fehler (nutze Defaults): %s", section, exc)
+        log.warning("SiteSettings.get_section(%r) DB error (using defaults): %s", section, exc)
 
     _cache[section] = merged
     return dict(merged)
@@ -218,10 +218,10 @@ async def save_section(
     db: Any,
     updated_by: str = "",
 ) -> None:
-    """Speichert eine Einstellungssektion in der DB.
+    """Save a settings section to the DB.
 
-    Mergt mit Defaults (DB enthält nur explizit gesetzte Werte).
-    Leert den Cache für diese Sektion nach dem Speichern.
+    Merges with defaults (DB stores only explicitly set values).
+    Clears the cache for this section after saving.
     """
     from sqlalchemy import select
 
@@ -242,12 +242,12 @@ async def save_section(
 
         await db.commit()
 
-        # Cache aktualisieren
+        # Update cache
         merged = dict(_DEFAULTS.get(section, {}))
         merged.update(data)
         _cache[section] = merged
 
-        log.info("SiteSettings gespeichert | section=%s by=%s", section, updated_by)
+        log.info("SiteSettings saved | section=%s by=%s", section, updated_by)
     except Exception as exc:
-        log.error("SiteSettings.save_section(%r) Fehler: %s", section, exc)
+        log.error("SiteSettings.save_section(%r) error: %s", section, exc)
         raise

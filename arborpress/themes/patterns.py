@@ -1,14 +1,14 @@
-"""Hintergrundmuster-Definitionen für ArborPress-Themes.
+"""Background pattern definitions for ArborPress themes.
 
-Kachelbare SVG-Polygonmuster als data: URI.
-Platzhalter:
-  {c}  – URL-encodierte Farbe (z. B. %23818cf8 für #818cf8)
-  {o}  – Deckkraft als float (z. B. 0.07)
+Tileable SVG polygon patterns as data: URIs.
+Placeholders:
+  {c}  – URL-encoded colour (e.g. %23818cf8 for #818cf8)
+  {o}  – opacity as float (e.g. 0.07)
 """
 
 from __future__ import annotations
 
-# SVG-Pattern-Templates (kachelfähig, inline data: URI kompatibel)
+# SVG pattern templates (tileable, compatible with inline data: URI)
 PATTERN_TEMPLATES: dict[str, str] = {
     "hexagon": (
         "<svg xmlns='http://www.w3.org/2000/svg' width='36' height='30'>"
@@ -61,20 +61,20 @@ PATTERN_TEMPLATES: dict[str, str] = {
 }
 
 PATTERN_LABELS: dict[str, str] = {
-    "auto":        "Theme-Standard",
-    "none":        "Kein Muster",
-    "hexagon":     "Hexagone",
-    "diamond":     "Rauten",
-    "diamond-lg":  "Rauten (groß)",
-    "triangle":    "Dreiecke",
-    "triangle-sm": "Dreiecke (klein)",
+    "auto":        "Theme default",
+    "none":        "No pattern",
+    "hexagon":     "Hexagons",
+    "diamond":     "Diamonds",
+    "diamond-lg":  "Diamonds (large)",
+    "triangle":    "Triangles",
+    "triangle-sm": "Triangles (small)",
     "chevron":     "Chevron",
-    "star":        "Sternmuster",
-    "dots":        "Punkte",
-    "cross":       "Kreuzgitter",
+    "star":        "Star pattern",
+    "dots":        "Dots",
+    "cross":       "Crosshatch",
 }
 
-# Reihenfolge für Admin-UI
+# Order for admin UI
 PATTERN_ORDER = [
     "auto", "none", "hexagon", "diamond", "diamond-lg",
     "triangle", "triangle-sm", "chevron", "star", "dots", "cross",
@@ -82,19 +82,19 @@ PATTERN_ORDER = [
 
 
 def make_pattern_url(pattern_id: str, color: str, opacity: float = 0.07) -> str:
-    """Erzeugt eine ``data:image/svg+xml``-URL für das gegebene Pattern.
+    """Generates a ``data:image/svg+xml`` URL for the given pattern.
 
     Args:
-        pattern_id: Schlüssel aus :data:`PATTERN_TEMPLATES` oder ``"none"``/``"auto"``.
-                    ``"auto"`` gibt ``""`` zurück (Theme-eigene Variable bleibt aktiv).
-        color:      Hex-Farbe, z. B. ``"#818cf8"`` oder ``"818cf8"``.
-        opacity:    Deckkraft der Linien/Füllung (0–1).
+        pattern_id: Key from :data:`PATTERN_TEMPLATES` or ``"none"``/``"auto"``.
+                    ``"auto"`` returns ``""`` (theme's own variable stays active).
+        color:      Hex colour, e.g. ``"#818cf8"`` or ``"818cf8"``.
+        opacity:    Opacity of lines/fill (0–1).
 
     Returns:
-        CSS-``url(...)``-Wert oder ``"none"`` oder leerer String.
+        CSS ``url(...)`` value, ``"none"``, or empty string.
     """
     if pattern_id == "auto":
-        return ""   # kein Override – Theme-eigene --bg-pattern-Variable gilt
+        return ""   # no override – theme's own --bg-pattern variable applies
     if pattern_id == "none" or pattern_id not in PATTERN_TEMPLATES:
         return "none"
     rgb = color.lstrip("#")
@@ -104,7 +104,7 @@ def make_pattern_url(pattern_id: str, color: str, opacity: float = 0.07) -> str:
 
 
 def preview_svg(pattern_id: str, color: str = "#818cf8", size: int = 48) -> str:
-    """Gibt ein ``<svg>``-Element für die Admin-UI-Vorschau zurück."""
+    """Returns an ``<svg>`` element for the admin UI preview."""
     if pattern_id in ("auto", "none"):
         return (
             f"<svg xmlns='http://www.w3.org/2000/svg' width='{size}' height='{size}'>"
@@ -114,9 +114,9 @@ def preview_svg(pattern_id: str, color: str = "#818cf8", size: int = 48) -> str:
     rgb = color.lstrip("#")
     encoded_color = f"%23{rgb}"
     template = PATTERN_TEMPLATES.get(pattern_id, "")
-    # Einfaches Preview: Pattern dreimal kacheln → 3×3 Grid im SVG
+    # Simple preview: tile the pattern three times → 3×3 grid in SVG
     svg_tile = template.format(c=encoded_color, o=0.9)
-    # Tile-Dimensions aus Template ablesen (sehr einfach)
+    # Read tile dimensions from template (very simple)
     import re as _re
     m = _re.search(r"width='(\d+)'\s+height='(\d+)'", svg_tile)
     if not m:
