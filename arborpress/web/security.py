@@ -46,7 +46,18 @@ async def validate_csrf() -> None:
     Accepts tokens from:
       1. HTML forms  (POST body field ``_csrf``)
       2. AJAX/SPA requests (header ``X-CSRF-Token``)
+
+    Additionally checks the Origin/Referer header as a second CSRF layer
+    (defense-in-depth per §10).
     """
+    # Layer 1 – Origin/Referer check (defense-in-depth)
+    cfg = get_settings()
+    base = cfg.web.base_url.rstrip("/")
+    origin = request.headers.get("Origin") or request.headers.get("Referer", "")
+    if origin and not origin.startswith(base):
+        abort(403, "Cross-origin request rejected")
+
+    # Layer 2 – CSRF token comparison
     expected = session.get(_CSRF_SESSION_KEY)
     form = await request.form
     submitted = (

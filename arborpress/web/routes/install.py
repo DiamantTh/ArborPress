@@ -21,16 +21,27 @@ After installation:
 from __future__ import annotations
 
 import logging
-import re
 import secrets
 
 from quart import Blueprint, abort, redirect, render_template, request, session, url_for
 
+from arborpress.core.validators import is_valid_email, is_valid_username
 from arborpress.web.security import validate_csrf
 
 log = logging.getLogger("arborpress.web.install")
 
 install_bp = Blueprint("install", __name__, template_folder="../../templates")
+
+
+# ---------------------------------------------------------------------------
+# Rate-Limit helper  (§10 – brute-force protection on the install endpoint)
+# ---------------------------------------------------------------------------
+
+async def _check_install_rate_limit() -> bool:
+    """Returns False (= blocked) when the IP exceeds 10 POSTs/minute."""
+    from arborpress.web.ratelimit import check_rate_limit
+    ip = request.remote_addr or "unknown"
+    return check_rate_limit(f"install:{ip}", "10/minute")
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +73,11 @@ async def install_submit():
     if is_installed():
         abort(404)
 
+    # §10 Rate-limit: max. 10 install attempts per IP per minute
+    if not await _check_install_rate_limit():
+        from quart import Response
+        return Response("Too many requests", status=429, headers={"Retry-After": "60"})
+
     await validate_csrf()
 
     form = await request.form
@@ -89,13 +105,13 @@ async def install_submit():
     errors: list[str] = []
     if not site_name or len(site_name) > 128:
         errors.append("Blog name is required (max. 128 characters).")
-    if not admin_user or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]|[a-z0-9]", admin_user):
+    if not admin_user or not is_valid_username(admin_user):
         errors.append(
-            "Invalid username – lowercase letters, digits, dot, hyphen,"
-            " underscore only (max. 64 characters, must start and end with letter/digit)."
+            "Invalid username – letters, digits, dot, hyphen,"
+            " underscore only (max. 32 characters, must start and end with letter/digit)."
         )
-    if admin_email and len(admin_email) > 256:
-        errors.append("E-mail address too long.")
+    if admin_email and not is_valid_email(admin_email):
+        errors.append("Invalid e-mail address.")
 
     if errors:
         return await render_template("install.html", errors=errors, form=form), 400
@@ -106,14 +122,14 @@ async def install_submit():
         from arborpress.core.db import create_all_tables, get_db_session
         from arborpress.core.site_settings import save_section
         from arborpress.models.user import AccountType, User, UserRole
-        from sqlalchemy import select
+        from sqlalchemy import func, select
 
         # 1. Create DB schema
         await create_all_tables()
 
         # 2. Create admin user (idempotent)
         async for db in get_db_session():
-            result = await db.execute(select(User).where(User.username == admin_user))
+            result = await db.execute(select(User).where(func.lower(User.username) == admin_user.lower()))
             if result.scalar_one_or_none() is None:
                 user = User(
                     username=admin_user,
@@ -137,6 +153,23 @@ async def install_submit():
             token_file.unlink()
 
         log.info("Installation complete. Admin: %r, site: %r", admin_user, site_name)
+
+        # 5. DB-Capabilities detektieren und Scheduler starten (kein Neustart nötig)
+        import asyncio as _asyncio
+
+        from arborpress.core.db import get_engine as _get_engine
+        from arborpress.core.db_capabilities import (
+            detect_capabilities as _detect_caps,
+            set_capabilities as _set_caps,
+        )
+        from arborpress.core.scheduler import run_scheduler as _run_scheduler
+
+        try:
+            _set_caps(await _detect_caps(_get_engine()))
+        except Exception as _exc:
+            log.warning("DB-Capability-Detection nach Install fehlgeschlagen: %s", _exc)
+
+        _asyncio.ensure_future(_run_scheduler())
 
     except Exception as exc:
         log.error("Installation error: %s", exc, exc_info=True)

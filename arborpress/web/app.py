@@ -40,10 +40,16 @@ def create_app() -> Quart:
     # Secure=True: served as HTTPS by the proxy; in a local dev setup
     # set to False if no HTTPS is available.
     app.config["SESSION_COOKIE_HTTPONLY"] = True
-    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    # SameSite=Strict: cookie not sent on cross-site navigations (e.g. clicking a
+    # link in an e-mail). SSO callback flows re-establish the session via the
+    # provider redirect and are therefore not affected.
+    app.config["SESSION_COOKIE_SAMESITE"] = "Strict"
     app.config["SESSION_COOKIE_SECURE"] = cfg.web.base_url.startswith("https")
     # Session lifetime: not "permanent" – ends on browser close
     app.config["PERMANENT_SESSION_LIFETIME"] = cfg.auth.admin_session_ttl
+    # §10 Request-size guard: reject bodies > 2 MB before route handlers run.
+    # File uploads go through a dedicated endpoint that overrides this per-route.
+    app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024  # 2 MB
 
     # §7 I18N
     from arborpress.core.i18n import register_i18n
@@ -256,16 +262,19 @@ def create_app() -> Quart:
                     token_file.resolve(),
                 )
 
-        try:
-            caps = await detect_capabilities(get_engine())
-            set_capabilities(caps)
-        except Exception as exc:
-            _log.getLogger("arborpress").warning(
-                "DB-Capability-Detection fehlgeschlagen: %s", exc
-            )
+        # DB-abhängige Services nur starten wenn bereits installiert.
+        # Im Install-Modus ist noch keine DB konfiguriert/bereit.
+        if is_installed():
+            try:
+                caps = await detect_capabilities(get_engine())
+                set_capabilities(caps)
+            except Exception as exc:
+                _log.getLogger("arborpress").warning(
+                    "DB-Capability-Detection fehlgeschlagen: %s", exc
+                )
 
-        # Scheduled-Publishing-Worker starten
-        asyncio.ensure_future(run_scheduler())
+            # Scheduled-Publishing-Worker starten
+            asyncio.ensure_future(run_scheduler())
 
     return app
 

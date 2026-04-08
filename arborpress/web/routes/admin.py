@@ -20,6 +20,7 @@ from arborpress.auth.stepup import assert_stepup, is_stepup_active
 from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
 from arborpress.core.markdown import render_md_async
+from arborpress.core.validators import is_valid_slug
 from arborpress.logging.config import get_audit_logger
 from arborpress.web.security import validate_csrf
 
@@ -156,8 +157,8 @@ async def post_new_save():
 
     from arborpress.models.content import Post, PostRevision, PostStatus, PostVisibility
     form = await request.form
-    title        = (form.get("title") or "").strip()
-    slug         = (form.get("slug") or "").strip() or None
+    title        = (form.get("title") or "").strip()[:256]
+    slug         = (form.get("slug") or "").strip()[:128] or None
     body_md      = (form.get("body") or "").strip()
     status_val   = form.get("status", "draft")
     visibility_val = form.get("visibility", "public")
@@ -179,6 +180,10 @@ async def post_new_save():
     import re
     if not slug:
         slug = re.sub(r"[^a-z0-9\-]", "-", title.lower()).strip("-")
+        slug = re.sub(r"-{2,}", "-", slug)
+    elif not is_valid_slug(slug):
+        # Benutzer hat einen ungültigen Slug manuell eingegeben → auto-generieren
+        slug = re.sub(r"[^a-z0-9\-]", "-", slug.lower()).strip("-")
         slug = re.sub(r"-{2,}", "-", slug)
 
     # Kurze ID erzeugen
@@ -268,13 +273,19 @@ async def post_edit_save(slug: str):
             audit.info("POST deleted | slug=%s user=%s", slug, session.get("user_id", ""))
             return redirect(url_for("admin.posts"))
 
-        title          = (form.get("title") or "").strip()
-        new_slug       = (form.get("slug") or "").strip() or slug
+        title          = (form.get("title") or "").strip()[:256]
+        new_slug       = (form.get("slug") or "").strip()[:128] or slug
         body_md        = (form.get("body") or "").strip()
         status_val     = form.get("status", post.status.value)
         visibility_val = form.get("visibility", post.visibility.value)
         captcha_type   = (form.get("captcha_type") or "").strip() or None
-        change_summary = (form.get("change_summary") or "").strip() or None
+        change_summary = (form.get("change_summary") or "").strip()[:256] or None
+
+        # Slug validieren; ungültige Eingaben werden auto-korrigiert
+        import re as _re
+        if new_slug != slug and not is_valid_slug(new_slug):
+            new_slug = _re.sub(r"[^a-z0-9\-]", "-", new_slug.lower()).strip("-")
+            new_slug = _re.sub(r"-{2,}", "-", new_slug) or slug
 
         # Scheduled publishing
         from datetime import datetime as _dt

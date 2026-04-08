@@ -30,10 +30,11 @@ from quart import (
     url_for,
 )
 from slugify import slugify
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
+from arborpress.core.validators import is_valid_email, is_safe_url
 from arborpress.web.security import validate_csrf
 
 log = logging.getLogger("arborpress.web.public")
@@ -430,7 +431,7 @@ async def author_profile(handle: str):
 
     async for db in get_db_session():
         stmt = select(User).where(
-            User.username == handle,
+            func.lower(User.username) == handle.lower(),
             User.account_type == AccountType.PUBLIC,
             User.is_active == True,  # noqa: E712
         )
@@ -471,7 +472,7 @@ async def author_post(handle: str, slug: str):
 
     async for db in get_db_session():
         author_stmt = select(User).where(
-            User.username == handle,
+            func.lower(User.username) == handle.lower(),
             User.account_type == AccountType.PUBLIC,
         )
         author_result = await db.execute(author_stmt)
@@ -548,10 +549,10 @@ async def post_comment_submit(slug: str):
             await flash(err or "Please solve the captcha correctly.", "error")
             return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
 
-        author_name  = (form.get("author_name",  "") or "").strip()
+        author_name  = (form.get("author_name",  "") or "").strip()[:100]
         author_email = (form.get("author_email", "") or "").strip()
         author_url   = (form.get("author_url",   "") or "").strip() or None
-        body         = (form.get("body",          "") or "").strip()
+        body         = (form.get("body",          "") or "").strip()[:10_000]
         # Quote reference: optional, must belong to the same post
         quote_of_raw = (form.get("quote_of_id",  "") or "").strip() or None
         quote_of_id  = None
@@ -575,9 +576,13 @@ async def post_comment_submit(slug: str):
             return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
 
         # Grobes E-Mail-Format-Check
-        if "@" not in author_email or "." not in author_email.split("@")[-1]:
+        if not is_valid_email(author_email):
             await flash("Please enter a valid e-mail address.", "error")
             return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
+
+        # author_url: nur http/https erlaubt, sonst lautlos verwerfen
+        if author_url and not is_safe_url(author_url):
+            author_url = None
 
         # Rate limit (simple IP check)
         rate_limit = comments_section.get("rate_limit_per_hour", 10)
