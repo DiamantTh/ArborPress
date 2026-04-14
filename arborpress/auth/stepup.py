@@ -68,11 +68,14 @@ def revoke_stepup(session: dict[str, Any], user_id: str) -> None:
 
 
 def assert_stepup(session: dict[str, Any], user_id: str, operation: str) -> None:
-    """Raise PermissionError if step-up is not active (helper for views)."""
+    """Raise PermissionError if step-up is not active for protected operations."""
+    if not require_stepup(operation):
+        return
+
     if not is_stepup_active(session, user_id):
         audit.warning(
             "STEP-UP required but not active | user=%s op=%s", user_id, operation
         )
         raise PermissionError(
-            f"Step-up authentication required for operation: {operation}"
+            f"step-up authentication required for operation: {operation}"
         )

@@ -416,6 +416,15 @@ async def media_serve(yyyy: int, mm: int, filename: str):
 
     resp = Response(stream_file(), mimetype=mime)
     # Cache-Header werden von SecurityHeadersMiddleware gesetzt (§10)
+
+    # §10 SVG-XSS-Schutz: SVGs können JavaScript enthalten und werden auf
+    # derselben Origin ausgeliefert → restriktive CSP aufzwingen, sodass
+    # kein Script-Kontext entsteht, selbst wenn eine SVG-Datei in den
+    # Media-Ordner gelangt ist.
+    if mime == "image/svg+xml":
+        resp.headers["Content-Security-Policy"] = "default-src 'none'"
+        resp.headers["Content-Disposition"] = "attachment"
+
     return resp
 
 

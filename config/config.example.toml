@@ -82,6 +82,22 @@ auth_rate_limit         = "10/minute"
 # actor_key_enc_key = "<base64url-32-byte-wert>"
 
 # ---------------------------------------------------------------------------
+# SSO / OIDC (optional – ideal for kleine Teams hinter Reverse Proxy)
+# ---------------------------------------------------------------------------
+# Beispiel mit OpenID Connect Discovery:
+# [sso.providers.company_sso]
+# name           = "Firmen-Login"
+# client_id      = "arborpress"
+# client_secret  = "BITTE_AUS_SECRET_DATEI"
+# discovery_url  = "https://sso.example.com/.well-known/openid-configuration"
+# scopes         = ["openid", "profile", "email"]
+# account_type   = "operational"   # neue Team-Konten standardmäßig intern
+# auto_create    = true
+# auto_link_by_email = true
+# [sso.providers.company_sso.role_mapping]
+# default        = "viewer"        # Rechte später gezielt in ArborPress erhöhen
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 [logging]
@@ -123,3 +139,11 @@ prefix  = "ap:"
 
 # Dateibasiert (backend = "file") – kein externer Dienst, persistent über Neustarts:
 # file_dir = "/var/cache/arborpress"
+
+# ---------------------------------------------------------------------------
+# Federation / ActivityPub (im Admin-Bereich konfigurierbar)
+# ---------------------------------------------------------------------------
+# Für klassisches Blogging ist meist sinnvoll:
+#   mode = "outgoing_only"
+# Damit sind Actor/Outbox sichtbar, eingehende Interaktionen bleiben aber aus.
+# Für volle Föderation erst später auf "full" stellen.

@@ -23,6 +23,19 @@
     </button>
   </form>
 
+  {% if sso_providers %}
+  <div class="auth-box__alt" style="margin-top: 1rem;">
+    <p>{{ _('Oder mit SSO/OIDC anmelden:') }}</p>
+    {% for provider in sso_providers %}
+      <p>
+        <a class="btn" href="{{ url_for('sso.sso_begin', provider=provider.id) }}">
+          {{ _('Mit %(provider)s anmelden', provider=provider.name) }}
+        </a>
+      </p>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   {# §2 Break-Glass: nur sichtbar wenn in config explizit aktiviert #}
   {% if config.auth.legacy_password_enabled %}
   <details class="break-glass">

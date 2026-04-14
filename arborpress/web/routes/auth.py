@@ -138,7 +138,8 @@ def _get_webauthn() -> WebAuthnService:
 
 @auth_bp.get("/login")
 async def login_page():
-    return await render_template("auth/login.html")
+    from arborpress.web.routes.sso import get_configured_providers
+    return await render_template("auth/login.html", sso_providers=get_configured_providers())
 
 
 @auth_bp.get("/register")

@@ -184,6 +184,16 @@ async def get_embed_html(
         log.debug("oEmbed: no provider for %s", url)
         return None
 
+    # ── SSRF guard: validate the constructed endpoint URL ───────────────
+    import asyncio as _asyncio
+
+    from arborpress.core.validators import is_safe_external_url
+
+    endpoint_safe = await _asyncio.to_thread(is_safe_external_url, provider.endpoint)
+    if not endpoint_safe:
+        log.warning("SSRF-Block: oEmbed-Endpoint %s verweist auf privates Netz", provider.endpoint)
+        return None
+
     # ── HTTP-Fetch ────────────────────────────────────────────────────────
     params = {**provider.extra_params, "url": url}
     endpoint_url = f"{provider.endpoint}?{urlencode(params)}"

@@ -7,6 +7,7 @@ Multiple MFA devices per account supported (named, max. MFA_MAX_DEVICES).
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 import os
 import secrets
@@ -20,7 +21,7 @@ audit = get_audit_logger()
 
 # §3: SHA-256 minimum; 8 digits as default
 _DIGITS = 8
-_DIGEST = "sha256"
+_DIGEST = hashlib.sha256
 _INTERVAL = 30  # TOTP window in seconds
 
 # Maximum number of MFA devices (TOTP+HOTP+plugin) per account
@@ -30,6 +31,17 @@ MFA_MAX_DEVICES: int = 20
 class TOTPService:
     """TOTP enrollment and verification (§3)."""
 
+    def __init__(self, issuer: str = "Arbor Press") -> None:
+        self.issuer = issuer
+
+    def _totp(self, secret: bytes) -> pyotp.TOTP:
+        return pyotp.TOTP(
+            secret.decode(),
+            digits=_DIGITS,
+            digest=_DIGEST,
+            interval=_INTERVAL,
+        )
+
     def generate_secret(self) -> bytes:
         """Generate a new TOTP secret (32 bytes, Base32-encoded)."""
         return base64.b32encode(os.urandom(32))
@@ -38,30 +50,28 @@ class TOTPService:
         self,
         secret: bytes,
         account_name: str,
-        issuer: str = "Arbor Press",
+        issuer: str | None = None,
     ) -> str:
-        totp = pyotp.TOTP(
-            secret.decode(),
-            digits=_DIGITS,
-            digest=_DIGEST,
-            interval=_INTERVAL,
-        )
-        return totp.provisioning_uri(name=account_name, issuer_name=issuer)
+        totp = self._totp(secret)
+        return totp.provisioning_uri(name=account_name, issuer_name=issuer or self.issuer)
+
+    def provision_url(self, secret: bytes, account_name: str) -> str:
+        """Backward-compatible alias used by tests and older callers."""
+        return self.provisioning_uri(secret, account_name)
+
+    def current_token(self, secret: bytes) -> str:
+        """Return the current TOTP token for the given secret."""
+        return self._totp(secret).now()
 
     def verify(
         self,
         secret: bytes,
         code: str,
         *,
-        user_id: str,
+        user_id: str = "unknown",
         valid_window: int = 1,
     ) -> bool:
-        totp = pyotp.TOTP(
-            secret.decode(),
-            digits=_DIGITS,
-            digest=_DIGEST,
-            interval=_INTERVAL,
-        )
+        totp = self._totp(secret)
         result = totp.verify(code, valid_window=valid_window)
         if result:
             audit.info("TOTP verify OK | user=%s", user_id)
@@ -151,12 +161,22 @@ class BackupCodeService:
             hashed.append(ph.hash(code))
         return plain, hashed
 
+    def verify(
+        self,
+        code: str,
+        stored_hash: str,
+        *,
+        user_id: str = "unknown",
+    ) -> bool:
+        """Backward-compatible verify helper for backup codes."""
+        return self.verify_code(code, stored_hash, user_id=user_id)
+
     def verify_code(
         self,
         code: str,
         stored_hash: str,
         *,
-        user_id: str,
+        user_id: str = "unknown",
     ) -> bool:
         from argon2 import PasswordHasher
         from argon2.exceptions import VerificationError

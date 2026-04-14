@@ -6,6 +6,7 @@ import asyncio
 import pytest
 from quart import Quart
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 # asyncio-mode ist in pyproject.toml auf "auto" gesetzt
 
@@ -23,6 +24,7 @@ async def test_engine():
         "sqlite+aiosqlite:///:memory:",
         echo=False,
         connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
     # Alle Tabellen erstellen
     import arborpress.models  # noqa: F401

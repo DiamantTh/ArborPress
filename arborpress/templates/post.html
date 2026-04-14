@@ -208,8 +208,9 @@
           {% if captcha.type == 'math' %}
           <div class="captcha-math">
             <span class="captcha-q">{{ captcha.math_a }} + {{ captcha.math_b }} = ?</span>
-            <input type="hidden" name="captcha_a" value="{{ captcha.math_a }}">
-            <input type="hidden" name="captcha_b" value="{{ captcha.math_b }}">
+            <input type="hidden" name="captcha_a"   value="{{ captcha.math_a }}">
+            <input type="hidden" name="captcha_b"   value="{{ captcha.math_b }}">
+            <input type="hidden" name="captcha_sig" value="{{ captcha.math_sig }}">
             <input type="number" name="captcha_answer"
                    class="captcha-input captcha-input--number"
                    required min="0" max="20" inputmode="numeric" autocomplete="off">

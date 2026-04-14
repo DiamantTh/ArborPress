@@ -3,12 +3,16 @@
 Used across install, auth and public routes to enforce consistent
 validation rules without duplicating regex patterns.
 
-All functions are pure (no I/O) and return bool.
+All functions are pure (no I/O) and return bool, EXCEPT:
+  - ``is_safe_external_url`` performs a DNS lookup and must be awaited
+    in async contexts (call ``is_safe_external_url_sync`` for sync paths).
 """
 
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
 from urllib.parse import urlparse
 
 # ---------------------------------------------------------------------------
@@ -110,3 +114,92 @@ def is_valid_slug(s: str) -> bool:
     """True when *s* is a valid URL slug."""
     s = strip_control_chars(s)
     return bool(_SLUG_RE.match(s))
+
+
+# ---------------------------------------------------------------------------
+# SSRF guard (§10 – Server-Side Request Forgery prevention)
+# ---------------------------------------------------------------------------
+
+# IP networks that must never be the target of server-initiated HTTP requests.
+# Covers all private, loopback, link-local (incl. AWS IMDS 169.254.169.254),
+# and multicast ranges for both IPv4 and IPv6.
+_BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
+    ipaddress.ip_network("0.0.0.0/8"),          # "this" network
+    ipaddress.ip_network("10.0.0.0/8"),          # private class A
+    ipaddress.ip_network("100.64.0.0/10"),       # shared address space (RFC 6598)
+    ipaddress.ip_network("127.0.0.0/8"),         # loopback
+    ipaddress.ip_network("169.254.0.0/16"),      # link-local / AWS IMDS
+    ipaddress.ip_network("172.16.0.0/12"),       # private class B
+    ipaddress.ip_network("192.0.0.0/24"),        # IETF protocol assignments
+    ipaddress.ip_network("192.0.2.0/24"),        # TEST-NET-1 (docs)
+    ipaddress.ip_network("192.168.0.0/16"),      # private class C
+    ipaddress.ip_network("198.18.0.0/15"),       # benchmarking
+    ipaddress.ip_network("198.51.100.0/24"),     # TEST-NET-2 (docs)
+    ipaddress.ip_network("203.0.113.0/24"),      # TEST-NET-3 (docs)
+    ipaddress.ip_network("224.0.0.0/4"),         # multicast
+    ipaddress.ip_network("240.0.0.0/4"),         # reserved / future
+    ipaddress.ip_network("255.255.255.255/32"),  # broadcast
+    # IPv6
+    ipaddress.ip_network("::1/128"),             # loopback
+    ipaddress.ip_network("fc00::/7"),            # unique local (ULA)
+    ipaddress.ip_network("fe80::/10"),           # link-local
+    ipaddress.ip_network("ff00::/8"),            # multicast
+)
+
+
+def _ip_is_blocked(addr: str) -> bool:
+    """True when *addr* (string) falls into a private/reserved range."""
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return True  # unparseable → block
+    return any(ip in net for net in _BLOCKED_NETWORKS)
+
+
+def is_safe_external_url(url: str) -> bool:
+    """True when *url* is a public http(s) URL that does NOT resolve to a
+    private/internal network address (SSRF protection).
+
+    Performs a DNS lookup; use only from async code via
+    ``asyncio.to_thread(is_safe_external_url, url)`` or call it directly
+    in a sync/threaded context.
+
+    Rules enforced:
+    - Scheme must be ``http`` or ``https``.
+    - Hostname must be present.
+    - All resolved IP addresses must be public (not private, loopback,
+      link-local, reserved, or multicast).
+    """
+    url = strip_control_chars(url).strip()
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = parsed.hostname
+    if not host:
+        return False
+
+    # Reject bare IP literals that are private immediately (no DNS needed)
+    try:
+        literal_ip = ipaddress.ip_address(host)
+        return not _ip_is_blocked(str(literal_ip))
+    except ValueError:
+        pass  # not an IP literal → proceed to DNS resolution
+
+    # DNS resolution: ALL returned addresses must be public
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except OSError:
+        return False  # resolution failure → block (fail-closed)
+
+    if not infos:
+        return False
+
+    for _family, _type, _proto, _canonname, sockaddr in infos:
+        addr = sockaddr[0]
+        if _ip_is_blocked(addr):
+            return False
+
+    return True

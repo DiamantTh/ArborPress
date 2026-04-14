@@ -41,7 +41,8 @@ _ALLOWED_MIME: frozenset[str] = frozenset(
         "image/gif",
         "image/webp",
         "image/avif",
-        "image/svg+xml",
+        # image/svg+xml intentionally excluded: SVGs can contain JavaScript
+        # and would be served from the same origin, creating an XSS vector.
         "image/x-icon",
     }
 )
@@ -79,6 +80,16 @@ async def download_and_store(
     from arborpress.models.content import Media
 
     cfg = get_settings()
+
+    # ── SSRF guard: reject URLs pointing to private/internal networks ──
+    import asyncio as _asyncio
+
+    from arborpress.core.validators import is_safe_external_url
+
+    url_safe = await _asyncio.to_thread(is_safe_external_url, url)
+    if not url_safe:
+        log.warning("SSRF-Block: URL %s verweist auf privates/reserviertes Netz", url)
+        return None
 
     # ── De-Duplizierung ────────────────────────────────────────────────
     result = await db.execute(select(Media).where(Media.original_url == url))

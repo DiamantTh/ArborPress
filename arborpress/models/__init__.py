@@ -17,6 +17,7 @@ from arborpress.models.content import (  # noqa: F401
     Tag,
 )
 from arborpress.models.mail import MailQueue, MailStatus  # noqa: F401
+from arborpress.models.settings import SiteSetting  # noqa: F401
 from arborpress.models.user import (  # noqa: F401
     AccountType,
     ActorKeypair,
@@ -30,5 +31,6 @@ from arborpress.models.user import (  # noqa: F401
     User,
     UserPGPKey,
     UserRole,
+    UserSession,
     WebAuthnCredential,
 )

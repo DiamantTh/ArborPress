@@ -21,8 +21,9 @@ from quart import abort, session
 ROLE_ORDER: dict[str, int] = {
     "viewer": 0,
     "author": 1,
-    "editor": 2,
-    "admin":  3,
+    "moderator": 2,
+    "editor": 3,
+    "admin":  4,
 }
 
 

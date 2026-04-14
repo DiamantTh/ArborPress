@@ -50,7 +50,7 @@ class PluginMeta(BaseModel):
             return [Capability(c) for c in v]
         except ValueError as exc:
             known = [c.value for c in Capability]
-            raise ValueError(f"Unknown capability. Known values: {known}") from exc
+            raise ValueError(f"Unbekannte Capability. Bekannte Werte: {known}") from exc
 
 
 class EntryPoints(BaseModel):

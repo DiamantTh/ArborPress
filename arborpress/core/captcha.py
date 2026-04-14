@@ -88,6 +88,22 @@ def _random_question(captcha_section: dict) -> tuple[int, dict]:
 
 
 # ---------------------------------------------------------------------------
+# Math-challenge HMAC helper (§10 – prevents parameter tampering)
+# ---------------------------------------------------------------------------
+
+def _math_sign(a: int, b: int) -> str:
+    """HMAC-SHA-256 signature for a math challenge pair.
+
+    Uses the application ``secret_key`` so that the ``captcha_a``/
+    ``captcha_b`` hidden fields cannot be replaced by a bot.
+    """
+    from arborpress.core.config import get_settings
+    key = get_settings().web.secret_key.get_secret_value().encode()
+    msg = f"math-captcha:{a}:{b}".encode()
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+
+# ---------------------------------------------------------------------------
 # Challenge creation (for template rendering)
 # ---------------------------------------------------------------------------
 
@@ -95,14 +111,14 @@ def get_captcha_challenge(captcha_type: CaptchaType, captcha_section: dict) -> d
     """Build template context for the chosen captcha type.
 
     Returned keys (depending on type):
-      type, site_key, question, question_index, math_a, math_b
+      type, site_key, question, question_index, math_a, math_b, math_sig
     """
     ctx: dict = {"type": captcha_type.value}
 
     if captcha_type == CaptchaType.MATH:
         a = secrets.randbelow(9) + 1
         b = secrets.randbelow(9) + 1
-        ctx.update({"math_a": a, "math_b": b})
+        ctx.update({"math_a": a, "math_b": b, "math_sig": _math_sign(a, b)})
 
     elif captcha_type == CaptchaType.CUSTOM:
         idx, entry = _random_question(captcha_section)
@@ -181,13 +197,20 @@ async def verify_captcha(
 # ---------------------------------------------------------------------------
 
 def _verify_math(form: dict) -> tuple[bool, str]:
-    """Verify a + b = answer."""
+    """Verify a + b = answer, including HMAC-signature check."""
     try:
         a = int(form.get("captcha_a", ""))
         b = int(form.get("captcha_b", ""))
         answer = int(form.get("captcha_answer", ""))
     except (ValueError, TypeError):
         return False, "Please solve the arithmetic challenge."
+
+    # §10 Signature check: prevent bots from forging captcha_a/captcha_b values
+    submitted_sig = str(form.get("captcha_sig", ""))
+    expected_sig  = _math_sign(a, b)
+    if not submitted_sig or not secrets.compare_digest(submitted_sig, expected_sig):
+        return False, "Challenge signature invalid – please reload the page."
+
     if a + b != answer:
         return False, "The answer to the arithmetic challenge is incorrect."
     return True, ""

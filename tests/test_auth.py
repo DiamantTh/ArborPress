@@ -86,6 +86,33 @@ class TestBackupCodeService:
 # ---------------------------------------------------------------------------
 
 
+class TestSSO:
+    @pytest.mark.asyncio
+    async def test_sso_begin_redirects_to_provider(self, client, monkeypatch):
+        monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
+        monkeypatch.setattr(
+            "arborpress.web.routes.sso._get_provider_config",
+            lambda provider: {
+                "client_id": "arborpress",
+                "authorize_url": "https://sso.example.com/auth",
+                "scopes": ["openid", "profile", "email"],
+                "use_pkce": True,
+            },
+        )
+
+        async def _resolve(provider_cfg: dict) -> dict:
+            return provider_cfg
+
+        monkeypatch.setattr("arborpress.web.routes.sso._resolve_provider_endpoints", _resolve)
+
+        resp = await client.get("/auth/sso/test")
+        assert resp.status_code == 302
+        location = resp.headers["Location"]
+        assert "https://sso.example.com/auth" in location
+        assert "code_challenge=" in location
+        assert "response_type=code" in location
+
+
 class TestStepup:
     def _make_session(self) -> dict:
         return {}
