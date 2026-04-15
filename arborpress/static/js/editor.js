@@ -60,12 +60,16 @@
   function buildToolbar(wrap, textarea) {
     const bar = document.createElement("div");
     bar.className = "ap-editor-toolbar";
+    bar.setAttribute("role", "toolbar");
+    bar.setAttribute("aria-label", "Formatierungs-Toolbar");
 
     TOOLBAR_ACTIONS.forEach(function (action) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = action.label;
-      btn.title = action.title || action.label;
+      const ariaLabel = action.title || action.label;
+      btn.title = ariaLabel;
+      btn.setAttribute("aria-label", ariaLabel);
       btn.addEventListener("click", function (e) {
         e.preventDefault();
         applyAction(textarea, action);
@@ -109,6 +113,7 @@
       btn.type = "button";
       btn.textContent = v.label;
       btn.title = v.title;
+      btn.setAttribute("aria-label", v.title);
       btn.dataset.view = v.id;
       btn.addEventListener("click", function () {
         setViewMode(wrap, v.id);
@@ -169,34 +174,12 @@
   }
 
   // ────────────────────────────────────────────────────────────
-  // API-Preview
-  // ────────────────────────────────────────────────────────────
-  function triggerPreview(markdown, target) {
-    if (!target) return;
-    fetch(PREVIEW_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Requested-With": "XMLHttpRequest",
-      },
-      body: JSON.stringify({ text: markdown }),
-    })
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        target.innerHTML = data.html || "";
-      })
-      .catch(function () {
-        target.innerHTML = '<p style="color:var(--admin-danger)">Vorschau nicht verfügbar</p>';
-      });
-  }
-
-  // ────────────────────────────────────────────────────────────
   // Aktionen auf Textarea
   // ────────────────────────────────────────────────────────────
   // Inline-Dialog (ersetzt browser prompt() – barrierefrei, kein
   // Dialog-Blockieren durch Popup-Blocker)
   // ────────────────────────────────────────────────────────────
-  function showInlineDialog({ label, placeholder, defaultValue, onConfirm }) {
+  function showInlineDialog({ label, placeholder, defaultValue, type, onConfirm }) {
     // Entferne evtl. vorhandenen Dialog
     const prev = document.getElementById("ap-inline-dialog");
     if (prev) prev.remove();
@@ -212,7 +195,7 @@
     lbl.setAttribute("for", "ap-inline-dialog-input");
 
     const input = document.createElement("input");
-    input.type = "url";
+    input.type = type || "text";
     input.id = "ap-inline-dialog-input";
     input.placeholder = placeholder || "";
     input.value = defaultValue || "";
@@ -320,6 +303,7 @@
         label: "Link-URL eingeben",
         placeholder: "https://",
         defaultValue: "https://",
+        type: "url",
         onConfirm(href) {
           if (!href) return;
           const label = selected || "Linktext";
@@ -334,8 +318,9 @@
     } else if (action.type === "image") {
       showInlineDialog({
         label: "Bild-URL eingeben",
-        placeholder: "https://",
-        defaultValue: "https://",
+        placeholder: "/media/... oder https://",
+        defaultValue: "",
+        type: "text",
         onConfirm(src) {
           if (!src) return;
           const alt = selected || "Beschreibung";
