@@ -2,9 +2,14 @@
 
 Detects engine and version at startup and sets feature flags.
 
+Supported backends (FOSS only):
+  postgresql          PostgreSQL 16+  (PostgreSQL Licence)
+  mariadb             MariaDB 11.4+   (GPL-2.0)
+  sqlite              SQLite 3.38+    (Public Domain – Dev/Test only)
+
 Supported FTS providers (by priority):
   pg_fts              PostgreSQL ts_vector / ts_query (native)
-  mariadb_fulltext    MariaDB/MySQL FULLTEXT index (native)
+  mariadb_fulltext    MariaDB FULLTEXT index (native)
   sqlite_fts5         SQLite FTS5 (virtual tables, native)
   meilisearch         External service – dep: meilisearch-python-sdk
   typesense           External service – dep: typesense
@@ -42,17 +47,25 @@ log = logging.getLogger("arborpress.db.capabilities")
 class DBCapabilities:
     """Runtime capability flags of the database."""
 
-    engine_name: str = ""        # "postgresql" | "mysql" | "sqlite"
+    engine_name: str = ""        # "postgresql" | "mysql" (MariaDB) | "sqlite"
     version_string: str = ""
     major: int = 0
     minor: int = 0
+    patch: int = 0               # Patch-/Maintenance-Version
 
-    # Feature-Flags
+    # Feature-Flags (Baseline)
     fts_available: bool = False
     fts_provider: str = "fallback"  # siehe Modul-Docstring
-    json_ops: bool = False
-    generated_cols: bool = False
-    window_funcs: bool = True
+    json_ops: bool = False           # JSON-Funktionen: PG 16+, MariaDB 11.4+, SQLite 3.38+
+    generated_cols: bool = False     # Generated/Virtual Columns
+    window_funcs: bool = True        # Window Functions (alle Baseline-Versionen)
+
+    # Feature-Flags (neuere Versionen)
+    returning: bool = False          # RETURNING in INSERT/UPDATE/DELETE
+    merge_stmt: bool = False         # MERGE / INSERT … ON CONFLICT DO UPDATE
+    json_table: bool = False         # json_table() / JSON_TABLE() Tabellenfunktion: PG 17+, MariaDB 10.6+
+    uuid_type: bool = False          # Nativer UUID-Typ / gen_random_uuid(): PG 16+ (builtin), MariaDB 11.4+
+    vector_ops: bool = False         # Vektor/Embedding-Support: pgvector-Extension, MariaDB 11.6+
 
     # Externe FTS-Engine (falls konfiguriert)
     external_fts: str = ""       # "meilisearch" | "typesense" | "elasticsearch" | ""
@@ -85,12 +98,33 @@ async def detect_capabilities(engine: AsyncEngine) -> DBCapabilities:
             m = re.search(r"PostgreSQL (\d+)\.(\d+)", caps.version_string)
             if m:
                 caps.major, caps.minor = int(m.group(1)), int(m.group(2))
+                caps.patch = caps.minor   # Bei PG 10+ ist minor der Patch-Release
+            if caps.major < 16:
+                log.warning(
+                    "PostgreSQL %d.%d liegt unterhalb der unterstützten Baseline (PG 16+).",
+                    caps.major, caps.minor,
+                )
 
-            # pg_fts ab PG 9, unsere Baseline ist PG 14+
-            caps.fts_available = caps.major >= 14
+            # pg_fts ab PG 9, unsere Baseline ist PG 16+
+            caps.fts_available = caps.major >= 16
             caps.fts_provider = "pg_fts" if caps.fts_available else "fallback"
-            caps.json_ops = caps.major >= 14
-            caps.generated_cols = caps.major >= 12
+            caps.json_ops = caps.major >= 16
+            caps.generated_cols = caps.major >= 16
+
+            # Baseline 16+: RETURNING + MERGE + gen_random_uuid() immer verfügbar
+            caps.returning = True
+            caps.merge_stmt = True           # MERGE: PG 15+
+            caps.uuid_type = True            # gen_random_uuid() builtin: PG 13+
+            # json_table() (SQL/JSON): PG 17+
+            caps.json_table = caps.major >= 17
+            # pgvector: Extension-Check (schlägt still fehl wenn nicht installiert)
+            try:
+                result = await conn.execute(sa_text(
+                    "SELECT 1 FROM pg_type WHERE typname = 'vector' LIMIT 1"
+                ))
+                caps.vector_ops = result.fetchone() is not None
+            except Exception:
+                log.debug("pgvector nicht verfügbar", exc_info=True)
 
         # -------------------------------------------------------------------
         # MariaDB / MySQL
@@ -98,22 +132,42 @@ async def detect_capabilities(engine: AsyncEngine) -> DBCapabilities:
         elif caps.engine_name == "mysql":
             row = await conn.execute(sa_text("SELECT VERSION()"))
             caps.version_string = row.scalar_one()
-            m = re.match(r"(\d+)\.(\d+)", caps.version_string)
+            m = re.match(r"(\d+)\.(\d+)(?:\.(\d+))?", caps.version_string)
             if m:
                 caps.major, caps.minor = int(m.group(1)), int(m.group(2))
+                caps.patch = int(m.group(3)) if m.group(3) else 0
 
             is_mariadb = "MariaDB" in caps.version_string
-            if is_mariadb and caps.major >= 10:
-                caps.fts_available = True
-                caps.fts_provider = "mariadb_fulltext"
-                caps.json_ops = True
-                caps.generated_cols = caps.major >= 10
-            elif not is_mariadb and caps.major >= 8:
-                # MySQL 8 – FULLTEXT vorhanden, aber ohne Ranking wie MariaDB
+            # Baseline: MariaDB 11.4 LTS (neueste 11er LTS, EOL Mai 2029)
+            _mariadb_ok = (
+                caps.major > 11 or (caps.major == 11 and caps.minor >= 4)
+            )
+            if is_mariadb and not _mariadb_ok:
+                log.warning(
+                    "MariaDB %d.%d liegt unterhalb der unterstützten Baseline (11.4+).",
+                    caps.major, caps.minor,
+                )
+            if is_mariadb and _mariadb_ok:
                 caps.fts_available = True
                 caps.fts_provider = "mariadb_fulltext"
                 caps.json_ops = True
                 caps.generated_cols = True
+
+                # Ab 11.4 Baseline: RETURNING + MERGE + UUID immer vorhanden
+                caps.returning = True        # RETURNING: MariaDB 11.4+
+                caps.merge_stmt = True       # MERGE: MariaDB 10.3+
+                caps.uuid_type = True        # UUID-Typ: MariaDB 11.4+
+                # JSON_TABLE: ab MariaDB 11.4 → bei Baseline 11.4+ immer True
+                caps.json_table = True
+                # VECTOR-Typ: MariaDB 11.6+
+                caps.vector_ops = (
+                    caps.major > 11 or (caps.major == 11 and caps.minor >= 6)
+                )
+            elif not is_mariadb:
+                log.error(
+                    "Nicht-MariaDB MySQL wird nicht unterstützt. "
+                    "Bitte PostgreSQL 16+, MariaDB 11.4+ oder SQLite (Dev) verwenden."
+                )
 
         # -------------------------------------------------------------------
         # SQLite
@@ -121,9 +175,10 @@ async def detect_capabilities(engine: AsyncEngine) -> DBCapabilities:
         elif caps.engine_name == "sqlite":
             row = await conn.execute(sa_text("SELECT sqlite_version()"))
             caps.version_string = row.scalar_one()
-            m = re.match(r"(\d+)\.(\d+)", caps.version_string)
+            m = re.match(r"(\d+)\.(\d+)(?:\.(\d+))?", caps.version_string)
             if m:
                 caps.major, caps.minor = int(m.group(1)), int(m.group(2))
+                caps.patch = int(m.group(3)) if m.group(3) else 0
 
             # FTS5 has been available since SQLite 3.9 (released 2015)
             # Check whether FTS5 extension is actually compiled
@@ -140,12 +195,20 @@ async def detect_capabilities(engine: AsyncEngine) -> DBCapabilities:
 
             caps.fts_available = fts5_available
             caps.fts_provider = "sqlite_fts5" if fts5_available else "fallback"
-            # SQLite hat native JSON-Funktionen ab 3.38 (json_each etc.)
-            caps.json_ops = caps.major >= 3 and caps.minor >= 38
-            # Generated Columns ab SQLite 3.31
-            caps.generated_cols = caps.major >= 3 and caps.minor >= 31
-            # Window Functions ab SQLite 3.25
-            caps.window_funcs = caps.major >= 3 and caps.minor >= 25
+            # SQLite ist immer major=3; Checks nur auf minor
+            # JSON-Funktionen (json_each etc.): 3.38+
+            caps.json_ops = caps.minor >= 38
+            # Generated Columns: 3.31+
+            caps.generated_cols = caps.minor >= 31
+            # Window Functions: 3.25+
+            caps.window_funcs = caps.minor >= 25
+            # RETURNING: 3.35+
+            caps.returning = caps.minor >= 35
+            # SQLite hat kein echtes MERGE; kein json_table(), kein UUID-Typ, kein Vector
+            caps.merge_stmt = False
+            caps.json_table = False
+            caps.uuid_type = False
+            caps.vector_ops = False
 
     # -----------------------------------------------------------------------
     # Detect external FTS engine (optional, overrides native provider)
@@ -156,12 +219,19 @@ async def detect_capabilities(engine: AsyncEngine) -> DBCapabilities:
         caps.fts_provider = caps.external_fts
 
     log.info(
-        "DB-Capabilities: engine=%s version=%s fts=%s(%s) external_fts=%r",
+        "DB-Capabilities: engine=%s version=%s fts=%s(%s) external_fts=%r "
+        "json_ops=%s json_table=%s returning=%s merge=%s uuid=%s vector=%s",
         caps.engine_name,
         caps.version_string,
         caps.fts_available,
         caps.fts_provider,
         caps.external_fts,
+        caps.json_ops,
+        caps.json_table,
+        caps.returning,
+        caps.merge_stmt,
+        caps.uuid_type,
+        caps.vector_ops,
     )
     return caps
 
