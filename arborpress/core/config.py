@@ -124,6 +124,14 @@ class WebSettings(BaseSettings):
     i18n_mode: Literal["single", "prefix"] = "single"
     # Media storage
     media_dir: Path = Path("media")
+    # Admin Markdown editor adapter.
+    # "builtin" = built-in split-view editor (default, zero deps).
+    # Any other value is the adapter id registered via ArborPressEditor.register().
+    # Example: "easymde", "codemirror6"
+    # The corresponding adapter script must be included via the
+    # [web] extra_scripts setting or placed at
+    # static/js/editor-adapters/<id>.js (auto-loaded by the template).
+    admin_editor: str = "builtin"
 
 
 class AuthSettings(BaseSettings):

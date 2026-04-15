@@ -1,14 +1,17 @@
 /**
- * ArborPress Markdown-Editor
+ * editor.js – Rückwärts-Kompatibilitäts-Shim
  *
- * Split-View (Textarea links / Preview rechts), formatierte Toolbar
- * und optionaler Vollbild-Modus für den Post-Editor im Admin-Interface.
+ * Dieser Einstiegspunkt wird nicht mehr direkt vom Template geladen.
+ * Das Template nutzt jetzt:
+ *   1. editor-registry.js        – Adapter-Framework
+ *   2. editor-adapters/<id>.js   – konfigurierbarer Adapter
  *
- * Voraussetzungen:
- *  - DOM-Element mit id="ap-editor-wrap" (enthält Textarea + Preview-Div)
- *  - API-Endpoint POST /api/v1/admin/markdown/preview
+ * Diese Datei bleibt als Fallback, falls noch externer Code
+ * editor.js referenziert. Sie lädt Registry + builtin-Adapter
+ * und initiiert den Mount.
  *
- * Keine externen Abhängigkeiten – reines Vanilla-JS.
+ * Für eigene Adapter → editor-adapters/ anlegen und in config.toml
+ * [web] admin_editor = "<id>" setzen.
  */
 
 (function () {

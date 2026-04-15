@@ -168,11 +168,17 @@
            placeholder="Wird aus Titel erzeugt" pattern="[a-z0-9\-]+">
   </label>
 
-  {# ── Markdown-Editor mit Split-View ──────────────────────── #}
+  {# ── Markdown-Editor ───────────────────────────────────────
+     data-ap-editor      : Adapter-ID aus config.toml [web] admin_editor
+     data-ap-preview-endpoint: URL des Server-Preview-Endpunkts
+     data-ap-debounce    : Preview-Debounce in ms
+  #}
   <div class="form-group">
     <label style="margin-bottom:.35rem;display:block;">Inhalt (Markdown)</label>
-    <div id="ap-editor-wrap">
-      {# Toolbar + Split-View werden durch editor.js eingebaut #}
+    <div id="ap-editor-wrap"
+         data-ap-editor="{{ config.web.admin_editor }}"
+         data-ap-preview-endpoint="/api/v1/admin/markdown/preview"
+         data-ap-debounce="350">
       <textarea name="body" rows="20" class="code-editor" style="width:100%">{{ post.body_md if post else '' }}</textarea>
     </div>
     <small style="color:var(--admin-muted);margin-top:.3rem;display:block;">
@@ -277,6 +283,8 @@
 {% endblock %}
 
 {% block scripts %}{{ super() }}
-<script src="{{ url_for('static', filename='js/editor.js') }}"></script>
+{# Editor-Registry zuerst, dann der konfigurierte Adapter #}
+<script src="{{ url_for('static', filename='js/editor-registry.js') }}"></script>
+<script src="{{ url_for('static', filename='js/editor-adapters/' + config.web.admin_editor + '.js') }}"></script>
 {% endblock %}
 
