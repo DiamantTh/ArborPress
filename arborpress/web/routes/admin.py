@@ -19,7 +19,13 @@ from arborpress.auth.roles import require_role
 from arborpress.auth.stepup import assert_stepup, is_stepup_active
 from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
-from arborpress.core.markdown import html_to_md, render_md_async, sanitize_html
+from arborpress.core.markdown import (
+    editorjs_to_html,
+    editorjs_to_md,
+    html_to_md,
+    render_md_async,
+    sanitize_html,
+)
 from arborpress.core.validators import is_valid_slug
 from arborpress.logging.config import get_audit_logger
 from arborpress.web.security import validate_csrf
@@ -30,30 +36,49 @@ audit = get_audit_logger()
 admin_bp = Blueprint("admin", __name__, template_folder="../../templates")
 
 
-async def _resolve_body(form, db) -> tuple[str, str]:
-    """Gibt (body_md, body_html) für einen Save-Handler zurück.
+async def _resolve_body(form, db) -> tuple[str, str, dict | None]:
+    """Gibt (body_md, body_html, body_json) für einen Save-Handler zurück.
 
-    Unterstützt zwei Modi (gesteuert durch das Hidden-Field _editor_type):
-      "markdown" (default / builtin-Adapter):
+    Unterstützt drei Modi (gesteuert durch das Hidden-Field _editor_type):
+      "markdown" (default / builtin + CodeMirror-Adapter):
           body = Markdown-Text → render_md_async() → HTML
+          body_json = None
       "html" (WYSIWYG-Adapter, z.B. TipTap):
           body = HTML-String → sanitize_html() → body_html
-                             → html_to_md()   → body_md (Export / Backup / Import)
+                             → html_to_md()   → body_md (Export/Import)
+          body_json = None
+      "editorjs" (Editor.js-Adapter):
+          body = JSON-String (Editor.js-Dokument)
+                             → editorjs_to_html() → body_html
+                             → editorjs_to_md()   → body_md
+          body_json = geparster dict (nativer Transport/Export)
 
     Der Wert aus _editor_type kommt vom Adapter und wird vom Template als
     Hidden-Field gesetzt bevor der Form-Submit erfolgt.
     """
+    import json as _json
+
     raw         = (form.get("body") or "").strip()
     editor_type = (form.get("_editor_type") or "markdown").strip()
 
-    if editor_type == "html":
+    if editor_type == "editorjs":
+        try:
+            doc = _json.loads(raw)
+        except (ValueError, TypeError):
+            doc = {}
+        body_html = editorjs_to_html(doc)
+        body_md   = editorjs_to_md(doc)
+        body_json = doc if doc else None
+    elif editor_type == "html":
         body_html = sanitize_html(raw)
         body_md   = html_to_md(body_html)
+        body_json = None
     else:
         body_md   = raw
         body_html = await render_md_async(raw, db=db)
+        body_json = None
 
-    return body_md, body_html
+    return body_md, body_html, body_json
 
 
 def _require_session():
@@ -215,7 +240,7 @@ async def post_new_save():
     short_id = _uuid.uuid4().hex[:12]
 
     async for db in get_db_session():
-        body_md, body_html = await _resolve_body(form, db)
+        body_md, body_html, body_json = await _resolve_body(form, db)
         post = Post(
             id=str(_uuid.uuid4()),
             short_id=short_id,
@@ -223,6 +248,7 @@ async def post_new_save():
             slug=slug,
             body_md=body_md,
             body_html=body_html,
+            body_json=body_json,
             status=(
                 PostStatus(status_val)
                 if status_val in PostStatus.__members__
@@ -234,7 +260,7 @@ async def post_new_save():
                 else PostVisibility.PUBLIC
             ),
             captcha_type=captcha_type,
-            reading_time_min=Post.calc_reading_time(body_md),
+            reading_time_min=Post.calc_reading_time(body_md, body_json),
             published_at=published_at,
         )
         db.add(post)
@@ -324,7 +350,7 @@ async def post_edit_save(slug: str):
         # Snapshot before change for diff
         old_body_md = post.body_md or ""
 
-        body_md, body_html = await _resolve_body(form, db)
+        body_md, body_html, body_json = await _resolve_body(form, db)
 
         if title:
             post.title = title
@@ -333,8 +359,9 @@ async def post_edit_save(slug: str):
             post.slug = new_slug
         post.body_md          = body_md
         post.body_html        = body_html
+        post.body_json        = body_json
         post.captcha_type     = captcha_type
-        post.reading_time_min = Post.calc_reading_time(body_md)
+        post.reading_time_min = Post.calc_reading_time(body_md, body_json)
         try:
             post.status = PostStatus(status_val)
         except ValueError:

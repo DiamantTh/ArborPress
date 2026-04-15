@@ -866,3 +866,178 @@ def _write_upload(dest_dir: Path, dest_path: Path, data: bytes) -> None:
     tmp.write_bytes(data)
     os.replace(tmp, dest_path)
 
+
+# ---------------------------------------------------------------------------
+# Content-Export API (§8 – Formate: json | md | html | xml)
+# ---------------------------------------------------------------------------
+#
+# GET /api/v1/posts/{slug}/export?format=json       – Editor.js-Dokument (body_json)
+# GET /api/v1/posts/{slug}/export?format=md         – Markdown (body_md)
+# GET /api/v1/posts/{slug}/export?format=html       – gerendertes HTML (body_html)
+# GET /api/v1/posts/{slug}/export?format=xml        – Atom-ähnliche XML-Repräsentation
+#
+# Öffentlich nur für published+public Posts. Die Admin-Variante (alle Zustände)
+# liegt unter /api/v1/admin/posts/{slug}/export.
+
+
+def _post_export_xml(post) -> str:
+    """Erzeugt eine einfache XML-Darstellung eines Posts (kein Atom-Namespace)."""
+    import xml.etree.ElementTree as ET  # stdlib, kein Sicherheitsproblem (nur schreiben)
+    root   = ET.Element("post")
+    fields = {
+        "id":          post.short_id,
+        "slug":        post.slug,
+        "title":       post.title,
+        "lang":        post.lang or "",
+        "status":      post.status.value,
+        "visibility":  post.visibility.value,
+        "published_at": post.published_at.isoformat() if post.published_at else "",
+        "reading_time_min": str(post.reading_time_min),
+        "body_md":     post.body_md or "",
+        "body_html":   post.body_html or "",
+    }
+    for key, val in fields.items():
+        el = ET.SubElement(root, key)
+        el.text = val
+    tags_el = ET.SubElement(root, "tags")
+    for tag in (post.tags or []):
+        t = ET.SubElement(tags_el, "tag")
+        t.set("slug", tag.slug)
+        t.text = tag.label
+    return ET.tostring(root, encoding="unicode", xml_declaration=False)
+
+
+@api_v1_bp.get("/posts/<slug>/export")
+async def api_post_export(slug: str):
+    """Öffentlicher Content-Export eines published+public Posts.
+
+    Query-Parameter:
+      format  –  json | md | html | xml   (default: json)
+    """
+    import json as _json
+
+    from arborpress.core.db import get_db_session
+    from arborpress.models.content import Post, PostStatus, PostVisibility
+    from sqlalchemy import select
+
+    fmt = request.args.get("format", "json").lower().strip()
+    if fmt not in ("json", "md", "html", "xml"):
+        abort(400, "format must be one of: json, md, html, xml")
+
+    async for db in get_db_session():
+        result = await db.execute(
+            select(Post).where(
+                Post.slug == slug,
+                Post.status == PostStatus.PUBLISHED,
+                Post.visibility == PostVisibility.PUBLIC,
+            )
+        )
+        post = result.scalar_one_or_none()
+        if post is None:
+            abort(404)
+
+        if fmt == "json":
+            payload = post.body_json or {}
+            return jsonify({
+                "format":  "editorjs",
+                "version": "2.x",
+                "slug":    post.slug,
+                "title":   post.title,
+                "body":    payload,
+            })
+
+        if fmt == "md":
+            from quart import Response
+            return Response(
+                post.body_md or "",
+                mimetype="text/markdown; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{slug}.md"'},
+            )
+
+        if fmt == "html":
+            from quart import Response
+            return Response(
+                post.body_html or "",
+                mimetype="text/html; charset=utf-8",
+            )
+
+        # fmt == "xml"
+        from quart import Response
+        return Response(
+            _post_export_xml(post),
+            mimetype="application/xml; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{slug}.xml"'},
+        )
+
+
+@api_admin_bp.get("/posts/<slug>/export")
+async def admin_api_post_export(slug: str):
+    """Admin-Export: alle Post-Zustände (draft, scheduled, archived …).
+
+    Gleiche format-Parameter wie der öffentliche Endpunkt.
+    Zusätzlich: format=full liefert alle Felder als JSON.
+    """
+    import json as _json
+
+    from arborpress.core.db import get_db_session
+    from arborpress.models.content import Post
+    from sqlalchemy import select
+
+    _admin_api_guard()
+    fmt = request.args.get("format", "full").lower().strip()
+    if fmt not in ("json", "md", "html", "xml", "full"):
+        abort(400, "format must be one of: json, md, html, xml, full")
+
+    async for db in get_db_session():
+        result = await db.execute(select(Post).where(Post.slug == slug))
+        post = result.scalar_one_or_none()
+        if post is None:
+            abort(404)
+
+        if fmt == "full":
+            return jsonify({
+                "id":          post.id,
+                "short_id":    post.short_id,
+                "slug":        post.slug,
+                "title":       post.title,
+                "status":      post.status.value,
+                "visibility":  post.visibility.value,
+                "lang":        post.lang,
+                "published_at": post.published_at.isoformat() if post.published_at else None,
+                "created_at":  post.created_at.isoformat() if post.created_at else None,
+                "updated_at":  post.updated_at.isoformat() if post.updated_at else None,
+                "reading_time_min": post.reading_time_min,
+                "tags":        [{"slug": t.slug, "label": t.label} for t in (post.tags or [])],
+                "body_md":     post.body_md,
+                "body_html":   post.body_html,
+                "body_json":   post.body_json,
+            })
+
+        if fmt == "json":
+            return jsonify({
+                "format": "editorjs",
+                "slug":   post.slug,
+                "title":  post.title,
+                "body":   post.body_json or {},
+            })
+
+        if fmt == "md":
+            from quart import Response
+            return Response(
+                post.body_md or "",
+                mimetype="text/markdown; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{slug}.md"'},
+            )
+
+        if fmt == "html":
+            from quart import Response
+            return Response(post.body_html or "", mimetype="text/html; charset=utf-8")
+
+        # fmt == "xml"
+        from quart import Response
+        return Response(
+            _post_export_xml(post),
+            mimetype="application/xml; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{slug}.xml"'},
+        )
+

@@ -153,6 +153,254 @@ def html_to_md(html: str) -> str:
         return html
 
 
+def editorjs_to_html(doc: dict) -> str:
+    """Konvertiert ein Editor.js-Dokument (dict) in sanitisiertes HTML.
+
+    Unterstützte Block-Typen:
+      paragraph, header, list, image, code, raw,
+      quote, delimiter, table, checklist, warning, embed
+
+    Unbekannte Block-Typen werden übersprungen (kein Fehler).
+    Das Ergebnis durchläuft die gleiche bleach-Sanitisierung wie render_md().
+
+    Args:
+        doc: Editor.js-Dokument als Python-dict ({"time": ..., "blocks": [...]}).
+
+    Returns:
+        Sanitisiertes HTML.
+    """
+    if not doc or not isinstance(doc, dict):
+        return ""
+
+    import html as _html_mod
+
+    parts: list[str] = []
+    for block in doc.get("blocks", []):
+        btype = block.get("type", "")
+        data  = block.get("data", {})
+
+        if btype == "paragraph":
+            text = data.get("text", "")
+            if text:
+                parts.append(f"<p>{text}</p>")
+
+        elif btype == "header":
+            text  = data.get("text", "")
+            level = min(max(int(data.get("level", 2)), 1), 6)
+            if text:
+                parts.append(f"<h{level}>{text}</h{level}>")
+
+        elif btype == "list":
+            style = data.get("style", "unordered")
+            tag   = "ol" if style == "ordered" else "ul"
+            items = data.get("items", [])
+            if items:
+                lis = ""
+                for item in items:
+                    content = item if isinstance(item, str) else item.get("content", "")
+                    lis += f"<li>{content}</li>"
+                parts.append(f"<{tag}>{lis}</{tag}>")
+
+        elif btype == "checklist":
+            items = data.get("items", [])
+            if items:
+                lis = ""
+                for item in items:
+                    checked = 'checked disabled' if item.get("checked") else 'disabled'
+                    text = item.get("text", "")
+                    lis += f'<li><input type="checkbox" {checked}> {text}</li>'
+                parts.append(f"<ul>{lis}</ul>")
+
+        elif btype == "image":
+            url     = _html_mod.escape(data.get("file", {}).get("url", data.get("url", "")))
+            caption = data.get("caption", "")
+            alt     = _html_mod.escape(data.get("alt", caption or ""))
+            if url:
+                img = f'<img src="{url}" alt="{alt}" loading="lazy">'
+                if caption:
+                    parts.append(f"<figure>{img}<figcaption>{caption}</figcaption></figure>")
+                else:
+                    parts.append(f"<figure>{img}</figure>")
+
+        elif btype == "code":
+            code = _html_mod.escape(data.get("code", ""))
+            lang = data.get("language", data.get("lang", ""))
+            cls  = f' class="language-{lang}"' if lang else ""
+            if code:
+                parts.append(f"<pre><code{cls}>{code}</code></pre>")
+
+        elif btype == "raw":
+            # raw HTML – durch sanitize_html sichergestellt
+            parts.append(sanitize_html(data.get("html", "")))
+
+        elif btype == "quote":
+            text    = data.get("text", "")
+            caption = data.get("caption", "")
+            if text:
+                inner = f"<p>{text}</p>"
+                if caption:
+                    inner += f"<footer>{caption}</footer>"
+                parts.append(f"<blockquote>{inner}</blockquote>")
+
+        elif btype == "delimiter":
+            parts.append("<hr>")
+
+        elif btype == "table":
+            rows    = data.get("content", [])
+            with_hd = data.get("withHeadings", False)
+            if rows:
+                tbody = ""
+                for i, row in enumerate(rows):
+                    cells = ""
+                    tag_c = "th" if (with_hd and i == 0) else "td"
+                    for cell in row:
+                        cells += f"<{tag_c}>{cell}</{tag_c}>"
+                    tbody += f"<tr>{cells}</tr>"
+                parts.append(f"<table><tbody>{tbody}</tbody></table>")
+
+        elif btype == "warning":
+            title   = data.get("title", "")
+            message = data.get("message", "")
+            content = f"<strong>{title}</strong> " if title else ""
+            content += message
+            if content:
+                parts.append(f'<div class="ap-warning">{content}</div>')
+
+        elif btype == "embed":
+            url     = _html_mod.escape(data.get("embed", data.get("source", "")))
+            caption = data.get("caption", "")
+            if url:
+                iframe = f'<iframe src="{url}" loading="lazy" allowfullscreen></iframe>'
+                if caption:
+                    parts.append(f"<figure>{iframe}<figcaption>{caption}</figcaption></figure>")
+                else:
+                    parts.append(f"<figure>{iframe}</figure>")
+
+        # Unbekannte Block-Typen werden still übersprungen
+
+    raw_html = "\n".join(parts)
+    return sanitize_html(raw_html)
+
+
+def editorjs_to_md(doc: dict) -> str:
+    """Konvertiert ein Editor.js-Dokument (dict) in GFM-Markdown.
+
+    Nutzt kein externes Paket – reine Python-Implementierung.
+    embed-Blöcke werden als Link dargestellt.
+    raw-HTML-Blöcke werden als HTML-Kommentar-Block eingeschlossen.
+
+    Args:
+        doc: Editor.js-Dokument als Python-dict.
+
+    Returns:
+        Markdown-String (GFM-kompatibel).
+    """
+    if not doc or not isinstance(doc, dict):
+        return ""
+
+    import html as _html_mod
+
+    _unescape = _html_mod.unescape
+    parts: list[str] = []
+
+    for block in doc.get("blocks", []):
+        btype = block.get("type", "")
+        data  = block.get("data", {})
+
+        if btype == "paragraph":
+            text = _unescape(re.sub(r"<[^>]+>", "", data.get("text", ""))).strip()
+            if text:
+                parts.append(text)
+
+        elif btype == "header":
+            text  = _unescape(re.sub(r"<[^>]+>", "", data.get("text", ""))).strip()
+            level = min(max(int(data.get("level", 2)), 1), 6)
+            if text:
+                parts.append("#" * level + " " + text)
+
+        elif btype == "list":
+            style = data.get("style", "unordered")
+            items = data.get("items", [])
+            for i, item in enumerate(items):
+                content = item if isinstance(item, str) else item.get("content", "")
+                content = _unescape(re.sub(r"<[^>]+>", "", content)).strip()
+                prefix  = f"{i + 1}." if style == "ordered" else "-"
+                parts.append(f"{prefix} {content}")
+
+        elif btype == "checklist":
+            for item in data.get("items", []):
+                checked = "x" if item.get("checked") else " "
+                text = _unescape(re.sub(r"<[^>]+>", "", item.get("text", ""))).strip()
+                parts.append(f"- [{checked}] {text}")
+
+        elif btype == "image":
+            url     = data.get("file", {}).get("url", data.get("url", ""))
+            caption = _unescape(re.sub(r"<[^>]+>", "", data.get("caption", ""))).strip()
+            alt     = data.get("alt", caption or "image")
+            if url:
+                parts.append(f"![{alt}]({url})")
+                if caption and caption != alt:
+                    parts.append(f"*{caption}*")
+
+        elif btype == "code":
+            code = data.get("code", "")
+            lang = data.get("language", data.get("lang", ""))
+            if code:
+                parts.append(f"```{lang}\n{code}\n```")
+
+        elif btype == "raw":
+            html_raw = data.get("html", "").strip()
+            if html_raw:
+                parts.append(f"<!-- raw-html\n{html_raw}\n-->")
+
+        elif btype == "quote":
+            text    = _unescape(re.sub(r"<[^>]+>", "", data.get("text", ""))).strip()
+            caption = _unescape(re.sub(r"<[^>]+>", "", data.get("caption", ""))).strip()
+            if text:
+                lines = "\n".join(f"> {line}" for line in text.splitlines())
+                parts.append(lines)
+                if caption:
+                    parts.append(f"> — *{caption}*")
+
+        elif btype == "delimiter":
+            parts.append("---")
+
+        elif btype == "table":
+            rows    = data.get("content", [])
+            with_hd = data.get("withHeadings", False)
+            if rows:
+                def _row_md(cells: list) -> str:
+                    return "| " + " | ".join(
+                        _unescape(re.sub(r"<[^>]+>", "", str(c))).strip()
+                        for c in cells
+                    ) + " |"
+
+                if with_hd and len(rows) >= 1:
+                    parts.append(_row_md(rows[0]))
+                    parts.append("| " + " | ".join(["---"] * len(rows[0])) + " |")
+                    for row in rows[1:]:
+                        parts.append(_row_md(row))
+                else:
+                    for row in rows:
+                        parts.append(_row_md(row))
+
+        elif btype == "warning":
+            title   = data.get("title", "")
+            message = data.get("message", "")
+            content = f"**{title}** " if title else ""
+            content += message
+            if content:
+                parts.append(f"> ⚠️ {content}")
+
+        elif btype == "embed":
+            url     = data.get("embed", data.get("source", ""))
+            caption = data.get("caption", url)
+            if url:
+                parts.append(f"[{caption}]({url})")
+
+    return "\n\n".join(parts)
+
+
 def render_md(text: str) -> str:
     """Rendert Markdown zu sanitisiertem HTML.
 

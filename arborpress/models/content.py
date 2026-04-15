@@ -15,6 +15,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Table,
     Text,
@@ -89,6 +90,11 @@ class Post(Base):
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     body_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
     body_html: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Strukturiertes Block-Format für Editor.js-Adapter.
+    # Gespeichert als JSON-Dokument (PostgreSQL/MariaDB: native JSON;
+    # SQLite: TEXT mit SQLAlchemy-Serialisierung).
+    # None wenn der Post nicht via Editor.js erstellt wurde.
+    body_json: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[PostStatus] = mapped_column(
         Enum(PostStatus), nullable=False, default=PostStatus.DRAFT
@@ -128,7 +134,7 @@ class Post(Base):
     tags: Mapped[list[Tag]] = relationship(secondary=post_tags, lazy="selectin")
 
     @staticmethod
-    def calc_reading_time(body_md: str) -> int:
+    def calc_reading_time(body_md: str, body_json: dict | None = None) -> int:
         """Estimate reading time in minutes.
 
         Formula:
@@ -136,9 +142,36 @@ class Post(Base):
           - Code blocks count as 0.5 extra minutes each
           - Minimum: 1 minute
 
+        When body_json (Editor.js blocks) is supplied, text is extracted
+        from blocks instead of parsing body_md.
         Code blocks are not counted as words because
         code is read considerably slower than prose.
         """
+        if body_json and isinstance(body_json, dict):
+            blocks = body_json.get("blocks", [])
+            prose_parts: list[str] = []
+            code_block_count = 0
+            for block in blocks:
+                btype = block.get("type", "")
+                data = block.get("data", {})
+                if btype in ("paragraph", "header", "quote"):
+                    prose_parts.append(data.get("text", ""))
+                elif btype == "list":
+                    for item in data.get("items", []):
+                        prose_parts.append(item if isinstance(item, str) else item.get("content", ""))
+                elif btype in ("code", "raw"):
+                    code_block_count += 1
+                elif btype == "table":
+                    for row in data.get("content", []):
+                        prose_parts.extend(row)
+            prose = " ".join(prose_parts)
+            # Strip HTML tags that Editor.js may include inline
+            prose = re.sub(r"<[^>]+>", " ", prose)
+            words = len(prose.split())
+            minutes = words / 200 + code_block_count * 0.5
+            return max(1, round(minutes))
+
+        # Fallback: Markdown-Parsing
         # Extract and remove code blocks
         code_blocks = re.findall(r"```[\s\S]*?```", body_md)
         prose = re.sub(r"```[\s\S]*?```", " ", body_md)
