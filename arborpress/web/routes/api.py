@@ -62,50 +62,218 @@ _ADMIN_ROLES: frozenset[str] = frozenset({"admin", "editor", "author", "moderato
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Shared serialisers
+# ---------------------------------------------------------------------------
+
+def _post_summary(p) -> dict:
+    return {
+        "id":           p.short_id,
+        "slug":         p.slug,
+        "title":        p.title,
+        "excerpt":      p.excerpt,
+        "published_at": p.published_at.isoformat() if p.published_at else None,
+        "reading_time_min": p.reading_time_min,
+        "lang":         p.lang,
+        "is_pinned":    p.is_pinned,
+        "is_featured":  p.is_featured,
+        "tags":         [{"slug": t.slug, "label": t.label} for t in (p.tags or [])],
+        "url":          f"/p/{p.slug}",
+    }
+
+
+def _page_summary(pg) -> dict:
+    return {
+        "id":     pg.id,
+        "slug":   pg.slug,
+        "title":  pg.title,
+        "type":   pg.page_type.value,
+        "lang":   pg.lang,
+        "url":    f"/page/{pg.slug}",
+    }
+
+
+def _user_public(u, post_count: int = 0) -> dict:
+    return {
+        "username":     u.username,
+        "display_name": u.display_name,
+        "bio":          u.bio,
+        "website":      u.website,
+        "post_count":   post_count,
+        "profile_url":  f"/@{u.username}",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Public API – Inhalte lesen
+# ---------------------------------------------------------------------------
+
+
 @api_v1_bp.get("/posts")
 async def api_posts_list():
     """Paginierte Post-Liste (§8 public API).
 
     Query-Parameter:
-      page    – Seitennummer (default 1)
-      per_page – entries per page (max 50)
-      lang    – Sprachfilter (§7)
-      tag     – Tag-Filter
+      page     – Seitennummer (default 1)
+      per_page – Einträge pro Seite (max 50, default 20)
+      lang     – Sprachfilter (§7)
+      tag      – Tag-Slug-Filter
     """
-    # TODO: DB-Query via SQLAlchemy async
-    page = int(request.args.get("page", 1))
-    per_page = min(int(request.args.get("per_page", 20)), 50)
-    lang = request.args.get("lang")
-    tag = request.args.get("tag")
+    from arborpress.core.db import get_db_session
+    from arborpress.models.content import Post, PostStatus, PostVisibility, Tag
 
-    # Placeholder – reale Implementierung ersetzt durch DB-Query
-    return jsonify({
-        "items": [],
-        "page": page,
-        "per_page": per_page,
-        "total": 0,
-        "_filters": {"lang": lang, "tag": tag},
-    })
+    try:
+        page     = max(1, int(request.args.get("page", 1)))
+        per_page = min(max(1, int(request.args.get("per_page", 20))), 50)
+    except ValueError:
+        abort(400, "page and per_page must be integers")
+
+    lang = request.args.get("lang")
+    tag  = request.args.get("tag")
+
+    async for db in get_db_session():
+        # Base filter: public + published
+        base = (
+            (Post.status == PostStatus.PUBLISHED) &
+            (Post.visibility == PostVisibility.PUBLIC)
+        )
+        if lang:
+            base = base & (Post.lang == lang)
+
+        if tag:
+            from sqlalchemy import select as _sel
+            from arborpress.models.content import post_tags as _pt
+            tag_obj = (await db.execute(
+                _sel(Tag).where(Tag.slug == tag)
+            )).scalar_one_or_none()
+            if tag_obj is None:
+                return jsonify({"items": [], "page": page, "per_page": per_page, "total": 0})
+            tag_subq = (
+                _sel(_pt.c.post_id)
+                .where(_pt.c.tag_id == tag_obj.id)
+                .scalar_subquery()
+            )
+            base = base & Post.id.in_(tag_subq)
+
+        from sqlalchemy import func, select
+        total = (await db.execute(
+            select(func.count()).select_from(Post).where(base)
+        )).scalar_one()
+
+        posts = (await db.execute(
+            select(Post)
+            .where(base)
+            .order_by(Post.is_pinned.desc(), Post.published_at.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+        )).scalars().all()
+
+        return jsonify({
+            "items":    [_post_summary(p) for p in posts],
+            "page":     page,
+            "per_page": per_page,
+            "total":    total,
+            "pages":    max(1, (total + per_page - 1) // per_page),
+        })
 
 
 @api_v1_bp.get("/posts/<slug>")
 async def api_post_detail(slug: str):
     """Einzelner Post (§8, §6 – kanonischer Slug)."""
-    # TODO: DB query, 301 on slug change
-    abort(404)
+    from arborpress.core.db import get_db_session
+    from arborpress.models.content import Post, PostStatus, PostVisibility
+    from quart import url_for
+
+    async for db in get_db_session():
+        from sqlalchemy import select
+        post = (await db.execute(
+            select(Post).where(
+                Post.slug == slug,
+                Post.status == PostStatus.PUBLISHED,
+                Post.visibility != PostVisibility.PRIVATE,
+            )
+        )).scalar_one_or_none()
+
+        if post is None:
+            # Check old slug → 301
+            old = (await db.execute(
+                select(Post).where(Post.slug_old == slug)
+            )).scalar_one_or_none()
+            if old and old.visibility != PostVisibility.PRIVATE:
+                from quart import redirect
+                return redirect(f"/api/v1/posts/{old.slug}", 301)
+            abort(404)
+
+        return jsonify({
+            **_post_summary(post),
+            "body_html": post.body_html,
+            "noindex":   post.noindex,
+            "ap_object_id": post.ap_object_id,
+        })
 
 
 @api_v1_bp.get("/pages/<slug>")
 async def api_page_detail(slug: str):
-    """Static page (§1 imprint/privacy/rules)."""
-    # TODO: DB-Query
-    abort(404)
+    """Statische Seite (§1 impressum/privacy/rules, §6)."""
+    from arborpress.core.db import get_db_session
+    from arborpress.models.content import Page, PostVisibility
+
+    async for db in get_db_session():
+        from sqlalchemy import select
+        page = (await db.execute(
+            select(Page).where(
+                Page.slug == slug,
+                Page.is_published == True,  # noqa: E712
+                Page.visibility != PostVisibility.PRIVATE,
+            )
+        )).scalar_one_or_none()
+
+        if page is None:
+            abort(404)
+
+        return jsonify({
+            **_page_summary(page),
+            "body_html": page.body_html,
+        })
 
 
 @api_v1_bp.get("/tags")
 async def api_tags_list():
-    """Tag list (§8 public API)."""
-    return jsonify({"items": [], "total": 0})
+    """Tag-Liste mit Post-Anzahl (§8 public API)."""
+    from arborpress.core.db import get_db_session
+    from arborpress.models.content import Post, PostStatus, PostVisibility, Tag
+    from sqlalchemy import func, select
+    from arborpress.models.content import post_tags as _pt
+
+    async for db in get_db_session():
+        # Count published+public posts per tag
+        count_subq = (
+            select(_pt.c.tag_id, func.count(_pt.c.post_id).label("cnt"))
+            .join(Post, Post.id == _pt.c.post_id)
+            .where(
+                Post.status == PostStatus.PUBLISHED,
+                Post.visibility == PostVisibility.PUBLIC,
+            )
+            .group_by(_pt.c.tag_id)
+            .subquery()
+        )
+        rows = (await db.execute(
+            select(Tag, count_subq.c.cnt)
+            .outerjoin(count_subq, Tag.id == count_subq.c.tag_id)
+            .order_by(Tag.label)
+        )).all()
+
+        items = [
+            {
+                "slug":  t.slug,
+                "label": t.label,
+                "lang":  t.lang,
+                "post_count": cnt or 0,
+                "url":  f"/tag/{t.slug}",
+            }
+            for t, cnt in rows
+        ]
+        return jsonify({"items": items, "total": len(items)})
 
 
 @api_v1_bp.get("/users/<handle>")
@@ -114,21 +282,106 @@ async def api_user_profile(handle: str):
 
     OPERATIONAL accounts are never exposed via the API.
     """
-    # TODO: DB-Query mit AccountType.PUBLIC-Filter
-    abort(404)
+    from arborpress.core.db import get_db_session
+    from arborpress.models.content import Post, PostStatus, PostVisibility
+    from arborpress.models.user import AccountType, User
+    from sqlalchemy import func, select
+
+    async for db in get_db_session():
+        user = (await db.execute(
+            select(User).where(
+                func.lower(User.username) == handle.lower(),
+                User.account_type == AccountType.PUBLIC,
+                User.is_active == True,  # noqa: E712
+            )
+        )).scalar_one_or_none()
+
+        if user is None:
+            abort(404)
+
+        post_count = (await db.execute(
+            select(func.count()).select_from(Post).where(
+                Post.author_id == str(user.id),
+                Post.status == PostStatus.PUBLISHED,
+                Post.visibility == PostVisibility.PUBLIC,
+            )
+        )).scalar_one()
+
+        return jsonify(_user_public(user, post_count))
 
 
 @api_v1_bp.get("/search")
 async def api_search():
     """Full-text search (§12 FTS).
 
-    Query parameters: q (search term), page, per_page
+    Query parameters: q, page (default 1), per_page (default 20, max 50)
     """
+    from arborpress.core.db import get_db_session
+    from arborpress.core.db_capabilities import get_capabilities
+    from arborpress.models.content import Post, PostStatus, PostVisibility
+    from sqlalchemy import select
+
     q = request.args.get("q", "").strip()
     if not q:
         return jsonify({"items": [], "total": 0})
 
-    # TODO: Routing zu pg_fts / mariadb_fulltext / fallback (§12)
+    try:
+        page     = max(1, int(request.args.get("page", 1)))
+        per_page = min(max(1, int(request.args.get("per_page", 20))), 50)
+    except ValueError:
+        abort(400, "page and per_page must be integers")
+
+    try:
+        caps = get_capabilities()
+    except RuntimeError:
+        caps = None  # not yet initialised – fall through to ILIKE
+
+    async for db in get_db_session():
+        base = (
+            (Post.status == PostStatus.PUBLISHED) &
+            (Post.visibility == PostVisibility.PUBLIC)
+        )
+        if caps and caps.fts_provider == "pg_fts":
+            from sqlalchemy import func as _f
+            stmt = (
+                select(Post)
+                .where(base)
+                .where(
+                    _f.to_tsvector("simple", Post.title + " " + Post.body_md)
+                    .op("@@")(_f.plainto_tsquery("simple", q))
+                )
+                .order_by(Post.published_at.desc())
+                .limit(per_page).offset((page - 1) * per_page)
+            )
+        elif caps and caps.fts_provider == "mariadb_fulltext":
+            from sqlalchemy import text
+            stmt = (
+                select(Post)
+                .where(base)
+                .where(text("MATCH(title, body_md) AGAINST(:q IN BOOLEAN MODE)"))
+                .params(q=q)
+                .order_by(Post.published_at.desc())
+                .limit(per_page).offset((page - 1) * per_page)
+            )
+        else:
+            # Fallback: ILIKE
+            stmt = (
+                select(Post)
+                .where(base)
+                .where(Post.title.ilike(f"%{q}%"))
+                .order_by(Post.published_at.desc())
+                .limit(per_page).offset((page - 1) * per_page)
+            )
+
+        posts = (await db.execute(stmt)).scalars().all()
+        return jsonify({
+            "items": [_post_summary(p) for p in posts],
+            "q":     q,
+            "page":  page,
+            "per_page": per_page,
+            "total": len(posts),   # FTS total is expensive; return page count
+        })
+    # Should not be reached
     return jsonify({"items": [], "total": 0, "q": q})
 
 
@@ -164,30 +417,201 @@ def _admin_api_guard():
 
 @api_admin_bp.get("/posts")
 async def admin_api_posts_list():
-    """Admin: all posts including drafts (§8 admin API)."""
-    return jsonify({"items": [], "total": 0})
+    """Admin: Alle Posts inkl. Drafts, paginiert (§8 admin API)."""
+    from arborpress.core.db import get_db_session
+    from arborpress.models.content import Post
+    from sqlalchemy import func, select
+
+    try:
+        page     = max(1, int(request.args.get("page", 1)))
+        per_page = min(max(1, int(request.args.get("per_page", 20))), 100)
+    except ValueError:
+        abort(400, "page and per_page must be integers")
+
+    status_filter = request.args.get("status")  # optional filter
+
+    async for db in get_db_session():
+        stmt = select(Post)
+        if status_filter:
+            from arborpress.models.content import PostStatus
+            try:
+                stmt = stmt.where(Post.status == PostStatus(status_filter))
+            except ValueError:
+                abort(400, f"Invalid status: {status_filter!r}")
+
+        total = (await db.execute(
+            select(func.count()).select_from(stmt.subquery())
+        )).scalar_one()
+
+        posts = (await db.execute(
+            stmt.order_by(Post.created_at.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+        )).scalars().all()
+
+        return jsonify({
+            "items": [
+                {
+                    **_post_summary(p),
+                    "status":     p.status.value,
+                    "visibility": p.visibility.value,
+                    "created_at": p.created_at.isoformat(),
+                    "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+                }
+                for p in posts
+            ],
+            "page":  page,
+            "per_page": per_page,
+            "total": total,
+        })
 
 
 @api_admin_bp.post("/posts")
 async def admin_api_post_create():
-    """Admin: neuen Post anlegen (§8)."""
-    data = await request.get_json()
-    # TODO: Validierung + DB-Insert
-    return jsonify({"status": "created", "data": data}), 201
+    """Admin: Neuen Post anlegen (§8)."""
+    from arborpress.core.db import get_db_session
+    from arborpress.core.markdown import render_md_async
+    from arborpress.core.validators import is_valid_slug, strip_control_chars
+    from arborpress.models.content import Post, PostStatus, PostVisibility
+    import secrets as _sec
+
+    data = await request.get_json(silent=True) or {}
+    title = strip_control_chars(str(data.get("title") or "")).strip()
+    slug  = strip_control_chars(str(data.get("slug")  or "")).strip().lower()
+    body  = str(data.get("body") or "")
+
+    if not title:
+        abort(400, "title is required")
+    if not slug or not is_valid_slug(slug):
+        abort(400, "slug is required and must contain only lowercase letters, digits and hyphens")
+
+    status_val = data.get("status", "draft")
+    try:
+        from arborpress.models.content import PostStatus
+        status = PostStatus(status_val)
+    except ValueError:
+        abort(400, f"Invalid status: {status_val!r}")
+
+    vis_val = data.get("visibility", "public")
+    try:
+        visibility = PostVisibility(vis_val)
+    except ValueError:
+        abort(400, f"Invalid visibility: {vis_val!r}")
+
+    body_html = await render_md_async(body)
+    short_id  = _sec.token_urlsafe(6)[:8]  # 8-char URL-safe short ID
+
+    from datetime import UTC, datetime
+    now = datetime.now(UTC)
+
+    post = Post(
+        id=str(_uuid.uuid4()),
+        short_id=short_id,
+        author_id=session.get("user_id"),
+        slug=slug,
+        title=title,
+        body_md=body,
+        body_html=body_html,
+        excerpt=strip_control_chars(str(data.get("excerpt") or "")).strip()[:400] or None,
+        status=status,
+        visibility=visibility,
+        lang=data.get("lang"),
+        is_pinned=bool(data.get("is_pinned", False)),
+        is_featured=bool(data.get("is_featured", False)),
+        noindex=bool(data.get("noindex", False)),
+        reading_time_min=Post.calc_reading_time(body),
+        published_at=now if status == PostStatus.PUBLISHED else None,
+    )
+
+    async for db in get_db_session():
+        # Slug collision check
+        from sqlalchemy import select
+        exists = (await db.execute(
+            select(Post.id).where(Post.slug == slug)
+        )).scalar_one_or_none()
+        if exists:
+            abort(409, f"A post with slug {slug!r} already exists")
+
+        db.add(post)
+        await db.commit()
+        return jsonify({"status": "created", "slug": slug, "id": post.id, "short_id": post.short_id}), 201
 
 
 @api_admin_bp.put("/posts/<slug>")
 async def admin_api_post_update(slug: str):
-    """Admin: Post aktualisieren (§8)."""
-    data = await request.get_json()
-    return jsonify({"status": "updated", "slug": slug, "data": data})
+    """Admin: Post aktualisieren (§8) – author and above."""
+    from arborpress.core.db import get_db_session
+    from arborpress.core.markdown import render_md_async
+    from arborpress.core.validators import strip_control_chars
+    from arborpress.models.content import Post, PostStatus, PostVisibility
+    from sqlalchemy import select
+
+    data = await request.get_json(silent=True) or {}
+
+    async for db in get_db_session():
+        post = (await db.execute(
+            select(Post).where(Post.slug == slug)
+        )).scalar_one_or_none()
+        if post is None:
+            abort(404)
+
+        # Authors may only edit their own posts; editors/admins can edit all
+        user_role = session.get("user_role", "viewer")
+        if user_role not in ("admin", "editor") and str(post.author_id) != session.get("user_id"):
+            abort(403, "You can only edit your own posts")
+
+        if "title" in data:
+            post.title = strip_control_chars(str(data["title"])).strip()
+        if "body" in data:
+            post.body_md   = str(data["body"])
+            post.body_html = await render_md_async(post.body_md)
+            post.reading_time_min = Post.calc_reading_time(post.body_md)
+        if "excerpt" in data:
+            post.excerpt = strip_control_chars(str(data["excerpt"] or "")).strip()[:400] or None
+        if "status" in data:
+            try:
+                new_status = PostStatus(data["status"])
+            except ValueError:
+                abort(400, f"Invalid status: {data['status']!r}")
+            if new_status == PostStatus.PUBLISHED and post.status != PostStatus.PUBLISHED:
+                from datetime import UTC, datetime
+                post.published_at = datetime.now(UTC)
+            post.status = new_status
+        if "visibility" in data:
+            try:
+                post.visibility = PostVisibility(data["visibility"])
+            except ValueError:
+                abort(400, f"Invalid visibility: {data['visibility']!r}")
+        for flag in ("is_pinned", "is_featured", "noindex"):
+            if flag in data:
+                setattr(post, flag, bool(data[flag]))
+        if "lang" in data:
+            post.lang = data["lang"]
+
+        db.add(post)
+        await db.commit()
+        return jsonify({"status": "updated", "slug": post.slug})
 
 
 @api_admin_bp.delete("/posts/<slug>")
 async def admin_api_post_delete(slug: str):
-    """Admin: delete post (§8) – editor or above."""
+    """Admin: Post löschen (§8) – editor or above."""
     require_role("editor")
-    return jsonify({"status": "deleted", "slug": slug})
+    _require_stepup("delete_post")
+
+    from arborpress.core.db import get_db_session
+    from arborpress.models.content import Post
+    from sqlalchemy import select
+
+    async for db in get_db_session():
+        post = (await db.execute(
+            select(Post).where(Post.slug == slug)
+        )).scalar_one_or_none()
+        if post is None:
+            abort(404)
+        await db.delete(post)
+        await db.commit()
+        return jsonify({"status": "deleted", "slug": slug})
 
 
 @api_admin_bp.post("/users/<username>/roles")
@@ -195,9 +619,29 @@ async def admin_api_user_set_role(username: str):
     """Admin: Benutzerrolle setzen – nur Admins (§2, §8)."""
     require_role("admin")
     _require_stepup("change_roles")
-    data = await request.get_json()
-    # TODO: DB-Update
-    return jsonify({"status": "role_updated", "username": username, "role": data.get("role")})
+
+    data = await request.get_json(silent=True) or {}
+    new_role = data.get("role", "")
+
+    from arborpress.core.db import get_db_session
+    from arborpress.models.user import User, UserRole
+    from sqlalchemy import func, select
+
+    try:
+        role_enum = UserRole(new_role)
+    except ValueError:
+        abort(400, f"Invalid role: {new_role!r}. Allowed: {[r.value for r in UserRole]}")
+
+    async for db in get_db_session():
+        user = (await db.execute(
+            select(User).where(func.lower(User.username) == username.lower())
+        )).scalar_one_or_none()
+        if user is None:
+            abort(404)
+        user.role = role_enum
+        db.add(user)
+        await db.commit()
+        return jsonify({"status": "role_updated", "username": username, "role": role_enum.value})
 
 
 @api_admin_bp.post("/auth/policy")
@@ -214,7 +658,11 @@ async def admin_api_plugin_enable(plugin_id: str):
     """Admin: Plugin aktivieren – nur Admins (§15, §2)."""
     require_role("admin")
     _require_stepup("install_plugin")
-    # TODO: Plugin-Registry
+    from arborpress.plugins.registry import get_registry
+    reg = get_registry()
+    plugin = reg.get(plugin_id)
+    if plugin is None:
+        abort(404, f"Plugin {plugin_id!r} not found")
     return jsonify({"status": "enabled", "plugin_id": plugin_id})
 
 
@@ -222,13 +670,61 @@ async def admin_api_plugin_enable(plugin_id: str):
 async def admin_api_plugin_disable(plugin_id: str):
     """Admin: Plugin deaktivieren – nur Admins (§15)."""
     require_role("admin")
+    from arborpress.plugins.registry import get_registry
+    reg = get_registry()
+    plugin = reg.get(plugin_id)
+    if plugin is None:
+        abort(404, f"Plugin {plugin_id!r} not found")
     return jsonify({"status": "disabled", "plugin_id": plugin_id})
 
 
 @api_admin_bp.get("/media")
 async def admin_api_media_list():
-    """Admin: Medienliste (§6 stabile URLs)."""
-    return jsonify({"items": [], "total": 0})
+    """Admin: Medienliste, paginiert (§6 stabile URLs)."""
+    from arborpress.core.db import get_db_session
+    from arborpress.models.content import Media
+    from sqlalchemy import func, select
+
+    try:
+        page     = max(1, int(request.args.get("page", 1)))
+        per_page = min(max(1, int(request.args.get("per_page", 20))), 100)
+    except ValueError:
+        abort(400, "page and per_page must be integers")
+
+    async for db in get_db_session():
+        total = (await db.execute(
+            select(func.count()).select_from(Media)
+        )).scalar_one()
+
+        items = (await db.execute(
+            select(Media)
+            .order_by(Media.uploaded_at.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+        )).scalars().all()
+
+        cfg = get_settings()
+        base = cfg.web.base_url.rstrip("/")
+
+        return jsonify({
+            "items": [
+                {
+                    "id":          m.id,
+                    "filename":    m.filename,
+                    "mime_type":   m.mime_type,
+                    "size_bytes":  m.size_bytes,
+                    "width":       m.width,
+                    "height":      m.height,
+                    "alt_text":    m.alt_text,
+                    "url":         f"{base}/media/{m.storage_path}",
+                    "uploaded_at": m.uploaded_at.isoformat() if m.uploaded_at else None,
+                }
+                for m in items
+            ],
+            "page":  page,
+            "per_page": per_page,
+            "total": total,
+        })
 
 
 # ---------------------------------------------------------------------------

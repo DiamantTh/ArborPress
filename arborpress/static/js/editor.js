@@ -193,6 +193,105 @@
   // ────────────────────────────────────────────────────────────
   // Aktionen auf Textarea
   // ────────────────────────────────────────────────────────────
+  // Inline-Dialog (ersetzt browser prompt() – barrierefrei, kein
+  // Dialog-Blockieren durch Popup-Blocker)
+  // ────────────────────────────────────────────────────────────
+  function showInlineDialog({ label, placeholder, defaultValue, onConfirm }) {
+    // Entferne evtl. vorhandenen Dialog
+    const prev = document.getElementById("ap-inline-dialog");
+    if (prev) prev.remove();
+
+    const dlg = document.createElement("div");
+    dlg.id = "ap-inline-dialog";
+    dlg.setAttribute("role", "dialog");
+    dlg.setAttribute("aria-modal", "true");
+    dlg.setAttribute("aria-label", label);
+
+    const lbl = document.createElement("label");
+    lbl.textContent = label;
+    lbl.setAttribute("for", "ap-inline-dialog-input");
+
+    const input = document.createElement("input");
+    input.type = "url";
+    input.id = "ap-inline-dialog-input";
+    input.placeholder = placeholder || "";
+    input.value = defaultValue || "";
+    input.setAttribute("autocomplete", "off");
+
+    const btnOk = document.createElement("button");
+    btnOk.type = "button";
+    btnOk.textContent = "OK";
+    btnOk.className = "ap-dlg-ok";
+
+    const btnCancel = document.createElement("button");
+    btnCancel.type = "button";
+    btnCancel.textContent = "Abbrechen";
+    btnCancel.className = "ap-dlg-cancel";
+
+    dlg.appendChild(lbl);
+    dlg.appendChild(input);
+    dlg.appendChild(btnOk);
+    dlg.appendChild(btnCancel);
+    document.body.appendChild(dlg);
+
+    input.focus();
+    input.select();
+
+    function close(value) {
+      dlg.remove();
+      if (value !== null) onConfirm(value.trim());
+    }
+
+    btnOk.addEventListener("click",     () => close(input.value));
+    btnCancel.addEventListener("click",  () => close(null));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter")  { e.preventDefault(); close(input.value); }
+      if (e.key === "Escape") { e.preventDefault(); close(null); }
+    });
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // Preview: sichere HTML-Einfügung über DOMParser
+  // (verhindert Script-Ausführung aus der Preview-Antwort)
+  // ────────────────────────────────────────────────────────────
+  function setPreviewHTML(container, html) {
+    // DOMParser parst HTML in einem inaktiven Dokument –
+    // kein Script-Kontext, kein Laden von Ressourcen.
+    const parser  = new DOMParser();
+    const doc     = parser.parseFromString(html, "text/html");
+    // Alle <script>-Elemente (falls vorhanden) entfernen
+    doc.querySelectorAll("script, noscript").forEach(el => el.remove());
+    // Inhalt des <body> importieren und einsetzen
+    container.replaceChildren(
+      ...Array.from(doc.body.childNodes).map(n => document.importNode(n, true))
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // API-Preview
+  // ────────────────────────────────────────────────────────────
+  function triggerPreview(markdown, target) {
+    if (!target) return;
+    fetch(PREVIEW_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      body: JSON.stringify({ text: markdown }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        setPreviewHTML(target, data.html || "");
+      })
+      .catch(function () {
+        target.textContent = "Vorschau nicht verfügbar";
+      });
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // Aktionen auf Textarea
+  // ────────────────────────────────────────────────────────────
   function applyAction(textarea, action) {
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
@@ -203,6 +302,9 @@
     if (action.type === "block") {
       newText = val.substring(0, start) + action.text + val.substring(end);
       cursorStart = cursorEnd = start + action.text.length;
+      textarea.value = newText;
+      textarea.setSelectionRange(cursorStart, cursorEnd);
+      textarea.dispatchEvent(new Event("input"));
     } else if (action.type === "line-prefix") {
       // Zeilenanfang finden
       const lineStart = val.lastIndexOf("\n", start - 1) + 1;
@@ -210,22 +312,41 @@
       newText = val.substring(0, lineStart) + insert + val.substring(end);
       cursorStart = lineStart + action.prefix.length;
       cursorEnd = cursorStart + selected.length;
+      textarea.value = newText;
+      textarea.setSelectionRange(cursorStart, cursorEnd);
+      textarea.dispatchEvent(new Event("input"));
     } else if (action.type === "link") {
-      const href = prompt("URL eingeben:", "https://");
-      if (!href) return;
-      const label = selected || "Linktext";
-      const md = `[${label}](${href})`;
-      newText = val.substring(0, start) + md + val.substring(end);
-      cursorStart = start + 1;
-      cursorEnd = start + 1 + label.length;
+      showInlineDialog({
+        label: "Link-URL eingeben",
+        placeholder: "https://",
+        defaultValue: "https://",
+        onConfirm(href) {
+          if (!href) return;
+          const label = selected || "Linktext";
+          const md = `[${label}](${href})`;
+          const nv = val.substring(0, start) + md + val.substring(end);
+          textarea.value = nv;
+          textarea.setSelectionRange(start + 1, start + 1 + label.length);
+          textarea.focus();
+          textarea.dispatchEvent(new Event("input"));
+        },
+      });
     } else if (action.type === "image") {
-      const src = prompt("Bild-URL eingeben:", "https://");
-      if (!src) return;
-      const alt = selected || "Beschreibung";
-      const md = `![${alt}](${src})`;
-      newText = val.substring(0, start) + md + val.substring(end);
-      cursorStart = start + 2;
-      cursorEnd = start + 2 + alt.length;
+      showInlineDialog({
+        label: "Bild-URL eingeben",
+        placeholder: "https://",
+        defaultValue: "https://",
+        onConfirm(src) {
+          if (!src) return;
+          const alt = selected || "Beschreibung";
+          const md = `![${alt}](${src})`;
+          const nv = val.substring(0, start) + md + val.substring(end);
+          textarea.value = nv;
+          textarea.setSelectionRange(start + 2, start + 2 + alt.length);
+          textarea.focus();
+          textarea.dispatchEvent(new Event("input"));
+        },
+      });
     } else {
       // wrap: before/after
       const text = selected || action.sample || "";
@@ -233,11 +354,10 @@
       newText = val.substring(0, start) + md + val.substring(end);
       cursorStart = start + action.before.length;
       cursorEnd = cursorStart + text.length;
+      textarea.value = newText;
+      textarea.setSelectionRange(cursorStart, cursorEnd);
+      textarea.dispatchEvent(new Event("input"));  // Preview aktualisieren
     }
-
-    textarea.value = newText;
-    textarea.setSelectionRange(cursorStart, cursorEnd);
-    textarea.dispatchEvent(new Event("input"));  // Preview aktualisieren
   }
 
   // ────────────────────────────────────────────────────────────

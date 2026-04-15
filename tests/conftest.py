@@ -2,29 +2,31 @@
 
 from __future__ import annotations
 
-import asyncio
+import os
+import tempfile
+
 import pytest
 from quart import Quart
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
-
-# asyncio-mode ist in pyproject.toml auf "auto" gesetzt
-
-
-@pytest.fixture(scope="session")
-def event_loop_policy():
-    """asyncio-Eventloop-Policy für die gesamte Test-Session."""
-    return asyncio.DefaultEventLoopPolicy()
 
 
 @pytest.fixture(scope="session")
 async def test_engine():
-    """In-Memory-SQLite-Engine für Tests (kein PostgreSQL nötig)."""
+    """Datei-SQLite-Engine für Tests (kein PostgreSQL nötig).
+
+    Eine temporäre Datei statt :memory: wird verwendet, damit Verbindungs-
+    invalidierungen (CancelledError beim aiosqlite-Rollback) keine leere
+    In-Memory-Datenbank erzeugen – alle Tabellen bleiben über Verbindungsresets
+    erhalten.
+    """
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    db_path = tmp.name
+
     engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
+        f"sqlite+aiosqlite:///{db_path}",
         echo=False,
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
     )
     # Alle Tabellen erstellen
     import arborpress.models  # noqa: F401
@@ -37,6 +39,7 @@ async def test_engine():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
+    os.unlink(db_path)
 
 
 @pytest.fixture()
@@ -54,8 +57,10 @@ def app(test_engine):
     """Quart-Test-App mit In-Memory-SQLite."""
     import arborpress.core.db as db_mod
 
-    # Test-Engine injizieren
+    # Test-Engine injizieren; _session_factory zurücksetzen damit
+    # get_session_factory() die neue Engine aufgreift statt eine alte zu cachen.
     db_mod._engine = test_engine
+    db_mod._session_factory = None
 
     from arborpress.web.app import create_app
     quart_app = create_app()
