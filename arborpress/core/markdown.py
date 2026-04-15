@@ -95,6 +95,64 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 
+def sanitize_html(html: str) -> str:
+    """Bereinigt rohes HTML mit der gleichen Erlaubtliste wie render_md().
+
+    Wird genutzt wenn ein WYSIWYG-Adapter (z.B. TipTap) direkt HTML liefert
+    und das HTML als body_html gespeichert werden soll.
+
+    Args:
+        html: Rohes HTML aus dem Editor.
+
+    Returns:
+        Bereinigtes HTML.
+    """
+    if not html:
+        return ""
+    clean = bleach.clean(
+        html,
+        tags=_ALLOWED_TAGS,
+        attributes=_ALLOWED_ATTRS,
+        protocols=_ALLOWED_PROTOCOLS,
+        strip=True,
+    )
+    return _add_link_rel(clean)
+
+
+def html_to_md(html: str) -> str:
+    """Konvertiert sanitisiertes HTML → Markdown (GFM-kompatibel).
+
+    Wird genutzt wenn ein WYSIWYG-Adapter (z.B. TipTap) HTML liefert,
+    das für body_md (Export / Backup) als Markdown erhalten bleiben soll.
+
+    markdownify ist eine optionale Dependency ([wysiwyg] extra).
+    Ist das Paket nicht installiert, wird das HTML als body_md gespeichert
+    (trotzdem funktional – der Import/Export-Pfad verliert dann MD-Semantik).
+
+    Args:
+        html: Sanitisiertes HTML (z.B. aus render_md oder WYSIWYG-Editor).
+
+    Returns:
+        Markdown-String oder html als Fallback.
+    """
+    if not html:
+        return ""
+    try:
+        from markdownify import markdownify as _md2
+        return _md2(
+            html,
+            heading_style="ATX",
+            bullets="-",
+            code_language_callback=None,
+        ).strip()
+    except ImportError:
+        log.debug(
+            "markdownify nicht installiert – HTML als body_md gespeichert. "
+            "pip install 'arborpress[wysiwyg]' für MD-Konvertierung."
+        )
+        return html
+
+
 def render_md(text: str) -> str:
     """Rendert Markdown zu sanitisiertem HTML.
 

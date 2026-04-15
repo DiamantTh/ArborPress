@@ -19,7 +19,7 @@ from arborpress.auth.roles import require_role
 from arborpress.auth.stepup import assert_stepup, is_stepup_active
 from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
-from arborpress.core.markdown import render_md_async
+from arborpress.core.markdown import html_to_md, render_md_async, sanitize_html
 from arborpress.core.validators import is_valid_slug
 from arborpress.logging.config import get_audit_logger
 from arborpress.web.security import validate_csrf
@@ -28,6 +28,32 @@ log = logging.getLogger("arborpress.web.admin")
 audit = get_audit_logger()
 
 admin_bp = Blueprint("admin", __name__, template_folder="../../templates")
+
+
+async def _resolve_body(form, db) -> tuple[str, str]:
+    """Gibt (body_md, body_html) für einen Save-Handler zurück.
+
+    Unterstützt zwei Modi (gesteuert durch das Hidden-Field _editor_type):
+      "markdown" (default / builtin-Adapter):
+          body = Markdown-Text → render_md_async() → HTML
+      "html" (WYSIWYG-Adapter, z.B. TipTap):
+          body = HTML-String → sanitize_html() → body_html
+                             → html_to_md()   → body_md (Export / Backup / Import)
+
+    Der Wert aus _editor_type kommt vom Adapter und wird vom Template als
+    Hidden-Field gesetzt bevor der Form-Submit erfolgt.
+    """
+    raw         = (form.get("body") or "").strip()
+    editor_type = (form.get("_editor_type") or "markdown").strip()
+
+    if editor_type == "html":
+        body_html = sanitize_html(raw)
+        body_md   = html_to_md(body_html)
+    else:
+        body_md   = raw
+        body_html = await render_md_async(raw, db=db)
+
+    return body_md, body_html
 
 
 def _require_session():
@@ -159,7 +185,6 @@ async def post_new_save():
     form = await request.form
     title        = (form.get("title") or "").strip()[:256]
     slug         = (form.get("slug") or "").strip()[:128] or None
-    body_md      = (form.get("body") or "").strip()
     status_val   = form.get("status", "draft")
     visibility_val = form.get("visibility", "public")
     captcha_type = (form.get("captcha_type") or "").strip() or None
@@ -190,13 +215,14 @@ async def post_new_save():
     short_id = _uuid.uuid4().hex[:12]
 
     async for db in get_db_session():
+        body_md, body_html = await _resolve_body(form, db)
         post = Post(
             id=str(_uuid.uuid4()),
             short_id=short_id,
             title=title,
             slug=slug,
             body_md=body_md,
-            body_html=await render_md_async(body_md, db=db),
+            body_html=body_html,
             status=(
                 PostStatus(status_val)
                 if status_val in PostStatus.__members__
@@ -275,7 +301,6 @@ async def post_edit_save(slug: str):
 
         title          = (form.get("title") or "").strip()[:256]
         new_slug       = (form.get("slug") or "").strip()[:128] or slug
-        body_md        = (form.get("body") or "").strip()
         status_val     = form.get("status", post.status.value)
         visibility_val = form.get("visibility", post.visibility.value)
         captcha_type   = (form.get("captcha_type") or "").strip() or None
@@ -299,13 +324,15 @@ async def post_edit_save(slug: str):
         # Snapshot before change for diff
         old_body_md = post.body_md or ""
 
+        body_md, body_html = await _resolve_body(form, db)
+
         if title:
             post.title = title
         if new_slug != slug:
             post.slug_old = slug
             post.slug = new_slug
         post.body_md          = body_md
-        post.body_html        = await render_md_async(body_md, db=db)
+        post.body_html        = body_html
         post.captcha_type     = captcha_type
         post.reading_time_min = Post.calc_reading_time(body_md)
         try:

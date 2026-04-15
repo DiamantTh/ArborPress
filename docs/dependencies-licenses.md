@@ -32,6 +32,7 @@ Angaben zu Lizenzen basieren auf den veröffentlichten Paketmetadaten bzw. den v
 | pydantic-settings | Runtime | MIT | https://pypi.org/project/pydantic-settings/ | https://github.com/pydantic/pydantic-settings |
 | packaging | Runtime | Apache-2.0 OR BSD-2-Clause | https://pypi.org/project/packaging/ | https://github.com/pypa/packaging |
 | alembic | Runtime | MIT | https://pypi.org/project/alembic/ | https://github.com/sqlalchemy/alembic |
+| markdownify | Optional (wysiwyg) | MIT | https://pypi.org/project/markdownify/ | https://github.com/matthewwithanm/python-markdownify |
 
 ## Python (Development)
 
@@ -61,6 +62,29 @@ Angaben zu Lizenzen basieren auf den veröffentlichten Paketmetadaten bzw. den v
 | tslib | Dev | 0BSD | https://www.npmjs.com/package/tslib | https://github.com/microsoft/tslib |
 | typescript | Dev | Apache-2.0 | https://www.npmjs.com/package/typescript | https://github.com/microsoft/TypeScript |
 | vite | Dev | MIT | https://www.npmjs.com/package/vite | https://github.com/vitejs/vite |
+| @tiptap/core | Runtime (editor-adapters/tiptap) | MIT | https://www.npmjs.com/package/@tiptap/core | https://github.com/ueberdosis/tiptap |
+| @tiptap/starter-kit | Runtime (editor-adapters/tiptap) | MIT | https://www.npmjs.com/package/@tiptap/starter-kit | https://github.com/ueberdosis/tiptap |
+| tiptap-markdown | Runtime (editor-adapters/tiptap) | MIT | https://www.npmjs.com/package/tiptap-markdown | https://github.com/aguingand/tiptap-markdown |
+
+## Lizenz-Kompatibilitätsmatrix
+
+ArborPress verwendet **AGPL-3.0-or-later**. Als Copyleft-Lizenz verlangt sie, dass Ableitungen unter
+kompatiblen Bedingungen veröffentlicht werden. Die folgende Tabelle zeigt die Verträglichkeit:
+
+| Fremde Lizenz | Verwendung in ArborPress | Kompatibel mit AGPL-3.0? |
+|---|---|---|
+| MIT | Frontend + Python Optional-Deps | ✅ Ja |
+| Apache-2.0 | Python Runtime-Deps | ✅ Ja (ab AGPL v3) |
+| BSD-2/3-Clause | Python Runtime-Deps | ✅ Ja |
+| 0BSD | Frontend Dev | ✅ Ja |
+| GPL-2.0-only | – | ⚠ Nicht kompatibel mit AGPL-3.0 |
+| GPL-3.0 | – | ✅ Ja (Upgrade auf AGPL möglich) |
+| LGPL-2.1 | – | ✅ Ja (mit Einschränkungen) |
+| AGPL-3.0 | Hauptlizenz | ✅ Ja |
+
+> **CKEditor 5** (ab v38) verwendet eine angepasste **GPL-2.0-only**-Klausel mit Commercial-Restriction.
+> GPL-2.0-only ist **nicht kompatibel mit AGPL-3.0** und würde bei kommerzieller Nutzung Lizenzgebühren
+> auslösen → **ausdrücklich ausgeschlossen**. Ersetzt durch TipTap (MIT).
 
 ## Projektlizenz
 

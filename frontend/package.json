@@ -5,12 +5,16 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
+    "build:editor": "vite build --config vite.config.editor.js",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "lint": "prettier --check . && eslint ."
   },
   "dependencies": {
-    "@simplewebauthn/browser": "^9.0.0"
+    "@simplewebauthn/browser": "^9.0.0",
+    "@tiptap/core": "^3.22.3",
+    "@tiptap/starter-kit": "^3.22.3",
+    "tiptap-markdown": "^0.9.0"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.0",

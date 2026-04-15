@@ -179,6 +179,8 @@
          data-ap-editor="{{ config.web.admin_editor }}"
          data-ap-preview-endpoint="/api/v1/admin/markdown/preview"
          data-ap-debounce="350">
+      {# Adapter setzt dieses Feld vor Form-Submit auf 'html' (WYSIWYG) oder 'markdown' #}
+      <input type="hidden" name="_editor_type" id="ap-editor-type" value="markdown">
       <textarea name="body" rows="20" class="code-editor" style="width:100%">{{ post.body_md if post else '' }}</textarea>
     </div>
     <small style="color:var(--admin-muted);margin-top:.3rem;display:block;">

@@ -61,9 +61,10 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
 ]
-# SQLite-Backend (Entwicklung / kleine Instanzen)
-sqlite = [
-    "aiosqlite>=0.20",
+# WYSIWYG-Editor HTML→Markdown (optionaler Konverter für den TipTap/Prosemirror
+# Adapter; wird nur genutzt wenn admin_editor != 'builtin')
+wysiwyg = [
+    "markdownify>=0.13",
 ]
 # Cache-Backends
 cache-redis = [
