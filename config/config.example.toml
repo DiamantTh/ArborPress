@@ -121,12 +121,22 @@ dirs = [
 # Cache
 # ---------------------------------------------------------------------------
 [cache]
-# Backend: memory (default) | redis | memcached | file | none
+# Backend: memory (default) | redis | valkey | memcached | file | none
 backend = "memory"
 # Standard-TTL in Sekunden
 ttl     = 300
 # Key-Präfix
 prefix  = "ap:"
+
+# Zwei-Ebenen-Cache: in-process L1 vor externem L2 (redis/valkey/memcached/file).
+# Sinnvoll bei Multi-Worker-Deployments; kein Effekt wenn backend = "memory"/"none".
+# l1_enabled = false
+# l1_ttl     = 30   # L1-TTL in Sekunden (kürzer als ttl, damit L2-Updates greifen)
+
+# Valkey – FOSS Redis-Fork (BSD-3, ab Redis 7.4 wechselte Redis zur BSL):
+# backend   = "valkey"
+# valkey_url = "valkey://localhost:6379/0"
+# valkey_url = "valkeys://localhost:6380/0"   # TLS
 
 # Redis (backend = "redis"):
 # redis_url = "redis://localhost:6379/0"

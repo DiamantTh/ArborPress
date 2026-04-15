@@ -3,7 +3,9 @@
 Uses the same storage configuration as CacheSettings:
   - memory (default): in-process dict, no external service needed.
   - redis: shared state across multiple worker processes/instances.
-  - All other backends (memcached, file, none): fall back to MemoryStorage.
+  - valkey: Valkey FOSS store (BSD-3); limits supports ``valkey://`` natively.
+  - memcached: shared Memcached store.
+  - All other backends (file, none): fall back to MemoryStorage.
 
 Fail-open: on storage errors the request is allowed through, so that a
 cache-backend outage does not cause a permanent HTTP-429 storm.
@@ -44,8 +46,15 @@ def _get_limiter() -> object:
     cfg = get_settings()
     if cfg.cache.backend == "redis":
         store = _storage.RedisStorage(cfg.cache.redis_url)
+    elif cfg.cache.backend == "valkey":
+        # limits 5.x maps valkey:// natively to RedisStorage with valkey client
+        store = _storage.RedisStorage(cfg.cache.valkey_url)
+    elif cfg.cache.backend == "memcached":
+        store = _storage.MemcachedStorage(
+            f"memcached://{cfg.cache.memcached_host}:{cfg.cache.memcached_port}"
+        )
     else:
-        # memory, memcached, file, none → stateless in-process storage
+        # file, none, memory → stateless in-process storage
         store = _storage.MemoryStorage()
 
     _limiter = _strategies.FixedWindowRateLimiter(store)

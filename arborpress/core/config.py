@@ -167,19 +167,26 @@ class LoggingSettings(BaseSettings):
 class CacheSettings(BaseSettings):
     """Cache backend configuration.
 
-    Backends: memory (default) | redis | memcached | file | none
+    Backends: memory (default) | redis | valkey | memcached | file | none
 
-    memory:     In-process dict with TTL – no external service required.
+    memory:     In-process dict mit TTL – kein externer Service erforderlich.
     redis:      redis-py async. Extra dep: pip install 'redis[hiredis]'
+    valkey:     Valkey (FOSS Redis-Fork, BSD-3). Extra dep: pip install 'valkey[libvalkey]'
     memcached:  aiomcache. Extra dep: pip install aiomcache
-    file:       JSON files on disk – no rebuild needed after restart.
-    none:       Cache disabled (always cache-miss).
+    file:       JSON-Dateien auf Disk – Cache überlebt Neustarts.
+    none:       Cache deaktiviert (immer Cache-Miss).
     """
-    backend: Literal["memory", "redis", "memcached", "file", "none"] = "memory"
+    backend: Literal["memory", "redis", "valkey", "memcached", "file", "none"] = "memory"
     ttl: int = 300           # default TTL in seconds
     prefix: str = "ap:"      # key prefix
+    # L1-Cache (in-process, vor externem Backend)
+    # Nur wirksam wenn backend in {redis, valkey, memcached, file}
+    l1_enabled: bool = False  # Zwei-Ebenen-Cache aktivieren
+    l1_ttl: int = 30          # L1-TTL in Sekunden (kurz, damit L2-Updates zeitnah wirken)
     # Redis
     redis_url: str = "redis://localhost:6379/0"
+    # Valkey (FOSS Redis-Fork, gleiche URL-Syntax)
+    valkey_url: str = "valkey://localhost:6379/0"
     # Memcached
     memcached_host: str = "localhost"
     memcached_port: int = 11211

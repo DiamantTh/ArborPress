@@ -2,17 +2,29 @@
 
 Supported backends:
   memory       – asyncio-compatible in-process dict (default, no dep)
-  redis        – redis-py async (optional: pip install redis)
+  redis        – redis-py async (optional: pip install 'redis[hiredis]')
+  valkey       – Valkey async (FOSS Redis-Fork BSD-3; pip install 'valkey[libvalkey]')
   memcached    – aiomcache (optional: pip install aiomcache)
   file         – JSON dump in directory (persistent, no external service)
   none         – disabled (every GET returns None)
 
+Zwei-Ebenen-Cache (L1 + L2):
+  l1_enabled = true  aktiviert einen in-process MemoryBackend (L1) vor dem
+  konfigurierten externen Backend (L2). L1-TTL ist kürzer als L2-TTL, damit
+  Invalidierungen aus L2 zeitnah wirken. Sinnvoll bei Multi-Worker-Deployments
+  mit Valkey/Redis als L2.
+
 Configuration via config.toml [cache]:
-  backend      = "memory"           # memory|redis|memcached|file|none
+  backend      = "memory"           # memory|redis|valkey|memcached|file|none
   ttl          = 300                # default TTL in seconds
   prefix       = "ap:"              # key prefix
+  # L1-Cache (in-process, vor externem Backend)
+  l1_enabled   = false              # Zwei-Ebenen-Cache aktivieren
+  l1_ttl       = 30                 # L1-TTL in Sekunden
   # Redis
   redis_url    = "redis://localhost:6379/0"
+  # Valkey (FOSS Redis-Fork–kompatible URL)
+  valkey_url   = "valkey://localhost:6379/0"
   # Memcached
   memcached_host = "localhost"
   memcached_port = 11211
@@ -298,8 +310,120 @@ class FileBackend(CacheBackend):
             p.unlink(missing_ok=True)
 
     def info(self) -> str:
-        count = len(list(self._dir.glob(f"{self._prefix}*.cache")))
         return f"file ({self._dir}, {count} entries)"
+
+
+# ---------------------------------------------------------------------------
+# Valkey backend (FOSS Redis-Fork, BSD-3 licensed, API-kompatibel zu redis-py)
+# ---------------------------------------------------------------------------
+
+
+class ValkeyBackend(CacheBackend):
+    """Valkey-Backend via valkey-py (API-kompatibel zu redis-py).
+
+    Valkey ist der von der Linux Foundation betreute FOSS-Fork von Redis
+    (Redis wechselte ab 7.4 zur BSL-Lizenz). Die Python-Library `valkey`
+    ist ein Drop-in-Replacement für `redis.asyncio`.
+    """
+
+    def __init__(self, url: str, prefix: str = "ap:") -> None:
+        self._url = url
+        self._prefix = prefix
+        self._client: Any = None  # valkey.asyncio.Valkey
+
+    async def _ensure(self) -> Any:  # noqa: ANN401
+        if self._client is None:
+            try:
+                import valkey.asyncio as aivalkey
+            except ImportError as exc:
+                raise RuntimeError(
+                    "valkey backend requires 'valkey'. "
+                    "pip install 'valkey[libvalkey]'"
+                ) from exc
+            self._client = aivalkey.from_url(self._url, decode_responses=False)
+        return self._client
+
+    def _k(self, key: str) -> str:
+        return f"{self._prefix}{key}"
+
+    async def get(self, key: str) -> Any | None:  # noqa: ANN401
+        r = await self._ensure()
+        raw = await r.get(self._k(key))
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
+
+    async def set(self, key: str, value: Any, ttl: int) -> None:  # noqa: ANN401
+        r = await self._ensure()
+        encoded = json.dumps(value, default=str)
+        if ttl > 0:
+            await r.setex(self._k(key), ttl, encoded)
+        else:
+            await r.set(self._k(key), encoded)
+
+    async def delete(self, key: str) -> None:
+        r = await self._ensure()
+        await r.delete(self._k(key))
+
+    async def flush(self) -> None:
+        r = await self._ensure()
+        keys = await r.keys(f"{self._prefix}*")
+        if keys:
+            await r.delete(*keys)
+
+    def info(self) -> str:
+        return f"valkey ({self._url})"
+
+
+# ---------------------------------------------------------------------------
+# Two-level backend (L1 in-process + L2 external)
+# ---------------------------------------------------------------------------
+
+
+class TwoLevelBackend(CacheBackend):
+    """Zwei-Ebenen-Cache: L1 (in-process MemoryBackend) vor L2 (externer Backend).
+
+    Lesepfad: L1-Hit → sofort zurück. L1-Miss → L2 abfragen, Ergebnis in L1 schreiben.
+    Schreibpfad: in beide Ebenen schreiben.
+    Löschpfad: aus beiden Ebenen löschen.
+
+    L1 verwendet immer den kürzeren ``l1_ttl``, damit Invalidierungen aus L2
+    zeitnah durchschlagen. Kann über ``CacheSettings.l1_enabled = false`` deaktiviert
+    werden – dann wird der L2-Backend direkt zurückgegeben (kein Overhead).
+    """
+
+    def __init__(self, l1: CacheBackend, l2: CacheBackend, l1_ttl: int = 30) -> None:
+        self._l1 = l1
+        self._l2 = l2
+        self._l1_ttl = l1_ttl
+
+    async def get(self, key: str) -> Any | None:  # noqa: ANN401
+        value = await self._l1.get(key)
+        if value is not None:
+            return value
+        value = await self._l2.get(key)
+        if value is not None:
+            # L1 mit kürzerem TTL befüllen
+            await self._l1.set(key, value, self._l1_ttl)
+        return value
+
+    async def set(self, key: str, value: Any, ttl: int) -> None:  # noqa: ANN401
+        await self._l1.set(key, value, self._l1_ttl)
+        await self._l2.set(key, value, ttl)
+
+    async def delete(self, key: str) -> None:
+        await self._l1.delete(key)
+        await self._l2.delete(key)
+
+    async def flush(self) -> None:
+        await self._l1.flush()
+        await self._l2.flush()
+
+    def info(self) -> str:
+        return f"two-level [L1: {self._l1.info()} | L2: {self._l2.info()}]"
 
 
 # ---------------------------------------------------------------------------
@@ -322,19 +446,32 @@ def _build_backend() -> CacheBackend:
         _default_ttl = cache_cfg.ttl
 
         if backend_name == "redis":
-            return RedisBackend(url=cache_cfg.redis_url, prefix=prefix)
-        if backend_name == "memcached":
-            return MemcachedBackend(
+            backend: CacheBackend = RedisBackend(url=cache_cfg.redis_url, prefix=prefix)
+        elif backend_name == "valkey":
+            backend = ValkeyBackend(url=cache_cfg.valkey_url, prefix=prefix)
+        elif backend_name == "memcached":
+            backend = MemcachedBackend(
                 host=cache_cfg.memcached_host,
                 port=cache_cfg.memcached_port,
                 prefix=prefix,
             )
-        if backend_name == "file":
-            return FileBackend(directory=cache_cfg.file_dir, prefix=prefix.replace(":", "_"))
-        if backend_name == "none":
+        elif backend_name == "file":
+            backend = FileBackend(directory=cache_cfg.file_dir, prefix=prefix.replace(":", "_"))
+        elif backend_name == "none":
             return NoneBackend()
-        # Default: memory
-        return MemoryBackend()
+        else:
+            # Default: memory – L1 makes no sense on top of memory
+            return MemoryBackend()
+
+        # Zwei-Ebenen-Cache: L1 (in-process) vor L2 (externer Backend)
+        if cache_cfg.l1_enabled:
+            backend = TwoLevelBackend(
+                l1=MemoryBackend(),
+                l2=backend,
+                l1_ttl=cache_cfg.l1_ttl,
+            )
+
+        return backend
     except Exception as exc:
         log.warning("Cache configuration failed (%s) – using memory backend", exc)
         return MemoryBackend()
