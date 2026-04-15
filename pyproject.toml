@@ -14,42 +14,42 @@ authors = [
 ]
 dependencies = [
     # Web (ASGI)
-    "quart>=0.19",
-    "hypercorn>=0.16",
+    "quart>=0.20",
+    "hypercorn>=0.17",
     # CLI
-    "typer[all]>=0.12",
+    "typer[all]>=0.15",
     # Database (async)
-    "sqlalchemy[asyncio]>=2.0",
-    "asyncpg>=0.29",              # PostgreSQL §12
-    "aiomysql>=0.2",              # MariaDB §12
+    "sqlalchemy[asyncio]>=2.0.40",
+    "asyncpg>=0.31",              # PostgreSQL §12
+    "aiomysql>=0.3",              # MariaDB §12
     # Auth / WebAuthn / Crypto
-    "webauthn>=2.0",              # §2
-    "argon2-cffi>=23.1",          # §2 break-glass
+    "webauthn>=2.5",              # §2
+    "argon2-cffi>=25.1",          # §2 break-glass
     "pyotp>=2.9",                 # TOTP/HOTP §3
-    "cryptography>=42.0",         # OpenPGP key ops §13
+    "cryptography>=44.0",         # OpenPGP key ops §13
     # Content & Sanitization
-    "bleach>=6.1",                # §10 federated/user-content sanitization
+    "bleach>=6.2",                # §10 federated/user-content sanitization
     "python-slugify>=8.0",        # §6 slug canonicalization
-    "markdown-it-py>=3.0",        # Markdown rendering §1
-    "mdit-py-plugins>=0.4",        # Markdown-Erweiterungen (Tasklists, Footnotes)
+    "markdown-it-py>=4.0",        # Markdown rendering §1
+    "mdit-py-plugins>=0.5",        # Markdown-Erweiterungen (Tasklists, Footnotes)
     # Media
-    "pillow>=10.3",               # image handling §1
-    "aiofiles>=23.2",             # async file I/O
+    "pillow>=11.0",               # image handling §1
+    "aiofiles>=24.1",             # async file I/O
     # Mail §13
-    "aiosmtplib>=3.0",
+    "aiosmtplib>=5.0",            # py3.10+ baseline, aktuelle API
     # Rate-limiting §10
-    "limits>=3.12",
+    "limits>=5.0",
     # HTTP client (federation §5, OAuth2/OIDC §11)
-    "httpx>=0.27",
+    "httpx>=0.28",
     # IDNA 2008 – Punycode für IDN-Domains (WebAuthn rp_id, SMTP-Host, §13)
-    "idna>=3.7",
+    "idna>=3.10",
     # E-Mail-Validierung: RFC 5321/5322 + IDNA 2008 (Unicode-Domains, §10)
     "email-validator>=2.2",
     # Config & version parsing
     # tomllib ist seit Python 3.11 Bestandteil der Standardbibliothek.
-    "pydantic>=2.0",
-    "pydantic-settings>=2.0",
-    "packaging>=24.0",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.10",
+    "packaging>=25.0",
 ]
 
 [project.optional-dependencies]
@@ -64,11 +64,16 @@ dev = [
 # WYSIWYG-Editor HTML→Markdown (optionaler Konverter für den TipTap/Prosemirror
 # Adapter; wird nur genutzt wenn admin_editor != 'builtin')
 wysiwyg = [
-    "markdownify>=0.13",
+    "markdownify>=1.2",
 ]
 # Cache-Backends
 cache-redis = [
     "redis[hiredis]>=5.0",
+]
+# Valkey – FOSS Redis-Fork (BSD-3, API-kompatibel)
+# Redis wechselte ab 7.4 zur BSL-Lizenz; Valkey ist der Community-Fork
+cache-valkey = [
+    "valkey[libvalkey]>=6.0",
 ]
 cache-memcached = [
     "aiomcache>=0.8",
@@ -87,6 +92,7 @@ search-elasticsearch = [
 all = [
     "aiosqlite>=0.20",
     "redis[hiredis]>=5.0",
+    "valkey[libvalkey]>=6.0",
     "aiomcache>=0.8",
     "meilisearch-python-sdk>=3.0",
     "typesense>=0.21",

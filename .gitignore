@@ -38,6 +38,7 @@ logs/
 # Frontend Build-Output
 frontend/.svelte-kit/
 frontend/build/
+node_modules/
 frontend/node_modules/
 
 # IDE
