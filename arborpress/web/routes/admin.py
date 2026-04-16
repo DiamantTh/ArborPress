@@ -42,6 +42,20 @@ audit = get_audit_logger()
 admin_bp = Blueprint("admin", __name__, template_folder="../../templates")
 
 
+async def _render_users_page(*, breakglass_result: dict[str, str] | None = None):
+    from arborpress.models.user import User
+
+    async for db in get_db_session():
+        result = await db.execute(select(User).order_by(User.username))
+        user_list = result.scalars().all()
+    return await render_template(
+        "admin/users.html",
+        users=user_list,
+        breakglass_result=breakglass_result,
+        noindex=True,
+    )
+
+
 async def _resolve_body(form, db) -> tuple[str, str, dict | None]:
     """Gibt (body_md, body_html, body_json) für einen Save-Handler zurück.
 
@@ -462,11 +476,130 @@ async def media_list():
 async def users():
     _require_session()
     require_role("admin")
-    from arborpress.models.user import User
+    return await _render_users_page()
+
+
+@admin_bp.post("/users/<user_id>/breakglass-password")
+async def user_breakglass_password_set(user_id: str):
+    _require_session()
+    require_role("admin")
+    actor_id = session.get("user_id", "")
+    try:
+        assert_stepup(session, actor_id, "change_security_settings")
+    except PermissionError:
+        return jsonify({"error": "step_up_required"}), 403
+
+    form = await request.form
+    mode = (form.get("mode") or "manual").strip().lower()
+    manual_password = form.get("password") or ""
+    words = int(form.get("words") or 5)
+    delimiter = form.get("delimiter") or "-"
+    length = int(form.get("length") or 24)
+    cfg = get_settings()
+
     async for db in get_db_session():
-        result = await db.execute(select(User).order_by(User.username))
-        user_list = result.scalars().all()
-    return await render_template("admin/users.html", users=user_list, noindex=True)
+        from arborpress.auth.breakglass import hash_password
+        from arborpress.models.user import User
+
+        user = await db.get(User, user_id)
+        if user is None:
+            abort(404)
+
+        try:
+            if mode == "manual":
+                password = manual_password
+                validate_password_policy(
+                    password,
+                    min_length=cfg.auth.legacy_password_min_length,
+                    max_length=cfg.auth.legacy_password_max_length,
+                    min_score=cfg.auth.legacy_password_min_score,
+                    user_inputs=[user.username, user.display_name or "", "arborpress", "admin"],
+                )
+                generated = False
+            elif mode == "xkcd":
+                password = generate_xkcd_passphrase(word_count=words, delimiter=delimiter)
+                validate_password_policy(
+                    password,
+                    min_length=cfg.auth.legacy_password_min_length,
+                    max_length=cfg.auth.legacy_password_max_length,
+                    min_score=cfg.auth.legacy_password_min_score,
+                    user_inputs=[user.username, user.display_name or "", "arborpress", "admin"],
+                )
+                generated = True
+            elif mode == "random":
+                password = generate_random_password(length=length)
+                validate_password_policy(
+                    password,
+                    min_length=cfg.auth.legacy_password_min_length,
+                    max_length=cfg.auth.legacy_password_max_length,
+                    min_score=cfg.auth.legacy_password_min_score,
+                    user_inputs=[user.username, user.display_name or "", "arborpress", "admin"],
+                )
+                generated = True
+            else:
+                abort(400, "Unknown password mode")
+        except ValueError as exc:
+            return await _render_users_page(
+                breakglass_result={
+                    "level": "warning",
+                    "message": f"Break-Glass-Passwort fuer {user.username} abgelehnt: {exc}",
+                }
+            )
+
+        user.legacy_password_hash = hash_password(password)
+        user.legacy_password_enabled = True
+        db.add(user)
+        await db.commit()
+
+        audit.info("BREAKGLASS password set | actor=%s target=%s mode=%s", actor_id, user.username, mode)
+        result = {
+            "level": "success",
+            "message": f"Break-Glass-Passwort fuer {user.username} gesetzt.",
+        }
+        if generated:
+            result["generated_password"] = password
+        return await _render_users_page(breakglass_result=result)
+
+
+@admin_bp.post("/users/<user_id>/breakglass-password-disable")
+async def user_breakglass_password_disable(user_id: str):
+    _require_session()
+    require_role("admin")
+    actor_id = session.get("user_id", "")
+    try:
+        assert_stepup(session, actor_id, "change_security_settings")
+    except PermissionError:
+        return jsonify({"error": "step_up_required"}), 403
+
+    async for db in get_db_session():
+        from arborpress.models.user import User
+
+        user = await db.get(User, user_id)
+        if user is None:
+            abort(404)
+        await db.refresh(user, ["credentials", "mfa_devices"])
+        if not user.credentials and not user.mfa_devices:
+            return await _render_users_page(
+                breakglass_result={
+                    "level": "warning",
+                    "message": (
+                        f"Break-Glass fuer {user.username} konnte nicht deaktiviert werden: "
+                        "kein WebAuthn- oder MFA-Fallback vorhanden."
+                    ),
+                }
+            )
+        user.legacy_password_enabled = False
+        user.legacy_password_hash = None
+        db.add(user)
+        await db.commit()
+
+        audit.info("BREAKGLASS password disabled | actor=%s target=%s", actor_id, user.username)
+        return await _render_users_page(
+            breakglass_result={
+                "level": "success",
+                "message": f"Break-Glass-Passwort fuer {user.username} deaktiviert.",
+            }
+        )
 
 
 # ---------------------------------------------------------------------------

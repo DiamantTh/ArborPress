@@ -5,29 +5,106 @@
   <h2>Benutzer</h2>
 </div>
 
+{% if breakglass_result %}
+<div class="alert alert-{{ breakglass_result.level | default('info') }}">
+  <strong>{{ breakglass_result.message }}</strong>
+  {% if breakglass_result.generated_password %}
+  <div>
+    Generiertes Passwort: <code>{{ breakglass_result.generated_password }}</code>
+  </div>
+  <div>Bitte jetzt sicher speichern; es wird nur in dieser Antwort angezeigt.</div>
+  {% endif %}
+</div>
+{% endif %}
+
 <table class="admin-table">
   <thead>
     <tr>
-      <th>Handle</th>
+      <th>Benutzername</th>
       <th>Anzeigename</th>
       <th>E-Mail</th>
+      <th>Rolle</th>
       <th>Konto-Typ</th>
-      <th>Letzte Anmeldung</th>
+      <th>Break-Glass</th>
+      <th>Aktionen</th>
     </tr>
   </thead>
   <tbody>
     {% for user in users %}
     <tr>
-      <td><code>@{{ user.handle }}</code></td>
+      <td><code>{{ user.username }}</code></td>
       <td>{{ user.display_name | default('–') | e }}</td>
       <td>{{ user.email | default('–') | e }}</td>
       <td>
+        <span class="badge badge-{{ user.role.value }}">{{ user.role.value }}</span>
+      </td>
+      <td>
         <span class="badge badge-{{ user.account_type.value }}">{{ user.account_type.value }}</span>
       </td>
-      <td>{{ user.last_login_at.strftime('%d.%m.%Y %H:%M') if user.last_login_at else '–' }}</td>
+      <td>
+        {% if user.legacy_password_enabled %}
+        <span class="badge badge-warning">aktiv</span>
+        {% else %}
+        <span class="badge">deaktiviert</span>
+        {% endif %}
+      </td>
+      <td>
+        <details>
+          <summary>Break-Glass verwalten</summary>
+
+          <form method="post" action="{{ url_for('admin.user_breakglass_password_set', user_id=user.id) }}" class="admin-form">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="hidden" name="mode" value="manual">
+            <label>
+              Neues Passwort
+              <input type="password" name="password" minlength="8" maxlength="256" autocomplete="new-password" required>
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary btn--small">Manuell setzen</button>
+            </div>
+          </form>
+
+          <form method="post" action="{{ url_for('admin.user_breakglass_password_set', user_id=user.id) }}" class="admin-form">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="hidden" name="mode" value="xkcd">
+            <label>
+              XKCD-Woerter
+              <input type="number" name="words" min="4" max="10" value="5">
+            </label>
+            <label>
+              Trenner
+              <input type="text" name="delimiter" maxlength="8" value="-">
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="btn btn--small">XKCD generieren und setzen</button>
+            </div>
+          </form>
+
+          <form method="post" action="{{ url_for('admin.user_breakglass_password_set', user_id=user.id) }}" class="admin-form">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="hidden" name="mode" value="random">
+            <label>
+              Laenge
+              <input type="number" name="length" min="16" max="256" value="24">
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="btn btn--small">Zufallspasswort generieren und setzen</button>
+            </div>
+          </form>
+
+          {% if user.legacy_password_enabled %}
+          <form method="post" action="{{ url_for('admin.user_breakglass_password_disable', user_id=user.id) }}" class="admin-form">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <div class="form-actions">
+              <button type="submit" class="btn btn--warn btn--small">Break-Glass deaktivieren</button>
+            </div>
+          </form>
+          {% endif %}
+        </details>
+      </td>
     </tr>
     {% else %}
-    <tr><td colspan="5" class="empty-state">Keine Benutzer gefunden.</td></tr>
+    <tr><td colspan="7" class="empty-state">Keine Benutzer gefunden.</td></tr>
     {% endfor %}
   </tbody>
 </table>
