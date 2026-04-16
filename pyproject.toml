@@ -26,6 +26,7 @@ dependencies = [
     "webauthn>=2.5",              # §2
     "argon2-cffi>=25.1",          # §2 break-glass
     "pyotp>=2.9",                 # TOTP/HOTP §3
+    "zxcvbn>=4.5",                # Passwortqualitaet fuer Break-Glass §2
     "cryptography>=44.0",         # OpenPGP key ops §13
     # Content & Sanitization
     "bleach>=6.2",                # §10 federated/user-content sanitization

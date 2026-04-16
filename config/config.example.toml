@@ -69,6 +69,14 @@ admin_path      = "/admin"
 require_uv              = true
 # Break-Glass Passwort-Login aktivieren (standardmäßig aus)
 legacy_password_enabled = false
+# Mindestlänge für neue/aktualisierte Break-Glass Passwörter.
+# Empfehlung: 16 für normale Admin-Setups, 32 für besonders strikte Umgebungen.
+legacy_password_min_length = 16
+# Obergrenze für Break-Glass Passwörter. Hoch genug für Passphrasen,
+# aber begrenzt, um Fehlbedienungen und Extremwerte zu vermeiden.
+legacy_password_max_length = 128
+# Mindestqualität via zxcvbn (0-4). Empfehlung: 3.
+legacy_password_min_score = 3
 # Step-up-Session TTL in Sekunden
 stepup_ttl              = 900
 # Admin-Session TTL in Sekunden

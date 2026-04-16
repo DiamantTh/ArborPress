@@ -147,9 +147,19 @@ arborpress plugin list
 | Passkey              | Cloud-sync keys (optional)             |
 | TOTP (SHA-256, 8 dig.) | 2FA add-on (§3)                      |
 | Backup codes         | Single-use emergency codes (§3)        |
-| Break-glass password | Argon2id, explicitly enabled (§2)      |
+| Break-glass password | Argon2id, explicitly enabled, long passphrase instead of forced symbol classes (§2) |
 | Step-up / sudo mode  | Re-auth for admin actions (§2)         |
 | SSO/OIDC             | Optional, configurable (§11)           |
+
+Default policy for new break-glass passwords: at least 16 characters, configurable from 8 upward, plus a minimum zxcvbn score of 3/4. No mandatory special-character classes are enforced; long, memorable passphrases are recommended.
+
+CLI helpers:
+
+```bash
+arborpress user password-generate --generator xkcd
+arborpress user password-set admin --generate --generator xkcd
+arborpress user password-set admin --generate --generator random --length 24
+```
 
 ## Logging (§16)
 

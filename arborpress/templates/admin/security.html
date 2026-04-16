@@ -29,9 +29,14 @@
     <legend>Break-Glass</legend>
     <label class="checkbox">
       <input type="checkbox" name="breakglass_enabled"
-             {{ 'checked' if cfg.auth.breakglass_enabled else '' }}>
+             {{ 'checked' if cfg.auth.legacy_password_enabled else '' }}>
       Break-Glass-Login aktivieren (nur für Notfälle)
     </label>
+    <p>
+      Policy: mindestens {{ cfg.auth.legacy_password_min_length }} Zeichen,
+      maximal {{ cfg.auth.legacy_password_max_length }} Zeichen,
+      zxcvbn mindestens {{ cfg.auth.legacy_password_min_score }}/4.
+    </p>
   </fieldset>
 
   <fieldset>
@@ -58,40 +63,73 @@
   </div>
 </form>
 
-{% if not stepup_active %}
-<script>
-document.getElementById('stepup-btn').addEventListener('click', async () => {
-  const beginRes = await fetch('/auth/stepup/begin', { method: 'POST' });
-  if (!beginRes.ok) { alert('Step-up-Start fehlgeschlagen.'); return; }
-  const opts = await beginRes.json();
-  // WebAuthn-Challenge
-  opts.publicKey.challenge = Uint8Array.from(atob(opts.publicKey.challenge), c => c.charCodeAt(0));
-  opts.publicKey.allowCredentials?.forEach(c => {
-    c.id = Uint8Array.from(atob(c.id), x => x.charCodeAt(0));
-  });
-  const assertion = await navigator.credentials.get({ publicKey: opts.publicKey });
-  if (!assertion) return;
-  const payload = {
-    id: assertion.id,
-    rawId: btoa(String.fromCharCode(...new Uint8Array(assertion.rawId))),
-    response: {
-      authenticatorData: btoa(String.fromCharCode(...new Uint8Array(assertion.response.authenticatorData))),
-      clientDataJSON:    btoa(String.fromCharCode(...new Uint8Array(assertion.response.clientDataJSON))),
-      signature:         btoa(String.fromCharCode(...new Uint8Array(assertion.response.signature))),
-    },
-    type: assertion.type,
-  };
-  const completeRes = await fetch('/auth/stepup/complete', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (completeRes.ok) {
-    window.location.reload();
-  } else {
-    alert('Step-up fehlgeschlagen.');
-  }
-});
-</script>
-{% endif %}
+<section class="dashboard-card" id="password-tools"
+         data-default-words="5"
+         data-default-delimiter="-"
+         data-default-length="24">
+  <h3>Break-Glass Passwort-Werkzeuge</h3>
+  <p>
+    Lange Passphrasen sind bevorzugt. Sonderzeichenklassen werden nicht erzwungen;
+    bewertet wird mit zxcvbn und der aktuellen Break-Glass-Policy.
+  </p>
+
+  <div class="admin-form">
+    <label>
+      Generator
+      <select id="pw-generator-mode">
+        <option value="xkcd">XKCD / Passphrase</option>
+        <option value="random">Zufallspasswort</option>
+      </select>
+    </label>
+
+    <div id="pw-generator-xkcd-fields">
+      <label>
+        Woerter
+        <input type="number" id="pw-generator-words" min="4" max="10" value="5">
+      </label>
+      <label>
+        Trenner
+        <input type="text" id="pw-generator-delimiter" maxlength="8" value="-">
+      </label>
+    </div>
+
+    <div id="pw-generator-random-fields" hidden>
+      <label>
+        Laenge
+        <input type="number" id="pw-generator-length" min="16" max="256" value="24">
+      </label>
+    </div>
+
+    <div class="form-actions">
+      <button type="button" class="btn btn-primary" id="pw-generate-btn">Passwort generieren</button>
+      <button type="button" class="btn" id="pw-copy-btn">In Zwischenablage kopieren</button>
+    </div>
+
+    <label>
+      Generiertes Passwort
+      <input type="text" id="pw-generated" readonly autocomplete="off">
+    </label>
+
+    <label>
+      Eigenes Passwort pruefen
+      <input type="password" id="pw-evaluate-input" autocomplete="new-password">
+    </label>
+
+    <div class="form-actions">
+      <button type="button" class="btn" id="pw-evaluate-btn">Qualitaet pruefen</button>
+    </div>
+
+    <div id="pw-assessment" aria-live="polite"></div>
+
+    <p>
+      CLI: <code>arborpress user password-generate --generator xkcd</code> oder
+      <code>arborpress user password-set USER --generate --generator xkcd</code>
+    </p>
+  </div>
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='js/admin-security.js') }}"></script>
 {% endblock %}

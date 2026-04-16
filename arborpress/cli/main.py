@@ -10,6 +10,7 @@ Usage:  arborpress --help
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -372,6 +373,42 @@ def user_list(
     asyncio.run(_list())
 
 
+def _prompt_password_twice() -> str:
+    first = typer.prompt("New break-glass password", hide_input=True)
+    second = typer.prompt("Confirm break-glass password", hide_input=True)
+    if first != second:
+        typer.echo("Passwords do not match.", err=True)
+        raise typer.Exit(2)
+    return first
+
+
+def _build_breakglass_password(
+    *,
+    generator: str,
+    words: int,
+    delimiter: str,
+    length: int,
+) -> str:
+    from arborpress.auth.password_tools import generate_random_password, generate_xkcd_passphrase
+
+    if generator == "xkcd":
+        return generate_xkcd_passphrase(word_count=words, delimiter=delimiter)
+    if generator == "random":
+        return generate_random_password(length=length)
+    raise typer.BadParameter("generator must be one of: xkcd, random")
+
+
+def _print_password_assessment(assessment) -> None:
+    typer.echo(f"zxcvbn score:            {assessment.score}/4")
+    if assessment.warning:
+        typer.echo(f"Warning:                 {assessment.warning}")
+    if assessment.suggestions:
+        typer.echo(f"Suggestions:             {' | '.join(assessment.suggestions)}")
+    offline = assessment.crack_times_display.get("offline_slow_hashing_1e4_per_second")
+    if offline:
+        typer.echo(f"Crack time (offline):    {offline}")
+
+
 @user_app.command("password-status")
 def user_password_status(
     username: str = typer.Argument(..., help="Username"),
@@ -406,12 +443,46 @@ def user_password_status(
 @user_app.command("password-set")
 def user_password_set(
     username: str = typer.Argument(..., help="Username"),
-    password: str = typer.Option(
-        ..., prompt=True, hide_input=True, confirmation_prompt=True,
-        help="New break-glass password",
+    password: str | None = typer.Option(
+        None, "--password", "-p",
+        help="Set a specific break-glass password",
+        hide_input=True,
     ),
+    generate: bool = typer.Option(False, "--generate", help="Generate the password automatically"),
+    generator: str = typer.Option("xkcd", "--generator", help="Generator mode: xkcd|random"),
+    words: int = typer.Option(5, "--words", min=4, max=10, help="Word count for xkcd passphrases"),
+    delimiter: str = typer.Option("-", "--delimiter", help="Separator for xkcd passphrases"),
+    length: int = typer.Option(24, "--length", min=16, max=256, help="Length for random passwords"),
 ) -> None:
     """Sets or changes the break-glass password of an account."""
+    cfg = get_settings()
+    if password and generate:
+        typer.echo("Use either --password or --generate, not both.", err=True)
+        raise typer.Exit(2)
+    if generate:
+        password = _build_breakglass_password(
+            generator=generator,
+            words=words,
+            delimiter=delimiter,
+            length=length,
+        )
+    elif password is None:
+        password = _prompt_password_twice()
+
+    try:
+        from arborpress.auth.breakglass import validate_password_policy
+
+        assessment = validate_password_policy(
+            password,
+            min_length=cfg.auth.legacy_password_min_length,
+            max_length=cfg.auth.legacy_password_max_length,
+            min_score=cfg.auth.legacy_password_min_score,
+            user_inputs=[username, "arborpress", "admin"],
+        )
+    except ValueError as exc:
+        typer.echo(f"Invalid break-glass password: {exc}", err=True)
+        raise typer.Exit(2) from exc
+
     async def _set_pw() -> None:
         from sqlalchemy import func, select
 
@@ -430,8 +501,44 @@ def user_password_set(
             db.add(user)
             await db.commit()
             typer.echo(f"Password for {username!r} set and activated.")
+            _print_password_assessment(assessment)
+            if generate:
+                typer.echo(f"Generated password:      {password}")
 
     asyncio.run(_set_pw())
+
+
+@user_app.command("password-generate")
+def user_password_generate(
+    generator: str = typer.Option("xkcd", "--generator", help="Generator mode: xkcd|random"),
+    words: int = typer.Option(5, "--words", min=4, max=10, help="Word count for xkcd passphrases"),
+    delimiter: str = typer.Option("-", "--delimiter", help="Separator for xkcd passphrases"),
+    length: int = typer.Option(24, "--length", min=16, max=256, help="Length for random passwords"),
+    username: str | None = typer.Option(None, "--username", help="Optional username for zxcvbn context"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
+) -> None:
+    """Generates a break-glass password and prints the quality assessment."""
+    cfg = get_settings()
+    from arborpress.auth.breakglass import validate_password_policy
+
+    password = _build_breakglass_password(
+        generator=generator,
+        words=words,
+        delimiter=delimiter,
+        length=length,
+    )
+    assessment = validate_password_policy(
+        password,
+        min_length=cfg.auth.legacy_password_min_length,
+        max_length=cfg.auth.legacy_password_max_length,
+        min_score=cfg.auth.legacy_password_min_score,
+        user_inputs=[item for item in [username, "arborpress", "admin"] if item],
+    )
+    if as_json:
+        typer.echo(json.dumps({"password": password, "assessment": assessment.to_dict()}))
+        return
+    typer.echo(f"Generated password:      {password}")
+    _print_password_assessment(assessment)
 
 
 @user_app.command("password-disable")
@@ -532,6 +639,11 @@ def auth_policy_status(
     cfg = get_settings()
     typer.echo(f"UV global:              {cfg.auth.require_uv}")
     typer.echo(f"Legacy-PW global:       {cfg.auth.legacy_password_enabled}")
+    typer.echo(
+        "Legacy-PW length:       "
+        f"{cfg.auth.legacy_password_min_length}-{cfg.auth.legacy_password_max_length} chars"
+    )
+    typer.echo(f"Legacy-PW zxcvbn:       >= {cfg.auth.legacy_password_min_score}/4")
     typer.echo(f"Step-up TTL:            {cfg.auth.stepup_ttl}s")
     typer.echo(f"Admin session TTL:      {cfg.auth.admin_session_ttl}s")
     typer.echo(f"Auth rate limit:        {cfg.auth.auth_rate_limit}")

@@ -82,6 +82,7 @@ async def _auth_csrf_check() -> None:
 
 # Auth-Endpunkte, die dem IP-basierten Rate-Limit unterliegen (§10)
 _RATE_LIMITED_PATHS = frozenset({
+    "/auth/breakglass",
     "/auth/login/begin",
     "/auth/login/complete",
     "/auth/register/begin",
@@ -519,10 +520,52 @@ async def breakglass_login():
                 log.debug("Dummy-Verifikation (erwartet): %s", _e)
             abort(401, "Invalid credentials")
 
+        _now = datetime.now(UTC)
+        _locked_until = user.locked_until
+        if _locked_until is not None:
+            _lu = _locked_until.replace(tzinfo=None) if _locked_until.tzinfo else _locked_until
+            _nu = _now.replace(tzinfo=None)
+            if _lu > _nu:
+                await write_audit_event(
+                    event_type="login_blocked",
+                    outcome="blocked",
+                    actor_id=str(user.id),
+                    actor_name=user.username,
+                    ip=request.remote_addr,
+                    detail=f"breakglass locked_until={_locked_until.isoformat()}",
+                    db=db,
+                )
+                await db.commit()
+                abort(423, "Konto temporär gesperrt – bitte später erneut versuchen")
+
         if not verify_password(user.legacy_password_hash, password, admin_id=str(user.id)):
+            user.failed_login_count = (user.failed_login_count or 0) + 1
+            if cfg.auth.lockout_threshold > 0 and user.failed_login_count >= cfg.auth.lockout_threshold:
+                _lock_at = datetime.now(UTC).replace(tzinfo=None)
+                user.locked_until = _lock_at + timedelta(seconds=cfg.auth.lockout_duration)
+                _detail = f"breakglass attempt={user.failed_login_count} account_locked"
+            else:
+                _detail = f"breakglass attempt={user.failed_login_count}"
+            db.add(user)
+            await write_audit_event(
+                event_type="login_failure",
+                outcome="failure",
+                actor_id=str(user.id),
+                actor_name=user.username,
+                ip=request.remote_addr,
+                user_agent=request.headers.get("User-Agent"),
+                detail=_detail,
+                db=db,
+            )
+            await db.commit()
             abort(401, "Invalid credentials")
 
         # Rehash bei veralteten Parametern
+        if user.failed_login_count or user.locked_until:
+            user.failed_login_count = 0
+            user.locked_until = None
+            db.add(user)
+
         if needs_rehash(user.legacy_password_hash):
             from sqlalchemy import update as sa_update
 

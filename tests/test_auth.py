@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 import time
-import pytest
 
+import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from arborpress.auth.breakglass import hash_password, validate_password_policy
+from arborpress.auth.password_tools import (
+    assess_password_strength,
+    generate_random_password,
+    generate_xkcd_passphrase,
+)
 from arborpress.auth.mfa import TOTPService, BackupCodeService
 from arborpress.auth.stepup import (
     grant_stepup,
@@ -12,6 +20,152 @@ from arborpress.auth.stepup import (
     revoke_stepup,
     STEPUP_REQUIRED_OPERATIONS,
 )
+
+
+# ---------------------------------------------------------------------------
+# §2 Break-Glass Passwort-Policy
+# ---------------------------------------------------------------------------
+
+
+def _make_test_settings():
+    from arborpress.core.config import Settings
+
+    cfg = Settings()
+    cfg.auth.legacy_password_enabled = True
+    cfg.auth.legacy_password_min_length = 16
+    cfg.auth.legacy_password_max_length = 128
+    cfg.auth.legacy_password_min_score = 3
+    cfg.auth.auth_rate_limit = "10/minute"
+    cfg.auth.lockout_threshold = 2
+    cfg.auth.lockout_duration = 900
+    return cfg
+
+
+async def _seed_breakglass_user(test_engine, *, username: str, password: str):
+    import arborpress.models  # noqa: F401
+    from arborpress.models.user import AccountType, User, UserRole
+
+    factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    async with factory() as db:
+        user = User(
+            username=username,
+            display_name=username.capitalize(),
+            account_type=AccountType.OPERATIONAL,
+            role=UserRole.ADMIN,
+            is_active=True,
+            legacy_password_hash=hash_password(password),
+            legacy_password_enabled=True,
+        )
+        db.add(user)
+        await db.commit()
+        return user.id
+
+
+class TestBreakglassPasswordPolicy:
+    def test_accepts_long_passphrase(self):
+        validate_password_policy(
+            "correct horse battery staple",
+            min_length=16,
+            max_length=128,
+            min_score=3,
+        )
+
+    def test_rejects_short_password(self):
+        with pytest.raises(ValueError, match="at least 16"):
+            validate_password_policy("shortpass", min_length=16, max_length=128, min_score=3)
+
+    def test_rejects_edge_whitespace(self):
+        with pytest.raises(ValueError, match="start or end with whitespace"):
+            validate_password_policy(
+                " leading and trailing ",
+                min_length=16,
+                max_length=128,
+                min_score=3,
+            )
+
+    def test_rejects_low_zxcvbn_score(self):
+        with pytest.raises(ValueError, match="zxcvbn score"):
+            validate_password_policy(
+                "aaaaaaaaaaaaaaaa",
+                min_length=16,
+                max_length=128,
+                min_score=3,
+                user_inputs=["admin"],
+            )
+
+    def test_generates_xkcd_passphrase(self):
+        password = generate_xkcd_passphrase(word_count=5, delimiter="-")
+        assert password.count("-") == 4
+        assert len(password) >= 16
+        assert assess_password_strength(password).score >= 3
+
+    def test_generates_random_password(self):
+        password = generate_random_password(length=24)
+        assert len(password) == 24
+        assert " " not in password
+        assert assess_password_strength(password).score >= 3
+
+
+class TestBreakglassLogin:
+    @pytest.mark.asyncio
+    async def test_breakglass_route_is_rate_limited(self, client, monkeypatch):
+        cfg = _make_test_settings()
+        cfg.auth.auth_rate_limit = "1/minute"
+
+        async def _noop_csrf():
+            return None
+
+        monkeypatch.setattr("arborpress.web.routes.auth.get_settings", lambda: cfg)
+        monkeypatch.setattr("arborpress.core.config.get_settings", lambda *args, **kwargs: cfg)
+        monkeypatch.setattr("arborpress.web.routes.auth.validate_csrf", _noop_csrf)
+        monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
+
+        resp1 = await client.post(
+            "/auth/breakglass",
+            form={"user_name": "missing", "password": "irrelevant passphrase"},
+        )
+        resp2 = await client.post(
+            "/auth/breakglass",
+            form={"user_name": "missing", "password": "irrelevant passphrase"},
+        )
+
+        assert resp1.status_code == 401
+        assert resp2.status_code == 429
+
+    @pytest.mark.asyncio
+    async def test_breakglass_failures_lock_account(self, client, test_engine, monkeypatch):
+        cfg = _make_test_settings()
+
+        async def _noop_csrf():
+            return None
+
+        monkeypatch.setattr("arborpress.web.routes.auth.get_settings", lambda: cfg)
+        monkeypatch.setattr("arborpress.core.config.get_settings", lambda *args, **kwargs: cfg)
+        monkeypatch.setattr("arborpress.web.routes.auth.validate_csrf", _noop_csrf)
+        monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
+
+        await _seed_breakglass_user(
+            test_engine,
+            username="admin1",
+            password="correct horse battery staple",
+        )
+
+        resp1 = await client.post(
+            "/auth/breakglass",
+            form={"user_name": "admin1", "password": "wrong wrong wrong"},
+        )
+        resp2 = await client.post(
+            "/auth/breakglass",
+            form={"user_name": "admin1", "password": "wrong wrong wrong"},
+        )
+        resp3 = await client.post(
+            "/auth/breakglass",
+            form={"user_name": "admin1", "password": "correct horse battery staple"},
+        )
+
+        assert resp1.status_code == 401
+        assert resp2.status_code == 401
+        assert resp3.status_code == 423
 
 
 # ---------------------------------------------------------------------------

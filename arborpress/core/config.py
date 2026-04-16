@@ -30,7 +30,7 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
@@ -137,6 +137,9 @@ class WebSettings(BaseSettings):
 class AuthSettings(BaseSettings):
     require_uv: bool = False
     legacy_password_enabled: bool = False
+    legacy_password_min_length: int = Field(default=16, ge=8, le=256)
+    legacy_password_max_length: int = Field(default=128, ge=16, le=1024)
+    legacy_password_min_score: int = Field(default=3, ge=0, le=4)
     stepup_ttl: int = 900
     admin_session_ttl: int = 3600
     auth_rate_limit: str = "10/minute"
@@ -150,6 +153,15 @@ class AuthSettings(BaseSettings):
     # Generate: arborpress federation kek-init
     # Format: 32-byte base64url-encoded value (expected by Fernet)
     actor_key_enc_key: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def validate_legacy_password_limits(self) -> AuthSettings:
+        if self.legacy_password_max_length < self.legacy_password_min_length:
+            raise ValueError(
+                "auth.legacy_password_max_length must be greater than or equal to "
+                "auth.legacy_password_min_length"
+            )
+        return self
 
 
 class LoggingSettings(BaseSettings):

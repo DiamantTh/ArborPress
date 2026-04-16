@@ -16,6 +16,12 @@ from quart import Blueprint, abort, jsonify, redirect, render_template, request,
 from sqlalchemy import func, select
 
 from arborpress.auth.roles import require_role
+from arborpress.auth.password_tools import (
+    assess_password_strength,
+    generate_random_password,
+    generate_xkcd_passphrase,
+    validate_password_policy,
+)
 from arborpress.auth.stepup import assert_stepup, is_stepup_active
 from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
@@ -530,6 +536,88 @@ async def security_update():
         return jsonify({"error": "step_up_required"}), 403
     audit.info("SECURITY settings changed | user=%s", user_id)
     return jsonify({"status": "not_implemented"}), 501
+
+
+@admin_bp.post("/security/password-tools/generate")
+async def security_password_generate():
+    require_role("admin")
+    cfg = get_settings()
+    payload = await request.get_json() or {}
+    mode = str(payload.get("mode") or "xkcd")
+    try:
+        if mode == "xkcd":
+            password = generate_xkcd_passphrase(
+                word_count=int(payload.get("words") or 5),
+                delimiter=str(payload.get("delimiter") or "-"),
+            )
+        elif mode == "random":
+            password = generate_random_password(length=int(payload.get("length") or 24))
+        else:
+            abort(400, "Unknown generator mode")
+
+        assessment = validate_password_policy(
+            password,
+            min_length=cfg.auth.legacy_password_min_length,
+            max_length=cfg.auth.legacy_password_max_length,
+            min_score=cfg.auth.legacy_password_min_score,
+            user_inputs=[session.get("user_name", ""), "arborpress", "admin"],
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(
+        {
+            "password": password,
+            "assessment": assessment.to_dict(),
+            "policy": {
+                "min_length": cfg.auth.legacy_password_min_length,
+                "max_length": cfg.auth.legacy_password_max_length,
+                "min_score": cfg.auth.legacy_password_min_score,
+                "accepted": True,
+            },
+        }
+    ), 200
+
+
+@admin_bp.post("/security/password-tools/evaluate")
+async def security_password_evaluate():
+    require_role("admin")
+    cfg = get_settings()
+    payload = await request.get_json() or {}
+    password = str(payload.get("password") or "")
+    if not password:
+        return jsonify({"error": "Password required"}), 400
+
+    assessment = assess_password_strength(
+        password,
+        user_inputs=[session.get("user_name", ""), "arborpress", "admin"],
+    )
+    policy_error = ""
+    try:
+        validate_password_policy(
+            password,
+            min_length=cfg.auth.legacy_password_min_length,
+            max_length=cfg.auth.legacy_password_max_length,
+            min_score=cfg.auth.legacy_password_min_score,
+            user_inputs=[session.get("user_name", ""), "arborpress", "admin"],
+        )
+        accepted = True
+    except ValueError as exc:
+        accepted = False
+        policy_error = str(exc)
+
+    return jsonify(
+        {
+            "assessment": assessment.to_dict(),
+            "policy": {
+                "min_length": cfg.auth.legacy_password_min_length,
+                "max_length": cfg.auth.legacy_password_max_length,
+                "min_score": cfg.auth.legacy_password_min_score,
+                "accepted": accepted,
+                "error": policy_error,
+            },
+        }
+    ), 200
 
 
 # ---------------------------------------------------------------------------

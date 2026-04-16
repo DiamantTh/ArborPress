@@ -13,6 +13,7 @@ import logging
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
 
+from arborpress.auth.password_tools import validate_password_policy
 from arborpress.logging.config import get_audit_logger
 
 log = logging.getLogger("arborpress.auth.breakglass")
