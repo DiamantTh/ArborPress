@@ -15,13 +15,13 @@ import logging
 from quart import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import func, select
 
-from arborpress.auth.roles import require_role
 from arborpress.auth.password_tools import (
     assess_password_strength,
+    generate_diceware_passphrase,
     generate_random_password,
-    generate_xkcd_passphrase,
     validate_password_policy,
 )
+from arborpress.auth.roles import require_role
 from arborpress.auth.stepup import assert_stepup, is_stepup_active
 from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
@@ -516,8 +516,8 @@ async def user_breakglass_password_set(user_id: str):
                     user_inputs=[user.username, user.display_name or "", "arborpress", "admin"],
                 )
                 generated = False
-            elif mode == "xkcd":
-                password = generate_xkcd_passphrase(word_count=words, delimiter=delimiter)
+            elif mode in {"diceware", "xkcd"}:
+                password = generate_diceware_passphrase(word_count=words, delimiter=delimiter)
                 validate_password_policy(
                     password,
                     min_length=cfg.auth.legacy_password_min_length,
@@ -551,7 +551,12 @@ async def user_breakglass_password_set(user_id: str):
         db.add(user)
         await db.commit()
 
-        audit.info("BREAKGLASS password set | actor=%s target=%s mode=%s", actor_id, user.username, mode)
+        audit.info(
+            "BREAKGLASS password set | actor=%s target=%s mode=%s",
+            actor_id,
+            user.username,
+            mode,
+        )
         result = {
             "level": "success",
             "message": f"Break-Glass-Passwort fuer {user.username} gesetzt.",
@@ -676,11 +681,11 @@ async def security_password_generate():
     require_role("admin")
     cfg = get_settings()
     payload = await request.get_json() or {}
-    mode = str(payload.get("mode") or "xkcd")
+    mode = str(payload.get("mode") or "random").strip().lower()
     try:
-        if mode == "xkcd":
-            password = generate_xkcd_passphrase(
-                word_count=int(payload.get("words") or 5),
+        if mode in {"diceware", "xkcd"}:
+            password = generate_diceware_passphrase(
+                word_count=int(payload.get("words") or 6),
                 delimiter=str(payload.get("delimiter") or "-"),
             )
         elif mode == "random":

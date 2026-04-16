@@ -149,13 +149,13 @@ arborpress plugin list
 | Step-up / Sudo-Mode  | Für Admin-Aktionen re-auth (§2)       |
 | SSO/OIDC             | Optional, konfigurierbar (§11)        |
 
-Standard-Policy für neue Break-Glass-Passwörter: mindestens 16 Zeichen, konfigurierbar ab 8 Zeichen, plus zxcvbn-Mindestscore 3/4. Es gibt bewusst keine Pflicht zu Sonderzeichenklassen; empfohlen sind lange, gut merkbare Passphrasen.
+Standard-Policy für neue Break-Glass-Passwörter: mindestens 16 Zeichen, konfigurierbar ab 8 Zeichen, plus zxcvbn-Mindestscore 3/4. Es gibt bewusst keine Pflicht zu Sonderzeichenklassen; sowohl Diceware-Passphrasen aus der EFF Large Wordlist als auch klassische Zufallspasswörter werden gleichrangig unterstuetzt.
 
 CLI-Helfer:
 
 ```bash
-arborpress user password-generate --generator xkcd
-arborpress user password-set admin --generate --generator xkcd
+arborpress user password-generate --generator diceware
+arborpress user password-set admin --generate --generator diceware
 arborpress user password-set admin --generate --generator random --length 24
 ```
 

@@ -389,13 +389,14 @@ def _build_breakglass_password(
     delimiter: str,
     length: int,
 ) -> str:
-    from arborpress.auth.password_tools import generate_random_password, generate_xkcd_passphrase
+    from arborpress.auth.password_tools import generate_diceware_passphrase, generate_random_password
 
-    if generator == "xkcd":
-        return generate_xkcd_passphrase(word_count=words, delimiter=delimiter)
-    if generator == "random":
+    normalized = generator.strip().lower()
+    if normalized in {"diceware", "xkcd"}:
+        return generate_diceware_passphrase(word_count=words, delimiter=delimiter)
+    if normalized == "random":
         return generate_random_password(length=length)
-    raise typer.BadParameter("generator must be one of: xkcd, random")
+    raise typer.BadParameter("generator must be one of: diceware, random")
 
 
 def _print_password_assessment(assessment) -> None:
@@ -449,9 +450,9 @@ def user_password_set(
         hide_input=True,
     ),
     generate: bool = typer.Option(False, "--generate", help="Generate the password automatically"),
-    generator: str = typer.Option("xkcd", "--generator", help="Generator mode: xkcd|random"),
-    words: int = typer.Option(5, "--words", min=4, max=10, help="Word count for xkcd passphrases"),
-    delimiter: str = typer.Option("-", "--delimiter", help="Separator for xkcd passphrases"),
+    generator: str = typer.Option("random", "--generator", help="Generator mode: diceware|random"),
+    words: int = typer.Option(6, "--words", min=4, max=10, help="Word count for Diceware passphrases"),
+    delimiter: str = typer.Option("-", "--delimiter", help="Separator for Diceware passphrases"),
     length: int = typer.Option(24, "--length", min=16, max=256, help="Length for random passwords"),
 ) -> None:
     """Sets or changes the break-glass password of an account."""
@@ -510,9 +511,9 @@ def user_password_set(
 
 @user_app.command("password-generate")
 def user_password_generate(
-    generator: str = typer.Option("xkcd", "--generator", help="Generator mode: xkcd|random"),
-    words: int = typer.Option(5, "--words", min=4, max=10, help="Word count for xkcd passphrases"),
-    delimiter: str = typer.Option("-", "--delimiter", help="Separator for xkcd passphrases"),
+    generator: str = typer.Option("random", "--generator", help="Generator mode: diceware|random"),
+    words: int = typer.Option(6, "--words", min=4, max=10, help="Word count for Diceware passphrases"),
+    delimiter: str = typer.Option("-", "--delimiter", help="Separator for Diceware passphrases"),
     length: int = typer.Option(24, "--length", min=16, max=256, help="Length for random passwords"),
     username: str | None = typer.Option(None, "--username", help="Optional username for zxcvbn context"),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),

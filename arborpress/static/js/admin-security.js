@@ -91,7 +91,7 @@ function setupPasswordTools() {
   const words = document.getElementById("pw-generator-words");
   const delimiter = document.getElementById("pw-generator-delimiter");
   const length = document.getElementById("pw-generator-length");
-  const xkcdFields = document.getElementById("pw-generator-xkcd-fields");
+  const dicewareFields = document.getElementById("pw-generator-diceware-fields");
   const randomFields = document.getElementById("pw-generator-random-fields");
   const generateButton = document.getElementById("pw-generate-btn");
   const copyButton = document.getElementById("pw-copy-btn");
@@ -102,7 +102,7 @@ function setupPasswordTools() {
 
   function syncMode() {
     const selected = mode.value;
-    xkcdFields.hidden = selected !== "xkcd";
+    dicewareFields.hidden = selected !== "diceware";
     randomFields.hidden = selected !== "random";
   }
 
@@ -113,7 +113,7 @@ function setupPasswordTools() {
     try {
       const data = await postJson("/admin/security/password-tools/generate", {
         mode: mode.value,
-        words: Number(words.value || panel.dataset.defaultWords || 5),
+        words: Number(words.value || panel.dataset.defaultWords || 6),
         delimiter: delimiter.value || panel.dataset.defaultDelimiter || "-",
         length: Number(length.value || panel.dataset.defaultLength || 24),
       });

@@ -64,28 +64,29 @@
 </form>
 
 <section class="dashboard-card" id="password-tools"
-         data-default-words="5"
+         data-default-words="6"
          data-default-delimiter="-"
          data-default-length="24">
   <h3>Break-Glass Passwort-Werkzeuge</h3>
   <p>
-    Lange Passphrasen sind bevorzugt. Sonderzeichenklassen werden nicht erzwungen;
-    bewertet wird mit zxcvbn und der aktuellen Break-Glass-Policy.
+    Beide Generatorarten sind vorgesehen: Diceware-Passphrasen aus der EFF Large Wordlist
+    und klassische Zufallspasswoerter. Bewertet wird jeweils mit zxcvbn und der
+    aktuellen Break-Glass-Policy.
   </p>
 
   <div class="admin-form">
     <label>
       Generator
       <select id="pw-generator-mode">
-        <option value="xkcd">XKCD / Passphrase</option>
         <option value="random">Zufallspasswort</option>
+        <option value="diceware">EFF Large Wordlist / Diceware</option>
       </select>
     </label>
 
-    <div id="pw-generator-xkcd-fields">
+    <div id="pw-generator-diceware-fields" hidden>
       <label>
         Woerter
-        <input type="number" id="pw-generator-words" min="4" max="10" value="5">
+        <input type="number" id="pw-generator-words" min="4" max="10" value="6">
       </label>
       <label>
         Trenner
@@ -122,8 +123,8 @@
     <div id="pw-assessment" aria-live="polite"></div>
 
     <p>
-      CLI: <code>arborpress user password-generate --generator xkcd</code> oder
-      <code>arborpress user password-set USER --generate --generator xkcd</code>
+      CLI: <code>arborpress user password-generate --generator diceware</code> oder
+      <code>arborpress user password-set USER --generate --generator random --length 24</code>
     </p>
   </div>
 </section>

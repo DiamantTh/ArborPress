@@ -66,17 +66,17 @@
 
           <form method="post" action="{{ url_for('admin.user_breakglass_password_set', user_id=user.id) }}" class="admin-form">
             <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-            <input type="hidden" name="mode" value="xkcd">
+            <input type="hidden" name="mode" value="diceware">
             <label>
-              XKCD-Woerter
-              <input type="number" name="words" min="4" max="10" value="5">
+              Diceware-Woerter
+              <input type="number" name="words" min="4" max="10" value="6">
             </label>
             <label>
               Trenner
               <input type="text" name="delimiter" maxlength="8" value="-">
             </label>
             <div class="form-actions">
-              <button type="submit" class="btn btn--small">XKCD generieren und setzen</button>
+              <button type="submit" class="btn btn--small">Diceware generieren und setzen</button>
             </div>
           </form>
 

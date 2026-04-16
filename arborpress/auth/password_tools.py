@@ -1,40 +1,24 @@
 """Shared break-glass password tools.
 
 Focus:
-- long passphrases over arbitrary symbol rules
+- strong random passwords and wordlist passphrases as equal generator options
 - zxcvbn-backed quality checks
-- keyboard-friendly generators for UI and CLI
+- keyboard-friendly output for UI and CLI
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from functools import lru_cache
+from importlib import resources
 import secrets
 
 from zxcvbn import zxcvbn
 
 SAFE_RANDOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-._"
 
-_XKCD_WORDS = (
-    "acorn", "anchor", "apricot", "aster", "aurora", "badger", "bamboo", "bayou",
-    "beacon", "birch", "blossom", "bluejay", "bramble", "breeze", "brook", "cabin",
-    "cactus", "canary", "canyon", "caramel", "cedar", "comet", "coral", "copper",
-    "cricket", "crimson", "dahlia", "dawn", "delta", "ember", "falcon", "fable",
-    "fern", "field", "firefly", "fjord", "forest", "foxglove", "garden", "glacier",
-    "granite", "grove", "harbor", "hazel", "heather", "heron", "horizon", "ivy",
-    "juniper", "kettle", "lagoon", "lantern", "lavender", "leaf", "lemur", "lilac",
-    "linen", "lotus", "maple", "marble", "meadow", "meteor", "mist", "monarch",
-    "morning", "moss", "nectar", "north", "oasis", "olive", "opal", "orchard",
-    "otter", "owl", "pebble", "pepper", "petal", "pine", "planet", "plume",
-    "prairie", "quartz", "quill", "raven", "reef", "river", "robin", "saffron",
-    "sage", "sailor", "sandbar", "scarlet", "shadow", "silver", "skyline", "solstice",
-    "sparrow", "spruce", "starling", "stone", "stream", "summit", "sunrise", "sunset",
-    "thicket", "thistle", "timber", "trail", "trident", "tulip", "valley", "velvet",
-    "violet", "vista", "walnut", "waterfall", "willow", "windmill", "winter", "wren",
-    "amber", "atlas", "barley", "bonfire", "caper", "cloud", "cobalt", "cosmos",
-    "drift", "elm", "feather", "flint", "harvest", "island", "lark", "moonbeam",
-    "nightfall", "ocean", "orchid", "pearl", "rainfall", "rosewood", "seabird", "starlight",
-)
+DEFAULT_DICEWARE_WORDS = 6
+DEFAULT_RANDOM_PASSWORD_LENGTH = 24
 
 
 @dataclass(slots=True)
@@ -47,6 +31,25 @@ class PasswordAssessment:
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+@lru_cache(maxsize=1)
+def _load_eff_large_words() -> tuple[str, ...]:
+    wordlist_path = resources.files("arborpress.auth").joinpath("data/eff_large_wordlist.txt")
+    words: list[str] = []
+    with wordlist_path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) != 2:
+                raise RuntimeError("Invalid EFF wordlist entry encountered.")
+            _, word = parts
+            words.append(word)
+    if len(words) != 7776:
+        raise RuntimeError("EFF large wordlist must contain exactly 7776 entries.")
+    return tuple(words)
 
 
 def _clean_user_inputs(user_inputs: list[str] | tuple[str, ...] | None) -> list[str]:
@@ -107,18 +110,23 @@ def validate_password_policy(
     return assessment
 
 
-def generate_random_password(*, length: int = 24) -> str:
+def generate_random_password(*, length: int = DEFAULT_RANDOM_PASSWORD_LENGTH) -> str:
     if length < 16:
         raise ValueError("Random password length must be at least 16 characters.")
     return "".join(secrets.choice(SAFE_RANDOM_ALPHABET) for _ in range(length))
 
 
-def generate_xkcd_passphrase(*, word_count: int = 5, delimiter: str = "-") -> str:
+def generate_diceware_passphrase(*, word_count: int = DEFAULT_DICEWARE_WORDS, delimiter: str = "-") -> str:
     if word_count < 4:
-        raise ValueError("XKCD passphrases must contain at least 4 words.")
+        raise ValueError("Diceware passphrases must contain at least 4 words.")
     if word_count > 10:
-        raise ValueError("XKCD passphrases must contain at most 10 words.")
+        raise ValueError("Diceware passphrases must contain at most 10 words.")
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in delimiter):
         raise ValueError("Delimiter must not contain control characters.")
-    words = [secrets.choice(_XKCD_WORDS) for _ in range(word_count)]
+    words = [secrets.choice(_load_eff_large_words()) for _ in range(word_count)]
     return delimiter.join(words)
+
+
+def generate_xkcd_passphrase(*, word_count: int = DEFAULT_DICEWARE_WORDS, delimiter: str = "-") -> str:
+    """Backward-compatible alias for the Diceware-style wordlist generator."""
+    return generate_diceware_passphrase(word_count=word_count, delimiter=delimiter)

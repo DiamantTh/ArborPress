@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from arborpress.auth.breakglass import hash_password, validate_password_policy
 from arborpress.auth.password_tools import (
     assess_password_strength,
+    generate_diceware_passphrase,
     generate_random_password,
-    generate_xkcd_passphrase,
 )
 from arborpress.auth.mfa import TOTPService, BackupCodeService
 from arborpress.auth.stepup import (
@@ -93,9 +93,9 @@ class TestBreakglassPasswordPolicy:
                 user_inputs=["admin"],
             )
 
-    def test_generates_xkcd_passphrase(self):
-        password = generate_xkcd_passphrase(word_count=5, delimiter="-")
-        assert password.count("-") == 4
+    def test_generates_diceware_passphrase(self):
+        password = generate_diceware_passphrase(word_count=6, delimiter="-")
+        assert password.count("-") == 5
         assert len(password) >= 16
         assert assess_password_strength(password).score >= 3
 
