@@ -64,14 +64,15 @@ name: arborpress-portainer-sqlite
 
 services:
   app:
-    build:
-      context: ..
-      dockerfile: container/Containerfile.ubuntu
-      args:
-        # Installiert den SQLite-Treiber zusätzlich zu den Standarddeps.
-        # Wird im Containerfile.ubuntu als optionaler PIP_EXTRAS-Arg verarbeitet.
-        PIP_EXTRAS: "sqlite"
-    image: arborpress:ubuntu-sqlite
+    # Vorgefertigtes SQLite-Image aus der GitHub Container Registry (empfohlen für Portainer).
+    # Das :latest-sqlite Tag enthält zusätzlich den aiosqlite-Treiber.
+    image: ghcr.io/arborpress/arborpress:latest-sqlite
+    # Alternativ: lokal aus dem Repository bauen:
+    # build:
+    #   context: ..
+    #   dockerfile: container/Containerfile.ubuntu
+    #   args:
+    #     PIP_EXTRAS: "sqlite"
     restart: unless-stopped
     environment:
       # ── Pflichtfelder ─────────────────────────────────────────────

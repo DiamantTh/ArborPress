@@ -46,10 +46,13 @@ name: arborpress-portainer-postgresql
 
 services:
   app:
-    build:
-      context: ..
-      dockerfile: container/Containerfile.ubuntu
-    image: arborpress:ubuntu
+    # Vorgefertigtes Image aus der GitHub Container Registry (empfohlen für Portainer).
+    # Tag :latest entspricht dem aktuellen Stand von main.
+    image: ghcr.io/arborpress/arborpress:latest
+    # Alternativ: lokal aus dem Repository bauen (context muss erreichbar sein):
+    # build:
+    #   context: ..
+    #   dockerfile: container/Containerfile.ubuntu
     restart: unless-stopped
     environment:
       # ── Pflichtfelder ─────────────────────────────────────────────
