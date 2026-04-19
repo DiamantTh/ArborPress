@@ -24,9 +24,9 @@
 #   ARBORPRESS_LOGGING__LEVEL    DEBUG|INFO|WARNING|ERROR (Standard: INFO)
 #
 # Image-Quelle:
-#   Standard: Portainer baut das Image aus dem Git-Repository (build:).
-#   Für Pre-built Images die Zeilen unter "build:" entfernen und
-#   "image:" auf die Registry-URL anpassen.
+#   Standard: Vorgefertigtes Image aus GHCR (ghcr.io/<YOUR_GITHUB_USER>/arborpress:latest).
+#   Platzhalter <YOUR_GITHUB_USER> in dieser Datei und in portainer-templates.json
+#   durch den eigenen GitHub-Username ersetzen.
 # ======================================================================
 
 x-portainer:
@@ -37,7 +37,6 @@ x-portainer:
       - CMS
       - Blog
     platform: linux
-    logo: "https://raw.githubusercontent.com/arborpress/arborpress/main/arborpress/static/img/logo.png"
     note: >
       Vor dem Start ARBORPRESS_WEB__SECRET_KEY, MARIADB_PASSWORD und
       MARIADB_ROOT_PASSWORD setzen.
@@ -47,9 +46,9 @@ name: arborpress-portainer-mariadb
 
 services:
   app:
-    # Vorgefertigtes Image aus der GitHub Container Registry (empfohlen für Portainer).
-    # Tag :latest entspricht dem aktuellen Stand von main.
-    image: ghcr.io/arborpress/arborpress:latest
+    # Image aus der GitHub Container Registry – Platzhalter durch eigenen User ersetzen.
+    # Generieren: ghcr.io/<YOUR_GITHUB_USER>/arborpress:latest
+    image: ghcr.io/<YOUR_GITHUB_USER>/arborpress:latest
     # Alternativ: lokal aus dem Repository bauen (context muss erreichbar sein):
     # build:
     #   context: ..

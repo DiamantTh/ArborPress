@@ -7,10 +7,10 @@
       "description": "Sicherheitsorientiertes Blog/CMS – App-Container + PostgreSQL 17. Empfohlen für Produktion.",
       "categories": ["CMS", "Blog"],
       "platform": "linux",
-      "logo": "https://raw.githubusercontent.com/arborpress/arborpress/refs/heads/container/portainer/arborpress/static/img/logo.png",
+      "logo": "https://raw.githubusercontent.com/<YOUR_GITHUB_USER>/arborpress/refs/heads/container/portainer/arborpress/static/img/logo.png",
       "note": "<b>Vor dem Deploy:</b> <code>ARBORPRESS_WEB__SECRET_KEY</code> und <code>POSTGRES_PASSWORD</code> mit sicheren Zufallswerten befüllen:<br><code>openssl rand -base64 48</code>",
       "repository": {
-        "url": "https://github.com/arborpress/arborpress",
+        "url": "https://github.com/<YOUR_GITHUB_USER>/arborpress",
         "stackfile": "container/compose.portainer.postgresql.yml"
       },
       "env": [
@@ -82,10 +82,10 @@
       "description": "Sicherheitsorientiertes Blog/CMS – App-Container + MariaDB 11. Alternative zu PostgreSQL.",
       "categories": ["CMS", "Blog"],
       "platform": "linux",
-      "logo": "https://raw.githubusercontent.com/arborpress/arborpress/refs/heads/container/portainer/arborpress/static/img/logo.png",
+      "logo": "https://raw.githubusercontent.com/<YOUR_GITHUB_USER>/arborpress/refs/heads/container/portainer/arborpress/static/img/logo.png",
       "note": "<b>Vor dem Deploy:</b> <code>ARBORPRESS_WEB__SECRET_KEY</code>, <code>MARIADB_PASSWORD</code> und <code>MARIADB_ROOT_PASSWORD</code> mit sicheren Zufallswerten befüllen:<br><code>openssl rand -base64 48</code>",
       "repository": {
-        "url": "https://github.com/arborpress/arborpress",
+        "url": "https://github.com/<YOUR_GITHUB_USER>/arborpress",
         "stackfile": "container/compose.portainer.mariadb.yml"
       },
       "env": [
@@ -162,10 +162,10 @@
       "description": "Sicherheitsorientiertes Blog/CMS – Single-Container mit SQLite. Kein externer Datenbankserver. Ideal für persönliche Blogs und Demos.",
       "categories": ["CMS", "Blog", "Demo"],
       "platform": "linux",
-      "logo": "https://raw.githubusercontent.com/arborpress/arborpress/refs/heads/container/portainer/arborpress/static/img/logo.png",
+      "logo": "https://raw.githubusercontent.com/<YOUR_GITHUB_USER>/arborpress/refs/heads/container/portainer/arborpress/static/img/logo.png",
       "note": "<b>UX-Only Modus:</b> Nur zwei Pflichtfelder – direkt einsatzbereit. <b>Nicht</b> für Multi-User-Produktionsbetrieb geeignet. Für Hochlast stattdessen das PostgreSQL-Template verwenden.",
       "repository": {
-        "url": "https://github.com/arborpress/arborpress",
+        "url": "https://github.com/<YOUR_GITHUB_USER>/arborpress",
         "stackfile": "container/compose.portainer.sqlite.yml"
       },
       "env": [

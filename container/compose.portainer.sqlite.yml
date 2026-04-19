@@ -53,7 +53,6 @@ x-portainer:
       - Blog
       - Demo
     platform: linux
-    logo: "https://raw.githubusercontent.com/arborpress/arborpress/main/arborpress/static/img/logo.png"
     note: >
       Nur ARBORPRESS_WEB__SECRET_KEY und ARBORPRESS_WEB__BASE_URL setzen –
       fertig. Datenbankdateien liegen im Volume app_data.
@@ -64,9 +63,9 @@ name: arborpress-portainer-sqlite
 
 services:
   app:
-    # Vorgefertigtes SQLite-Image aus der GitHub Container Registry (empfohlen für Portainer).
-    # Das :latest-sqlite Tag enthält zusätzlich den aiosqlite-Treiber.
-    image: ghcr.io/arborpress/arborpress:latest-sqlite
+    # Image aus der GitHub Container Registry – Platzhalter durch eigenen User ersetzen.
+    # Das :latest-sqlite-Tag enthält zusätzlich den aiosqlite-Treiber.
+    image: ghcr.io/<YOUR_GITHUB_USER>/arborpress:latest-sqlite
     # Alternativ: lokal aus dem Repository bauen:
     # build:
     #   context: ..
