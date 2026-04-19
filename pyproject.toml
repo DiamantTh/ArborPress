@@ -62,6 +62,13 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
 ]
+# SQLite-Backend (UX-Only / Demo – kein externer Datenbankserver nötig)
+# Aktivieren mit: pip install ".[sqlite]"
+# Containerfile: Build-Arg PIP_EXTRAS=sqlite
+sqlite = [
+    "aiosqlite>=0.20",
+]
+
 # WYSIWYG-Editor HTML→Markdown (optionaler Konverter für den TipTap/Prosemirror
 # Adapter; wird nur genutzt wenn admin_editor != 'builtin')
 wysiwyg = [

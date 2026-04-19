@@ -1,0 +1,111 @@
+# ======================================================================
+# ArborPress – Portainer Stack  (UX-Only · SQLite · Ubuntu 24.04 LTS)
+# ======================================================================
+#
+# !! NUR FÜR SINGLE-USER / DEMO / KLEINSTINSTALLATIONEN !!
+# ----------------------------------------------------------
+# Dieses Setup läuft mit SQLite – kein externer Datenbankserver nötig.
+# Die Datenbank liegt auf einem persistenten Docker-Volume.
+#
+# Geeignet für:
+#   - Persönliche Blogs mit wenig gleichzeitigen Besuchern
+#   - Demo- und Testinstallationen
+#   - Portainer One-Click-Deploys ohne Infrastruktur-Overhead
+#
+# NICHT geeignet für:
+#   - Multi-User-Produktionsbetrieb
+#   - Hochlast oder viele parallele Schreibzugriffe
+#   - Cluster / Swarm (SQLite-Datei nicht verteilbar)
+#
+# Verwendung in Portainer:
+#   Stacks → Add Stack → Repository oder "Web editor"
+#   Datei: container/compose.portainer.sqlite.yml
+#
+# Pflicht-Variablen:
+#
+#   ARBORPRESS_WEB__SECRET_KEY   Langer Zufallsstring ≥ 48 Zeichen
+#                                  openssl rand -base64 48
+#   ARBORPRESS_WEB__BASE_URL     Öffentliche URL, z. B. https://blog.example.com
+#
+# Optionale Variablen (Defaults werden in der Portainer-UI angezeigt):
+#
+#   ARBORPRESS_PORT              Host-Port (Standard: 8080)
+#   ARBORPRESS_WEB__TRUSTED_PROXIES  Proxy-Hops vor ArborPress (Standard: 1)
+#   ARBORPRESS_WORKERS           Hypercorn-Worker (Standard: 1 bei SQLite)
+#   ARBORPRESS_LOGGING__LEVEL    DEBUG|INFO|WARNING|ERROR (Standard: INFO)
+#
+# HINWEIS: Dieses Image benötigt 'aiosqlite' als SQLite-Treiber.
+# Das Containerfile.ubuntu installiert alle Treiber automatisch, sofern
+# aiosqlite in pyproject.toml unter [project.optional-dependencies] sqlite
+# gelistet ist und per `pip install ".[sqlite]"` eingebunden wird.
+# Alternativ: EXTRA_PACKAGES=aiosqlite als Build-Arg setzen (s. u.).
+# ======================================================================
+
+x-portainer:
+  info:
+    title: "ArborPress UX-Only (SQLite)"
+    description: >
+      Sicherheitsorientiertes Blog/CMS – Single-Container mit SQLite.
+      Kein externer Datenbankserver erforderlich – ideal für Demos und
+      persönliche Blogs.
+    categories:
+      - CMS
+      - Blog
+      - Demo
+    platform: linux
+    logo: "https://raw.githubusercontent.com/arborpress/arborpress/main/arborpress/static/img/logo.png"
+    note: >
+      Nur ARBORPRESS_WEB__SECRET_KEY und ARBORPRESS_WEB__BASE_URL setzen –
+      fertig. Datenbankdateien liegen im Volume app_data.
+      Für Multi-User-Betrieb stattdessen das PostgreSQL- oder MariaDB-Stack
+      verwenden.
+
+name: arborpress-portainer-sqlite
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: container/Containerfile.ubuntu
+      args:
+        # Installiert den SQLite-Treiber zusätzlich zu den Standarddeps.
+        # Wird im Containerfile.ubuntu als optionaler PIP_EXTRAS-Arg verarbeitet.
+        PIP_EXTRAS: "sqlite"
+    image: arborpress:ubuntu-sqlite
+    restart: unless-stopped
+    environment:
+      # ── Pflichtfelder ─────────────────────────────────────────────
+      ARBORPRESS_WEB__SECRET_KEY: "${ARBORPRESS_WEB__SECRET_KEY}"
+      ARBORPRESS_WEB__BASE_URL:   "${ARBORPRESS_WEB__BASE_URL:-https://blog.example.com}"
+      # SQLite-Pfad im persistenten Volume (/data ist das SQLite-Volume).
+      ARBORPRESS_DB__URL:         "sqlite+aiosqlite:////data/arborpress.db"
+      # ── Optionale Felder ──────────────────────────────────────────
+      ARBORPRESS_WEB__TRUSTED_PROXIES: "${ARBORPRESS_WEB__TRUSTED_PROXIES:-1}"
+      # SQLite verträgt keine parallelen Schreiber → max. 1 Worker
+      ARBORPRESS_WORKERS:              "${ARBORPRESS_WORKERS:-1}"
+      ARBORPRESS_LOGGING__LEVEL:       "${ARBORPRESS_LOGGING__LEVEL:-INFO}"
+      # DB_HOST / DB_PORT NICHT gesetzt → entrypoint.sh überspringt TCP-Wait
+    ports:
+      - "${ARBORPRESS_PORT:-8080}:8080"
+    volumes:
+      - app_data:/data
+      - app_media:/app/media
+      - app_logs:/app/logs
+      # Config-Override einbinden (optional):
+      # - ./arborpress-config:/app/config:ro
+    healthcheck:
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/_health')"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+volumes:
+  # app_data: SQLite-Datenbankdatei (arborpress.db) + ggf. weitere App-Daten
+  app_data:
+  app_media:
+  app_logs:
