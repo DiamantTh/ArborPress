@@ -1,0 +1,214 @@
+{
+  "version": "2",
+  "templates": [
+    {
+      "type": 3,
+      "title": "ArborPress (PostgreSQL)",
+      "description": "Sicherheitsorientiertes Blog/CMS – App-Container + PostgreSQL 17. Empfohlen für Produktion.",
+      "categories": ["CMS", "Blog"],
+      "platform": "linux",
+      "note": "<b>Vor dem Deploy:</b> <code>ARBORPRESS_WEB__SECRET_KEY</code> und <code>POSTGRES_PASSWORD</code> mit sicheren Zufallswerten befüllen:<br><code>openssl rand -base64 48</code>",
+      "repository": {
+        "url": "https://git.diath.systems/DiamantTh/ArborPress",
+        "stackfile": "container/compose.portainer.postgresql.yml"
+      },
+      "env": [
+        {
+          "name": "ARBORPRESS_WEB__SECRET_KEY",
+          "label": "Secret Key (Pflicht)",
+          "description": "Langer kryptografischer Zufallsstring (min. 48 Zeichen). Generieren: openssl rand -base64 48"
+        },
+        {
+          "name": "ARBORPRESS_WEB__BASE_URL",
+          "label": "Öffentliche URL (Pflicht)",
+          "description": "Vollständige URL unter der ArborPress erreichbar ist, z. B. https://blog.example.com",
+          "default": "https://blog.example.com"
+        },
+        {
+          "name": "POSTGRES_PASSWORD",
+          "label": "Datenbank-Passwort (Pflicht)",
+          "description": "Sicheres Passwort für den PostgreSQL-App-User. Generieren: openssl rand -base64 32"
+        },
+        {
+          "name": "ARBORPRESS_PORT",
+          "label": "Host-Port",
+          "description": "TCP-Port auf dem Host, auf dem ArborPress erreichbar ist",
+          "default": "8080"
+        },
+        {
+          "name": "ARBORPRESS_WEB__TRUSTED_PROXIES",
+          "label": "Trusted Proxies",
+          "description": "Anzahl vorgelagerter Reverse-Proxy-Hops (nginx, Traefik …). 0 = kein Proxy.",
+          "default": "1"
+        },
+        {
+          "name": "ARBORPRESS_WORKERS",
+          "label": "Worker-Prozesse",
+          "description": "Anzahl Hypercorn-Worker (min. 2 für Produktion empfohlen)",
+          "default": "2"
+        },
+        {
+          "name": "ARBORPRESS_LOGGING__LEVEL",
+          "label": "Log-Level",
+          "description": "Verbosität der Anwendungs-Logs",
+          "default": "INFO",
+          "select": [
+            { "text": "INFO",    "value": "INFO",    "default": true },
+            { "text": "DEBUG",   "value": "DEBUG"   },
+            { "text": "WARNING", "value": "WARNING" },
+            { "text": "ERROR",   "value": "ERROR"   }
+          ]
+        },
+        {
+          "name": "POSTGRES_USER",
+          "label": "DB-Benutzer",
+          "description": "PostgreSQL-Benutzername für ArborPress",
+          "default": "arborpress",
+          "preset": true
+        },
+        {
+          "name": "POSTGRES_DB",
+          "label": "Datenbankname",
+          "description": "Name der PostgreSQL-Datenbank",
+          "default": "arborpress",
+          "preset": true
+        }
+      ]
+    },
+    {
+      "type": 3,
+      "title": "ArborPress (MariaDB)",
+      "description": "Sicherheitsorientiertes Blog/CMS – App-Container + MariaDB 11. Alternative zu PostgreSQL.",
+      "categories": ["CMS", "Blog"],
+      "platform": "linux",
+      "note": "<b>Vor dem Deploy:</b> <code>ARBORPRESS_WEB__SECRET_KEY</code>, <code>MARIADB_PASSWORD</code> und <code>MARIADB_ROOT_PASSWORD</code> mit sicheren Zufallswerten befüllen:<br><code>openssl rand -base64 48</code>",
+      "repository": {
+        "url": "https://git.diath.systems/DiamantTh/ArborPress",
+        "stackfile": "container/compose.portainer.mariadb.yml"
+      },
+      "env": [
+        {
+          "name": "ARBORPRESS_WEB__SECRET_KEY",
+          "label": "Secret Key (Pflicht)",
+          "description": "Langer kryptografischer Zufallsstring (min. 48 Zeichen). Generieren: openssl rand -base64 48"
+        },
+        {
+          "name": "ARBORPRESS_WEB__BASE_URL",
+          "label": "Öffentliche URL (Pflicht)",
+          "description": "Vollständige URL unter der ArborPress erreichbar ist, z. B. https://blog.example.com",
+          "default": "https://blog.example.com"
+        },
+        {
+          "name": "MARIADB_PASSWORD",
+          "label": "DB-Passwort App-User (Pflicht)",
+          "description": "Sicheres Passwort für den MariaDB-App-User. Generieren: openssl rand -base64 32"
+        },
+        {
+          "name": "MARIADB_ROOT_PASSWORD",
+          "label": "DB-Root-Passwort (Pflicht)",
+          "description": "Sicheres Root-Passwort für MariaDB. Generieren: openssl rand -base64 32"
+        },
+        {
+          "name": "ARBORPRESS_PORT",
+          "label": "Host-Port",
+          "description": "TCP-Port auf dem Host, auf dem ArborPress erreichbar ist",
+          "default": "8080"
+        },
+        {
+          "name": "ARBORPRESS_WEB__TRUSTED_PROXIES",
+          "label": "Trusted Proxies",
+          "description": "Anzahl vorgelagerter Reverse-Proxy-Hops (nginx, Traefik …). 0 = kein Proxy.",
+          "default": "1"
+        },
+        {
+          "name": "ARBORPRESS_WORKERS",
+          "label": "Worker-Prozesse",
+          "description": "Anzahl Hypercorn-Worker (min. 2 für Produktion empfohlen)",
+          "default": "2"
+        },
+        {
+          "name": "ARBORPRESS_LOGGING__LEVEL",
+          "label": "Log-Level",
+          "description": "Verbosität der Anwendungs-Logs",
+          "default": "INFO",
+          "select": [
+            { "text": "INFO",    "value": "INFO",    "default": true },
+            { "text": "DEBUG",   "value": "DEBUG"   },
+            { "text": "WARNING", "value": "WARNING" },
+            { "text": "ERROR",   "value": "ERROR"   }
+          ]
+        },
+        {
+          "name": "MARIADB_USER",
+          "label": "DB-Benutzer",
+          "description": "MariaDB-Benutzername für ArborPress",
+          "default": "arborpress",
+          "preset": true
+        },
+        {
+          "name": "MARIADB_DATABASE",
+          "label": "Datenbankname",
+          "description": "Name der MariaDB-Datenbank",
+          "default": "arborpress",
+          "preset": true
+        }
+      ]
+    },
+    {
+      "type": 3,
+      "title": "ArborPress UX-Only (SQLite)",
+      "description": "Sicherheitsorientiertes Blog/CMS – Single-Container mit SQLite. Kein externer Datenbankserver. Ideal für persönliche Blogs und Demos.",
+      "categories": ["CMS", "Blog", "Demo"],
+      "platform": "linux",
+      "note": "<b>UX-Only Modus:</b> Nur zwei Pflichtfelder – direkt einsatzbereit. <b>Nicht</b> für Multi-User-Produktionsbetrieb geeignet. Für Hochlast stattdessen das PostgreSQL-Template verwenden.",
+      "repository": {
+        "url": "https://git.diath.systems/DiamantTh/ArborPress",
+        "stackfile": "container/compose.portainer.sqlite.yml"
+      },
+      "env": [
+        {
+          "name": "ARBORPRESS_WEB__SECRET_KEY",
+          "label": "Secret Key (Pflicht)",
+          "description": "Langer kryptografischer Zufallsstring (min. 48 Zeichen). Generieren: openssl rand -base64 48"
+        },
+        {
+          "name": "ARBORPRESS_WEB__BASE_URL",
+          "label": "Öffentliche URL (Pflicht)",
+          "description": "Vollständige URL unter der ArborPress erreichbar ist, z. B. https://blog.example.com",
+          "default": "https://blog.example.com"
+        },
+        {
+          "name": "ARBORPRESS_PORT",
+          "label": "Host-Port",
+          "description": "TCP-Port auf dem Host, auf dem ArborPress erreichbar ist",
+          "default": "8080"
+        },
+        {
+          "name": "ARBORPRESS_WEB__TRUSTED_PROXIES",
+          "label": "Trusted Proxies",
+          "description": "Anzahl vorgelagerter Reverse-Proxy-Hops (nginx, Traefik …). 0 = kein Proxy.",
+          "default": "1"
+        },
+        {
+          "name": "ARBORPRESS_WORKERS",
+          "label": "Worker-Prozesse",
+          "description": "SQLite verträgt keine parallelen Schreiber – Wert 1 beibehalten",
+          "default": "1",
+          "preset": true
+        },
+        {
+          "name": "ARBORPRESS_LOGGING__LEVEL",
+          "label": "Log-Level",
+          "description": "Verbosität der Anwendungs-Logs",
+          "default": "INFO",
+          "select": [
+            { "text": "INFO",    "value": "INFO",    "default": true },
+            { "text": "DEBUG",   "value": "DEBUG"   },
+            { "text": "WARNING", "value": "WARNING" },
+            { "text": "ERROR",   "value": "ERROR"   }
+          ]
+        }
+      ]
+    }
+  ]
+}

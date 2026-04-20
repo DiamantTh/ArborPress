@@ -11,6 +11,18 @@ if [ -z "${ARBORPRESS_WEB__SECRET_KEY:-}" ]; then
     exit 1
 fi
 
+# ── 1a. SQLite-Datenverzeichnis vorbereiten (UX-Only-Modus) ──────────
+# Wird nur aktiv wenn ARBORPRESS_DB__URL auf sqlite+aiosqlite zeigt.
+# /data ist ein persistentes Volume (compose.portainer.sqlite.yml).
+case "${ARBORPRESS_DB__URL:-}" in
+    sqlite+aiosqlite://*)
+        SQLITE_DIR="/data"
+        echo "[arborpress] SQLite-Modus – Datenverzeichnis: ${SQLITE_DIR}"
+        # Verzeichnis anlegen falls Volume noch leer ist
+        mkdir -p "${SQLITE_DIR}"
+        ;;
+esac
+
 # ── 2. Auf Datenbankverbindung warten ────────────────────────────────
 # DB_HOST und DB_PORT können optional direkt gesetzt werden.
 # Sind sie ungesetzt, wird kein TCP-Wait durchgeführt (z.B. SQLite).

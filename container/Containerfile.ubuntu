@@ -69,11 +69,23 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 WORKDIR /build
 
+# PIP_EXTRAS: Kommagetrennte Liste optionaler Extras die zusätzlich
+# zu 'cache-redis' installiert werden, z. B. "sqlite" für SQLite-Support.
+# Standardmäßig leer – Extras werden nur installiert wenn angegeben.
+ARG PIP_EXTRAS=""
+
 # Paket inkl. aller Abhängigkeiten installieren.
 # cache-redis: optionaler Redis-Cache-Backend-Support.
 COPY pyproject.toml ./
 COPY arborpress/ ./arborpress/
-RUN pip install --no-cache-dir ".[cache-redis]"
+RUN set -e; \
+    BASE_EXTRAS="cache-redis"; \
+    if [ -n "${PIP_EXTRAS}" ]; then \
+        INSTALL_EXTRAS="${BASE_EXTRAS},${PIP_EXTRAS}"; \
+    else \
+        INSTALL_EXTRAS="${BASE_EXTRAS}"; \
+    fi; \
+    pip install --no-cache-dir ".[${INSTALL_EXTRAS}]"
 
 # ── Stage 2: Runtime ───────────────────────────────────────────────────
 FROM python:3.12-slim-noble AS runtime
@@ -104,10 +116,11 @@ RUN apt-get update \
     # Nicht-privilegierten Benutzer anlegen (kein Login-Shell, kein Passwort)
     && groupadd -g 1001 arborpress \
     && useradd -u 1001 -g 1001 -s /sbin/nologin -M arborpress \
-    # Verzeichnisse für Medien und Logs anlegen
+    # Verzeichnisse für Medien, Logs und SQLite-Datenbankpfad anlegen
     && install -d -m 0775 -o arborpress -g arborpress \
         /app/media \
-        /app/logs
+        /app/logs \
+        /data
 
 WORKDIR /app
 
@@ -121,7 +134,8 @@ RUN chmod +x /entrypoint.sh
 # Nicht-privilegierter Benutzer
 USER arborpress
 
-VOLUME ["/app/media", "/app/logs"]
+# /data: persistentes SQLite-Datenbankvolume (nur bei UX-Only/SQLite-Setup genutzt)
+VOLUME ["/app/media", "/app/logs", "/data"]
 
 EXPOSE 8080
 
