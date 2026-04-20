@@ -27,7 +27,7 @@ Angaben zu Lizenzen basieren auf den veröffentlichten Paketmetadaten bzw. den v
 | aiosmtplib | Runtime | MIT | https://pypi.org/project/aiosmtplib/ | https://github.com/cole/aiosmtplib |
 | limits | Runtime | MIT | https://pypi.org/project/limits/ | https://github.com/alisaifee/limits |
 | httpx | Runtime + Dev | BSD-3-Clause | https://pypi.org/project/httpx/ | https://github.com/encode/httpx |
-| tomllib (Backport) | Runtime (Py<3.11) | MIT | https://pypi.org/project/tomllib/ | https://github.com/hukkin/tomli |
+| tomllib | Runtime (Py≥ 3.11 stdlib, kein separater Eintrag) | – | – | – |
 | pydantic | Runtime | MIT | https://pypi.org/project/pydantic/ | https://github.com/pydantic/pydantic |
 | pydantic-settings | Runtime | MIT | https://pypi.org/project/pydantic-settings/ | https://github.com/pydantic/pydantic-settings |
 | packaging | Runtime | Apache-2.0 OR BSD-2-Clause | https://pypi.org/project/packaging/ | https://github.com/pypa/packaging |
@@ -40,7 +40,7 @@ Angaben zu Lizenzen basieren auf den veröffentlichten Paketmetadaten bzw. den v
 |---|---|---|---|---|
 | pytest | Dev | MIT | https://pypi.org/project/pytest/ | https://github.com/pytest-dev/pytest |
 | pytest-asyncio | Dev | Apache-2.0 | https://pypi.org/project/pytest-asyncio/ | https://github.com/pytest-dev/pytest-asyncio |
-| aiosqlite | Dev | MIT | https://pypi.org/project/aiosqlite/ | https://github.com/omnilib/aiosqlite |
+| aiosqlite | Dev + Optional ([sqlite]) | MIT | https://pypi.org/project/aiosqlite/ | https://github.com/omnilib/aiosqlite |
 | ruff | Dev | MIT | https://pypi.org/project/ruff/ | https://github.com/astral-sh/ruff |
 | mypy | Dev | MIT | https://pypi.org/project/mypy/ | https://github.com/python/mypy |
 

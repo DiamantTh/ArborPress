@@ -55,11 +55,16 @@ config/                   Konfigurationsverzeichnis
   config.example.toml     Beispielkonfiguration (→ config/config.toml kopieren)
 container/                Container-Dateien (OCI – Docker/Podman)
   Containerfile.ubuntu    Produktions-Image auf Ubuntu 24.04 LTS
+  Containerfile.ubi9      Produktions-Image auf UBI9 (RHEL9)
   entrypoint.sh           Container-Entrypoint
   compose.postgresql.yml  Compose: UBI9 + PostgreSQL (RHEL9-Images)
   compose.postgresql.ubuntu.yml  Compose: Ubuntu + PostgreSQL
   compose.mariadb.yml     Compose: UBI9 + MariaDB (RHEL9-Images)
   compose.mariadb.ubuntu.yml     Compose: Ubuntu + MariaDB
+  compose.portainer.postgresql.yml  Portainer-Stack: PostgreSQL
+  compose.portainer.mariadb.yml     Portainer-Stack: MariaDB
+  compose.portainer.sqlite.yml      Portainer-Stack: SQLite (UX-Only)
+  portainer-templates.json          Portainer App-Template v2 Definition
 docs/                     Proxy-Konfigurationen + Spezifikation (§0–§17)
 frontend/                 SvelteKit-Frontend (Build-Zeit, §9)
 tests/                    Automatisierte Tests
@@ -178,12 +183,12 @@ Audit-Log: Nur relevante Ereignisse, minimale sensitive Daten (§16 no sensitive
 
 | Komponente     | Technologie                                      |
 |----------------|--------------------------------------------------|
-| Backend        | Python 3.10+, Quart (ASGI), Hypercorn            |
+| Backend        | Python 3.11+, Quart (ASGI), Hypercorn            |
 | Datenbank      | PostgreSQL ≥ 16 / MariaDB ≥ 11                   |
 | ORM            | SQLAlchemy 2.0 async + asyncpg / aiomysql        |
 | Auth           | webauthn ≥ 2, argon2-cffi, pyotp                 |
 | Federation     | httpx (ActivityPub-HTTP-Sig), bleach             |
 | Mail           | aiosmtplib, cryptography (OpenPGP)               |
-| CLI            | Typer ≥ 0.12                                     |
+| CLI            | Typer ≥ 0.15                                     |
 | Frontend       | SvelteKit + @simplewebauthn/browser              |
 | Config         | pydantic-settings v2, TOML                       |
