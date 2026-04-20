@@ -41,24 +41,6 @@
 # Alternativ: EXTRA_PACKAGES=aiosqlite als Build-Arg setzen (s. u.).
 # ======================================================================
 
-x-portainer:
-  info:
-    title: "ArborPress UX-Only (SQLite)"
-    description: >
-      Sicherheitsorientiertes Blog/CMS – Single-Container mit SQLite.
-      Kein externer Datenbankserver erforderlich – ideal für Demos und
-      persönliche Blogs.
-    categories:
-      - CMS
-      - Blog
-      - Demo
-    platform: linux
-    note: >
-      Nur ARBORPRESS_WEB__SECRET_KEY und ARBORPRESS_WEB__BASE_URL setzen –
-      fertig. Datenbankdateien liegen im Volume app_data.
-      Für Multi-User-Betrieb stattdessen das PostgreSQL- oder MariaDB-Stack
-      verwenden.
-
 name: arborpress-portainer-sqlite
 
 services:

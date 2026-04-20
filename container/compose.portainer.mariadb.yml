@@ -25,19 +25,6 @@
 #
 # ======================================================================
 
-x-portainer:
-  info:
-    title: "ArborPress (MariaDB)"
-    description: "Sicherheitsorientiertes Blog/CMS – App + MariaDB 11"
-    categories:
-      - CMS
-      - Blog
-    platform: linux
-    note: >
-      Vor dem Start ARBORPRESS_WEB__SECRET_KEY, MARIADB_PASSWORD und
-      MARIADB_ROOT_PASSWORD setzen.
-      Passwörter generieren mit: openssl rand -base64 48
-
 name: arborpress-portainer-mariadb
 
 services:

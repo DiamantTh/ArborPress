@@ -25,18 +25,6 @@
 #
 # ======================================================================
 
-x-portainer:
-  info:
-    title: "ArborPress (PostgreSQL)"
-    description: "Sicherheitsorientiertes Blog/CMS – App + PostgreSQL 17"
-    categories:
-      - CMS
-      - Blog
-    platform: linux
-    note: >
-      Vor dem Start ARBORPRESS_WEB__SECRET_KEY und POSTGRES_PASSWORD setzen.
-      Beide Passwörter können mit `openssl rand -base64 48` generiert werden.
-
 name: arborpress-portainer-postgresql
 
 services:
