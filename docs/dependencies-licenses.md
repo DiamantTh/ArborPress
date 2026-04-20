@@ -77,14 +77,9 @@ kompatiblen Bedingungen veröffentlicht werden. Die folgende Tabelle zeigt die V
 | Apache-2.0 | Python Runtime-Deps | ✅ Ja (ab AGPL v3) |
 | BSD-2/3-Clause | Python Runtime-Deps | ✅ Ja |
 | 0BSD | Frontend Dev | ✅ Ja |
-| GPL-2.0-only | – | ⚠ Nicht kompatibel mit AGPL-3.0 |
 | GPL-3.0 | – | ✅ Ja (Upgrade auf AGPL möglich) |
 | LGPL-2.1 | – | ✅ Ja (mit Einschränkungen) |
 | AGPL-3.0 | Hauptlizenz | ✅ Ja |
-
-> **CKEditor 5** (ab v38) verwendet eine angepasste **GPL-2.0-only**-Klausel mit Commercial-Restriction.
-> GPL-2.0-only ist **nicht kompatibel mit AGPL-3.0** und würde bei kommerzieller Nutzung Lizenzgebühren
-> auslösen → **ausdrücklich ausgeschlossen**. Ersetzt durch TipTap (MIT).
 
 ## Projektlizenz
 
