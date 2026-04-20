@@ -63,15 +63,11 @@ name: arborpress-portainer-sqlite
 
 services:
   app:
-    # Image aus der GitHub Container Registry – Platzhalter durch eigenen User ersetzen.
-    # Das :latest-sqlite-Tag enthält zusätzlich den aiosqlite-Treiber.
-    image: ghcr.io/<YOUR_GITHUB_USER>/arborpress:latest-sqlite
-    # Alternativ: lokal aus dem Repository bauen:
-    # build:
-    #   context: ..
-    #   dockerfile: container/Containerfile.ubuntu
-    #   args:
-    #     PIP_EXTRAS: "sqlite"
+    build:
+      context: ..
+      dockerfile: container/Containerfile.ubuntu
+      args:
+        PIP_EXTRAS: "sqlite"
     restart: unless-stopped
     environment:
       # ── Pflichtfelder ─────────────────────────────────────────────

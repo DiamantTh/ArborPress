@@ -23,10 +23,6 @@
 #   ARBORPRESS_WORKERS           Hypercorn-Worker (Standard: 2)
 #   ARBORPRESS_LOGGING__LEVEL    DEBUG|INFO|WARNING|ERROR (Standard: INFO)
 #
-# Image-Quelle:
-#   Standard: Vorgefertigtes Image aus GHCR (ghcr.io/<YOUR_GITHUB_USER>/arborpress:latest).
-#   Platzhalter <YOUR_GITHUB_USER> in dieser Datei und in portainer-templates.json
-#   durch den eigenen GitHub-Username ersetzen.
 # ======================================================================
 
 x-portainer:
@@ -45,13 +41,9 @@ name: arborpress-portainer-postgresql
 
 services:
   app:
-    # Image aus der GitHub Container Registry – Platzhalter durch eigenen User ersetzen.
-    # Generieren: ghcr.io/<YOUR_GITHUB_USER>/arborpress:latest
-    image: ghcr.io/<YOUR_GITHUB_USER>/arborpress:latest
-    # Alternativ: lokal aus dem Repository bauen (context muss erreichbar sein):
-    # build:
-    #   context: ..
-    #   dockerfile: container/Containerfile.ubuntu
+    build:
+      context: ..
+      dockerfile: container/Containerfile.ubuntu
     restart: unless-stopped
     environment:
       # ── Pflichtfelder ─────────────────────────────────────────────
