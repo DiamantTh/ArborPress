@@ -133,12 +133,28 @@ async def _add_column_if_missing(
                 await conn.execute(
                     sa.text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
                 )
-        else:
-            # PostgreSQL / MariaDB / MySQL: information_schema
+        elif dialect == "postgresql":
+            # Scope to the current schema to avoid false positives from other
+            # schemas that may contain a same-named table (e.g. public vs. app).
             result = await conn.execute(
                 sa.text(
                     "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name = :t AND column_name = :c"
+                    "WHERE table_schema = current_schema() "
+                    "AND table_name = :t AND column_name = :c"
+                ),
+                {"t": table, "c": column},
+            )
+            if result.fetchone() is None:
+                await conn.execute(
+                    sa.text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+                )
+        else:
+            # MariaDB / MySQL: scope to current database()
+            result = await conn.execute(
+                sa.text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = database() "
+                    "AND table_name = :t AND column_name = :c"
                 ),
                 {"t": table, "c": column},
             )

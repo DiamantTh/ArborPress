@@ -1,26 +1,32 @@
 ArborPress – Datenbankschema
-Stand: 2026-03-06  (aktualisiert: Migration 0002)
+Stand: 2026-04-22  (aktualisiert: Migration 0003 / RDAP + GeoIP)
 ===============================================================================
 
 TABELLEN-ÜBERSICHT
 ──────────────────
   users                 Benutzerkonten (PUBLIC / OPERATIONAL)
   webauthn_credentials  FIDO2/WebAuthn-Schlüssel pro Nutzer
-  mfa_devices           TOTP / HOTP / sonstige MFA-Geräte
+  mfa_devices           TOTP / HOTP / Plugin-MFA-Geräte
   backup_codes          Einmal-Backup-Codes für MFA-Recovery
-  user_pgp_keys         OpenPGP-Schlüssel pro Nutzer (mehrere möglich)  [NEU]
+  user_pgp_keys         OpenPGP-Schlüssel pro Nutzer (mehrere möglich)
+  actor_keypairs        Ed25519/RSA-Keypair für ActivityPub HTTP-Signaturen
+  instance_keypair      Singleton-Keypair des Blog-Akteurs (AP)
+  ap_followers          Follow-Beziehungen (eingehend + ausgehend)
+  user_sessions         DB-gesicherte Sitzungen (ergänzt Quart-Cookie)
   tags                  Flache Stichworte für Posts
   post_tags             Many-to-many Verbindung Posts ↔ Tags
-  categories            Hierarchische Kategorien (Baum-Struktur)        [NEU]
-  post_categories       Many-to-many Verbindung Posts ↔ Kategorien     [NEU]
+  categories            Hierarchische Kategorien (Baum-Struktur)
+  post_categories       Many-to-many Verbindung Posts ↔ Kategorien
   posts                 Blog-Beiträge
-  post_revisions        Versionsverlauf pro Post (mit Unified-Diff)     [NEU]
-  post_access_tokens    Zugangstokens für passwortgeschützte Posts      [NEU]
+  post_revisions        Versionsverlauf pro Post (mit Unified-Diff)
+  post_access_tokens    Zugangstokens für passwortgeschützte Posts
   pages                 Statische Seiten (inkl. Systemseiten)
   comments              Kommentare zu Posts (flaches Zitat-Modell)
   media                 Hochgeladene Mediendateien
-  settings              Schlüssel/Wert-Konfiguration (DB-seitig)
+  oembed_cache          Server-seitig gecachte oEmbed-HTML-Schnipsel
+  site_settings         Sektionen-basierte Laufzeit-Konfiguration (JSON)
   mail_queue            Ausgehende Mails (async Outbox)
+  audit_events          Sicherheits-Audit-Log (opt-in via config)
 
 
 TAGS vs. KATEGORIEN
@@ -47,7 +53,7 @@ PGP MULTI-SCHLÜSSEL
 TABLE: users
 ===============================================================================
   id                    VARCHAR(36)   PK   UUID
-  username              VARCHAR(64)   UK   einzigartiger Anmeldename
+  username              VARCHAR(32)   UK   einzigartiger Anmeldename
   display_name          VARCHAR(128)       Anzeigename
   email                 VARCHAR(254)  UK   optional
   account_type          ENUM               PUBLIC | OPERATIONAL
@@ -59,28 +65,33 @@ TABLE: users
   require_uv            BOOL               UV/PIN/Biometrie erzwingen
   require_stepup        BOOL               Step-up für Operationen
   sso_disabled          BOOL               SSO für diesen Account sperren
-  bio                   TEXT          NULL  Öffentliche Biografie           [NEU]
-  website               VARCHAR(512)  NULL  Persönliche Website-URL         [NEU]
+  federation_opt_out    BOOL               AP-Föderierung für diesen Account deaktivieren
+  failed_login_count    INT                Credential-Stuffing-Zähler (gesperrt ab N)
+  locked_until          DATETIME      NULL  Account-Sperre bis zu diesem Zeitpunkt
+  bio                   TEXT          NULL  Öffentliche Biografie
+  website               VARCHAR(512)  NULL  Persönliche Website-URL
   created_at            DATETIME
   updated_at            DATETIME
 
   Hinweis: OpenPGP-Schlüssel sind in user_pgp_keys ausgelagert (1:n).
-           pgp_public_key + pgp_encrypt_mail wurden in Migration 0002 entfernt.
 
 
 ===============================================================================
 TABLE: webauthn_credentials
 ===============================================================================
-  id                    VARCHAR(64)   PK   Base64URL der Credential-ID
+  id                    VARCHAR(36)   PK   UUID
   user_id               VARCHAR(36)   FK → users.id  ON DELETE CASCADE
-  credential_id         VARCHAR(256)
+  label                 VARCHAR(128)       Nutzer-definierter Name
+  credential_id         BLOB               raw credential ID bytes (unique)
   public_key            BLOB               CBOR-codierter Public Key
   sign_count            INT
+  transport             VARCHAR(32)   NULL  usb | nfc | ble | internal
+  is_platform           BOOL          NULL  Plattform-Authentikator?
   uv_capable            BOOL               User Verification möglich
-  aaguid                VARCHAR(64)   NULL  Authentikator-ID
-  label                 VARCHAR(128)       Nutzer-definierter Name
   created_at            DATETIME
   last_used_at          DATETIME      NULL
+
+  UK: (user_id, label) → uq_user_credential_label
 
 
 ===============================================================================
@@ -88,10 +99,15 @@ TABLE: mfa_devices
 ===============================================================================
   id                    VARCHAR(36)   PK   UUID
   user_id               VARCHAR(36)   FK → users.id  ON DELETE CASCADE
-  device_type           ENUM               totp | backup
-  secret                TEXT               verschlüsselt gespeichert
-  confirmed             BOOL               Enrollment abgeschlossen?
+  device_type           ENUM               totp | hotp | plugin
+  label                 VARCHAR(128)       Nutzer-definierter Name
+  secret_enc            BLOB               verschlüsseltes TOTP/HOTP-Secret
+  is_active             BOOL               Gerät aktiv?
+  plugin_id             VARCHAR(64)   NULL  Plugin-Provider-ID (nur bei device_type=plugin)
   created_at            DATETIME
+  last_used_at          DATETIME      NULL
+
+  UK: (user_id, label) → uq_user_mfa_label
 
 
 ===============================================================================
@@ -121,6 +137,70 @@ TABLE: user_pgp_keys                                                    [NEU]
   last_used_at          DATETIME      NULL
 
   UK: (user_id, fingerprint) → uq_user_pgp_fingerprint
+
+
+===============================================================================
+TABLE: actor_keypairs
+===============================================================================
+  id                    VARCHAR(36)   PK   UUID
+  user_id               VARCHAR(36)   UK + FK → users.id  ON DELETE CASCADE
+  key_id_url            VARCHAR(512)       Key-ID URL (z.B. .../ap/actor/alice#main-key)
+  public_key_pem        TEXT               PEM-codierter Public Key
+  private_key_enc       BLOB               Fernet-verschlüsselter Private Key
+  algorithm             VARCHAR(32)        ed25519 (default) | rsa-sha256 (legacy)
+  created_at            DATETIME
+  rotated_at            DATETIME      NULL
+
+  Hinweis: Singleton pro User (UK auf user_id). Nur relevant wenn
+           allow_per_account_federation aktiv ist.
+
+
+===============================================================================
+TABLE: instance_keypair
+===============================================================================
+  id                    INT           PK   immer 1 (Singleton-Tabelle)
+  key_id_url            VARCHAR(512)       z.B. https://example.com/ap/actor#main-key
+  public_key_pem        TEXT               PEM-codierter Public Key
+  private_key_enc       BLOB               Fernet-verschlüsselter Private Key
+  algorithm             VARCHAR(32)        ed25519 (default) | rsa-sha256 (legacy)
+  created_at            DATETIME
+  rotated_at            DATETIME      NULL
+
+  Hinweis: Keypair des Blog-Akteurs (Instanz-Level). Rotieren via
+           arborpress federation keygen --force
+
+
+===============================================================================
+TABLE: ap_followers
+===============================================================================
+  id                    VARCHAR(36)   PK   UUID
+  local_user_id         VARCHAR(36)   FK → users.id  ON DELETE CASCADE
+  remote_actor_uri      VARCHAR(2048)      URI des Remote-Akteurs
+  remote_display_name   VARCHAR(256)  NULL  gecachter Anzeigename
+  remote_inbox_uri      VARCHAR(2048) NULL  Inbox-URI für ausgehende Sends
+  direction             ENUM               inbound  → jemand folgt uns
+                                           outbound → wir folgen jemandem
+  state                 ENUM               pending | accepted | rejected | undone
+  activity_id           VARCHAR(512)  NULL  Follow-Activity-ID (für Undo/Accept)
+  created_at            DATETIME
+  updated_at            DATETIME
+
+  UK: (local_user_id, remote_actor_uri, direction) → uq_follower_local_remote_dir
+
+
+===============================================================================
+TABLE: user_sessions
+===============================================================================
+  id                    VARCHAR(36)   PK   UUID  (im Quart-Cookie gespeichert)
+  user_id               VARCHAR(36)   FK → users.id  ON DELETE CASCADE
+  created_at            DATETIME
+  expires_at            DATETIME           Session-Ablauf
+  last_seen_at          DATETIME           letzter Request mit dieser Session
+  client_ip             VARCHAR(45)   NULL  IPv4 oder IPv6 (max 45 Zeichen)
+  user_agent            VARCHAR(512)  NULL
+  is_tls                BOOL               X-Forwarded-Proto == https?
+  is_cli                BOOL               via arborpress-CLI angelegt
+  is_valid              BOOL               False = widerrufen
 
 
 ===============================================================================
@@ -175,18 +255,19 @@ TABLE: posts
   title                 VARCHAR(512)
   body_md               TEXT               Markdown-Quelltext
   body_html             TEXT               gerendertes HTML (gecacht)
+  body_json             JSON          NULL  Editor.js Block-Format (strukturiert)
+                                           NULL wenn nicht via Editor.js erstellt
   excerpt               TEXT          NULL
   status                ENUM               draft | published |
                                            scheduled | archived
   visibility            ENUM               public  → in Listen/Suche/Tags
                                            hidden  → nur per direkter URL
                                            private → HTTP 404
-  is_pinned             BOOL               immer oben in der Liste          [NEU]
-  is_featured           BOOL               visuell hervorgehoben im Theme   [NEU]
-  noindex               BOOL               robots: noindex                  [NEU]
-  reading_time_min      INT                Lesedauer in Minuten             [NEU]
-                                           (berechnet beim Speichern,
-                                            Formel siehe unten)
+  is_pinned             BOOL               immer oben in der Liste
+  is_featured           BOOL               visuell hervorgehoben im Theme
+  noindex               BOOL               robots: noindex
+  reading_time_min      INT                Lesedauer in Minuten
+                                           (berechnet beim Speichern)
   lang                  VARCHAR(8)    NULL  Sprachkürzel (§7)
   ap_object_id          VARCHAR(512)  NULL  ActivityPub-Objekt-URL (§5)
   captcha_type          VARCHAR(32)   NULL  Override für Kommentarcaptcha
@@ -284,9 +365,16 @@ TABLE: comments
                                            ─── Zitat-Referenz (flaches Modell,
                                                kein rekursives Nesting) ───
   mod_note              TEXT          NULL  interne Moderationsnotiz
-  ip_address            VARCHAR(64)   NULL
+  ip_address            VARCHAR(64)   NULL  Einsender-IP (IPv4 oder IPv6)
   user_agent            VARCHAR(512)  NULL
+  country_code          VARCHAR(2)    NULL  ISO 3166-1 alpha-2 (z.B. "DE")
+                                           aus GeoIP; ggf. aus RDAP ergänzt
+  rdap_json             TEXT          NULL  RDAP-Lookup-Ergebnis als JSON
+                                           (Admin-Panel, nie öffentlich)
   created_at            DATETIME
+
+  RDAP-Felder in rdap_json (Auswahl):
+    org, name, handle, range, country, rir, type, abuse_email, remarks
 
 
 ===============================================================================
@@ -302,37 +390,79 @@ TABLE: media
   width                 INT           NULL  Pixel
   height                INT           NULL  Pixel
   uploaded_at           DATETIME
+  original_url          VARCHAR(1024) NULL  Quell-URL (bei automatisch heruntergeladenen Bildern)
+
+  IDX: original_url
 
 
 ===============================================================================
-TABLE: settings
+TABLE: oembed_cache
 ===============================================================================
-  key                   VARCHAR(64)   PK   Schlüssel (z. B. "captcha.type")
-  value                 TEXT               JSON-codierter Wert
+  id                    VARCHAR(36)   PK   UUID
+  url                   VARCHAR(1024) UK   Original-Embed-URL
+  provider_name         VARCHAR(128)  NULL  Provider-Name (z.B. "YouTube")
+  html                  TEXT               sanitisiertes HTML (kein <script>)
+  fetched_at            DATETIME
+  expires_at            DATETIME           Ablauf → bei nächstem Rendern neu geladen
+
+
+===============================================================================
+TABLE: site_settings
+===============================================================================
+  key                   VARCHAR(64)   PK   Sektionsname (z. B. "captcha", "mail")
+  value                 TEXT               JSON-codiertes Dict für diese Sektion
   updated_at            DATETIME
+  updated_by            VARCHAR(64)   NULL  Username des letzten Bearbeiters
 
-  Relevante Schlüssel (Auswahl):
-    "comments.blocklist"              Zeilengetrennte Sperrliste
-    "comments.require_email_confirmation"
-    "comments.rate_limit_per_hour"
-    "captcha.type"                    globaler Standard-Captcha-Typ
-    "mail.backend"
+  Relevante Sektionen (Auswahl):
+    "general"         → site_name, site_url, …
+    "mail"            → backend, smtp_host, smtp_port, smtp_user, …
+    "comments"        → blocklist, require_email_confirmation, rate_limit_per_hour, …
+    "comment_filter"  → ip_whitelist, ip_blocklist, country_whitelist,
+                        country_blocklist, geoip_db_path,
+                        rbl_enabled, rbl_zones, rbl_action
+    "captcha"         → default_type, custom_questions, …
+    "theme"           → active_theme, auto_dark, bg_pattern, …
+    "federation"      → enabled, instance_handle, …
+    "demo"            → enabled
+
+  Hinweis: Infrastruktur-Einstellungen (DB-URL, HTTP-Port, Secret-Key,
+           Auth-TTLs, Logging) bleiben in config.toml – sie werden vor
+           der DB-Verbindung benötigt.
 
 
 ===============================================================================
 TABLE: mail_queue
 ===============================================================================
   id                    VARCHAR(36)   PK   UUID
-  to_address            VARCHAR(254)
-  subject               VARCHAR(998)
-  body_text             TEXT
-  body_html             TEXT          NULL
-  status                ENUM               pending | sent | failed
+  idempotency_key       VARCHAR(128)  UK   verhindert Doppel-Sends
+  recipient             VARCHAR(254)       Empfänger-Adresse
+  subject               VARCHAR(512)
+  body_text             TEXT               Text-Body
+  body_html             TEXT          NULL  HTML-Body
+  pgp_encrypted         BOOL               True wenn Body PGP-verschlüsselt
+  status                ENUM               pending | sent | failed | cancelled
   attempts              INT                Anzahl Sendeversuche
-  scheduled_at          DATETIME
-  sent_at               DATETIME      NULL
-  error                 VARCHAR(256)  NULL  letzter Fehlertext
+  next_attempt_at       DATETIME      NULL  Nächster Retry-Zeitpunkt (Backoff)
+  last_error            VARCHAR(512)  NULL  letzter Fehlertext
   created_at            DATETIME
+  sent_at               DATETIME      NULL
+
+
+===============================================================================
+TABLE: audit_events
+===============================================================================
+  id                    INT           PK   autoincrement (append-only)
+  event_type            VARCHAR(64)   IDX  z.B. login_success, mfa_failed, …
+  actor_id              VARCHAR(36)   NULL  IDX → kein FK (Log bleibt nach Löschung)
+  actor_name            VARCHAR(32)   NULL  denormalisiert (lesbar nach Löschung)
+  ip                    VARCHAR(45)   NULL
+  user_agent            VARCHAR(512)  NULL
+  outcome               VARCHAR(16)        success | failure | blocked
+  detail                TEXT          NULL  freier Grund-/Detail-Text
+  created_at            DATETIME      IDX
+
+  Aktiv nur wenn [logging] db_audit_log = true in config.toml.
 
 
 ===============================================================================
@@ -366,6 +496,22 @@ MIGRATIONS-ÜBERSICHT
         post_revisions (neu, mit unified diff)
         post_access_tokens (neu, mehrere Passwörter pro Post)
 
+  0003  RDAP + GeoIP, Kommentar-Netzfilter, AP-Signaturen, Mail-Queue
+        comments: +country_code, +user_agent, +rdap_json
+        actor_keypairs (neu)
+        instance_keypair (neu)
+        ap_followers (neu)
+        user_sessions (neu)
+        mail_queue: +idempotency_key, +pgp_encrypted, +next_attempt_at,
+                    +last_error; renamed to_address→recipient,
+                    removed scheduled_at, error
+        site_settings: renamed from settings; +updated_by;
+                       Struktur geändert: Sektionen statt Dot-Keys
+        users: +failed_login_count, +locked_until, +federation_opt_out
+        oembed_cache (neu)
+        audit_events (neu)
+        posts: +body_json (Editor.js Block-Format)
+
 
 ===============================================================================
 BEZIEHUNGEN (Entity-Relationship)
@@ -375,6 +521,10 @@ BEZIEHUNGEN (Entity-Relationship)
                           ├──< mfa_devices                   (1:n  CASCADE)
                           ├──< backup_codes                  (1:n  CASCADE)
                           ├──< user_pgp_keys                 (1:n  CASCADE)
+                          ├──1 actor_keypairs                (1:1  CASCADE)
+                          ├──1 instance_keypair              (Singleton, kein FK)
+                          ├──< ap_followers.local_user_id    (1:n  CASCADE)
+                          ├──< user_sessions                 (1:n  CASCADE)
                           ├──< posts.author_id               (1:n  SET NULL)
                           ├──< post_revisions.changed_by_id  (1:n  SET NULL)
                           └──< media.uploader_id             (1:n  SET NULL)
