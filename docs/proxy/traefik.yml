@@ -84,7 +84,7 @@ http:
 
         # Gesundheitsprüfung (Traefik v3)
         healthCheck:
-          path: "/health"          # ArborPress muss diesen Endpunkt anbieten
+          path: "/_health"         # ArborPress Health-Endpunkt (entrypoint.sh + _health route)
           interval: "30s"
           timeout: "5s"
           status: 200
