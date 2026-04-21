@@ -52,14 +52,15 @@ async def _rdap_background(comment_id: str, ip_str: str) -> None:
     """Look up RDAP data for *ip_str* and store it on the comment (best-effort)."""
     import json as _json
     from arborpress.core import rdap as _rdap
-    from arborpress.core.db import async_session
+    from arborpress.core.db import get_session_factory
 
     try:
         rdap_data = await _rdap.lookup(ip_str)
         if not rdap_data:
             return
         rdap_text = _json.dumps(rdap_data, ensure_ascii=False)
-        async with async_session() as _db:
+        _factory = get_session_factory()
+        async with _factory() as _db:
             from sqlalchemy import select as _select
             from arborpress.models.content import Comment as _Comment
             stmt = _select(_Comment).where(_Comment.id == comment_id)

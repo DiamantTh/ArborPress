@@ -28,17 +28,31 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import logging
 import time
+from urllib.parse import urlparse
 
 log = logging.getLogger("arborpress.rdap")
 
 _CACHE_TTL: int   = 86_400   # 24 hours
-_TIMEOUT: float   = 8.0      # per request
+_TIMEOUT: float   = 8.0      # per request, applied as httpx connect+read timeout
+_MAX_BODY: int    = 512 * 1024  # 512 KB – abort oversized responses
 _ARIN_BASE: str   = "https://rdap.arin.net/registry/ip"
+
+# Allowed RDAP server hostnames (SSRF whitelist – only follow links to these)
+_RIR_RDAP_HOSTS: frozenset[str] = frozenset({
+    "rdap.arin.net",
+    "rdap.db.ripe.net",
+    "rdap.apnic.net",
+    "rdap.lacnic.net",
+    "rdap.afrinic.net",
+})
 
 # ip_str → (expires_monotonic, result_dict)
 _CACHE: dict[str, tuple[float, dict]] = {}
+# ip_str → asyncio.Event  (set when lookup is complete, used to prevent stampedes)
+_IN_FLIGHT: dict[str, asyncio.Event] = {}
 
 
 def invalidate_cache(ip: str | None = None) -> None:
@@ -160,20 +174,51 @@ def _extract(data: dict) -> dict:
     return {k: v for k, v in result.items() if v}
 
 
-async def _fetch_rdap(url: str) -> dict | None:
-    """Fetch a single RDAP URL and return parsed JSON or None."""
+def _is_allowed_rdap_host(url: str) -> bool:
+    """Return True only if *url* points to a known RIR RDAP server (SSRF guard)."""
+    try:
+        host = urlparse(url).hostname or ""
+        return host.lower() in _RIR_RDAP_HOSTS
+    except Exception:
+        return False
+
+
+async def _fetch_rdap(url: str, *, follow_redirects: bool = True) -> dict | None:
+    """Fetch a single RDAP URL and return parsed JSON or None.
+
+    Safety measures:
+    - Response body capped at _MAX_BODY (512 KB) – abort if exceeded.
+    - follow_redirects allowed only from the ARIN entry-point (to reach the
+      correct RIR); second-hop fetches are made with follow_redirects=False.
+    - Tight timeout on both connect and read phases.
+    """
     try:
         import httpx
+        timeout = httpx.Timeout(connect=5.0, read=_TIMEOUT, write=5.0, pool=5.0)
         async with httpx.AsyncClient(
-            timeout=_TIMEOUT,
-            follow_redirects=True,
+            timeout=timeout,
+            follow_redirects=follow_redirects,
             headers={"Accept": "application/rdap+json, application/json"},
         ) as client:
-            r = await client.get(url)
-        if r.status_code == 200:
-            return r.json()
-        log.debug("RDAP: %s returned HTTP %d", url, r.status_code)
-        return None
+            async with client.stream("GET", url) as r:
+                if r.status_code != 200:
+                    log.debug("RDAP: %s returned HTTP %d", url, r.status_code)
+                    return None
+                # Content-Length pre-check (optional header, not always present)
+                cl = r.headers.get("content-length")
+                if cl and int(cl) > _MAX_BODY:
+                    log.warning("RDAP: Content-Length %s from %s exceeds cap, aborting", cl, url)
+                    return None
+                # Streaming read with hard size cap
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in r.aiter_bytes(8192):
+                    total += len(chunk)
+                    if total > _MAX_BODY:
+                        log.warning("RDAP: response from %s exceeded %d KB cap, aborting", url, _MAX_BODY // 1024)
+                        return None
+                    chunks.append(chunk)
+        return json.loads(b"".join(chunks))
     except Exception as exc:
         log.debug("RDAP fetch error for %s: %s", url, exc)
         return None
@@ -207,24 +252,46 @@ async def lookup(ip_str: str) -> dict:
     except ValueError:
         return {}
 
-    data = await _fetch_rdap(f"{_ARIN_BASE}/{ip_str}")
-
-    # Follow a single ``related`` link hop (RIPE/APNIC delegate differently)
-    if data is not None:
-        links = data.get("links", [])
-        for link in links:
-            if isinstance(link, dict) and link.get("rel") == "related":
-                href = link.get("href", "")
-                if href and href != f"{_ARIN_BASE}/{ip_str}":
-                    deeper = await _fetch_rdap(href)
-                    if deeper:
-                        data = deeper
-                    break
-
-    if not data:
-        _CACHE[ip_str] = (time.monotonic() + _CACHE_TTL, {})
+    # Stampede guard: if another coroutine is already fetching this IP, wait for it
+    if ip_str in _IN_FLIGHT:
+        await _IN_FLIGHT[ip_str].wait()
+        # Result should now be cached
+        cached = _CACHE.get(ip_str)
+        if cached and cached[0] > time.monotonic():
+            return cached[1]
         return {}
 
-    result = _extract(data)
-    _CACHE[ip_str] = (time.monotonic() + _CACHE_TTL, result)
-    return result
+    event = asyncio.Event()
+    _IN_FLIGHT[ip_str] = event
+    try:
+        # ARIN accepts any IP and redirects to the responsible RIR;
+        # follow_redirects=True is intentional here (ARIN → RIR).
+        data = await _fetch_rdap(f"{_ARIN_BASE}/{ip_str}", follow_redirects=True)
+
+        # Follow a single ``related`` link hop (RIPE/APNIC delegate differently).
+        # SSRF guard: only follow links that point to a known RIR RDAP host.
+        if data is not None:
+            links = data.get("links", [])
+            for link in links:
+                if isinstance(link, dict) and link.get("rel") == "related":
+                    href = link.get("href", "")
+                    if href and href != f"{_ARIN_BASE}/{ip_str}":
+                        if not _is_allowed_rdap_host(href):
+                            log.warning("RDAP: related link %s rejected (not a known RIR host)", href)
+                            break
+                        # Second hop: no further redirects allowed
+                        deeper = await _fetch_rdap(href, follow_redirects=False)
+                        if deeper:
+                            data = deeper
+                    break
+
+        if not data:
+            _CACHE[ip_str] = (time.monotonic() + _CACHE_TTL, {})
+            return {}
+
+        result = _extract(data)
+        _CACHE[ip_str] = (time.monotonic() + _CACHE_TTL, result)
+        return result
+    finally:
+        _IN_FLIGHT.pop(ip_str, None)
+        event.set()
