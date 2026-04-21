@@ -97,13 +97,6 @@ http:
     # Sicherheits-Header (Traefik ergänzt; ArborPress setzt CSP/X-Frame selbst)
     arborpress-headers:
       headers:
-        # HSTS: auskommentiert – bei Tests/lokalen Setups deaktiviert lassen.
-        # Für Produktion einkommentieren.
-        # stsSeconds: 63072000
-        # stsIncludeSubdomains: true
-        # stsPreload: true
-        # forceSTSHeader: true
-
         # Für ActivityPub korrekte Weiterleitung der Trust-Proxy-Info
         customRequestHeaders:
           X-Forwarded-Proto: "https"
