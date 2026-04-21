@@ -41,6 +41,67 @@
                        background:#f8f9fa;border-radius:0 .35rem .35rem 0;
                        font-size:.95rem;margin-bottom:1rem;white-space:pre-wrap">{{ comment.body }}</blockquote>
 
+    {# ---- IP / RDAP Info ---- #}
+    <details style="margin-bottom:1rem;font-size:.82rem">
+      <summary style="cursor:pointer;color:#4b5563;user-select:none">
+        🌐 Netzwerk-Info
+        {% if comment.ip_address %} · {{ comment.ip_address }}{% endif %}
+        {% if comment.country_code %}
+          · <span title="{{ comment.country_code }}">{{ comment.country_code | country_flag }}</span>
+        {% endif %}
+      </summary>
+      <div style="margin-top:.5rem;padding:.75rem;background:#f8f9fa;
+                  border:1px solid #e2e8f0;border-radius:.35rem">
+        {% if comment.ip_address %}
+          <div><strong>IP:</strong> <code>{{ comment.ip_address }}</code></div>
+        {% endif %}
+        {% if comment.user_agent %}
+          <div style="margin-top:.25rem;word-break:break-all">
+            <strong>User-Agent:</strong> {{ comment.user_agent }}
+          </div>
+        {% endif %}
+        {% if comment.rdap_json %}
+          {% set rdap = comment.rdap_json | from_json %}
+          <hr style="margin:.5rem 0;border:none;border-top:1px solid #e2e8f0">
+          {% if rdap.org %}
+            <div><strong>Organisation:</strong> {{ rdap.org }}</div>
+          {% endif %}
+          {% if rdap.name %}
+            <div><strong>Netzname:</strong> {{ rdap.name }}</div>
+          {% endif %}
+          {% if rdap.handle %}
+            <div><strong>Handle:</strong> {{ rdap.handle }}</div>
+          {% endif %}
+          {% if rdap.range %}
+            <div><strong>IP-Range:</strong> {{ rdap.range }}</div>
+          {% endif %}
+          {% if rdap.country %}
+            <div><strong>Land (RIR):</strong>
+              {{ rdap.country | country_flag }} {{ rdap.country }}
+            </div>
+          {% endif %}
+          {% if rdap.rir %}
+            <div><strong>RIR:</strong> {{ rdap.rir }}</div>
+          {% endif %}
+          {% if rdap.type %}
+            <div><strong>Typ:</strong> {{ rdap.type }}</div>
+          {% endif %}
+          {% if rdap.abuse_email %}
+            <div><strong>Abuse-Kontakt:</strong>
+              <a href="mailto:{{ rdap.abuse_email }}">{{ rdap.abuse_email }}</a>
+            </div>
+          {% endif %}
+          {% if rdap.remarks %}
+            <div style="margin-top:.25rem;color:#6b7280">
+              <em>{{ rdap.remarks }}</em>
+            </div>
+          {% endif %}
+        {% elif comment.ip_address %}
+          <div style="color:#9ca3af;margin-top:.25rem">RDAP-Daten noch nicht geladen.</div>
+        {% endif %}
+      </div>
+    </details>
+
     <div style="display:flex;gap:.75rem;flex-wrap:wrap">
       <form method="post"
             action="{{ url_for('admin.comment_approve', comment_id=comment.id) }}">
@@ -105,8 +166,15 @@
     } %}
     <tr style="border-bottom:1px solid #f1f5f9">
       <td style="padding:.5rem .75rem">
-        <strong>{{ c.author_name }}</strong><br>
+        <strong>{{ c.author_name }}</strong>
+        {% if c.country_code %}
+          <span title="{{ c.country_code }}">{{ c.country_code | country_flag }}</span>
+        {% endif %}
+        <br>
         <span style="color:#6b7280;font-size:.8rem">{{ c.author_email }}</span>
+        {% if c.ip_address %}
+          <br><code style="font-size:.75rem;color:#9ca3af">{{ c.ip_address }}</code>
+        {% endif %}
       </td>
       <td style="padding:.5rem .75rem">{{ c.post.title }}</td>
       <td style="padding:.5rem .75rem">

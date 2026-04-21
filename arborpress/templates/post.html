@@ -104,6 +104,9 @@
             {{ comment.author_name | e }}
           {% endif %}
         </strong>
+        {% if comment.country_code %}
+          <span class="comment__flag" title="{{ comment.country_code }}" aria-hidden="true">{{ comment.country_code | country_flag }}</span>
+        {% endif %}
         <time class="comment__date" datetime="{{ comment.created_at.isoformat() }}">
           {{ comment.created_at.strftime('%d.%m.%Y, %H:%M') }} Uhr
         </time>

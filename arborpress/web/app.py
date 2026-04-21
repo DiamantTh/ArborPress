@@ -70,6 +70,31 @@ def create_app() -> Quart:
 
     app.jinja_env.filters["nl2br"] = _nl2br
 
+    # country_flag filter: ISO 3166-1 alpha-2 code → regional indicator emoji
+    # Example: "DE" → "🇩🇪"  — pure Unicode, zero external resources
+    def _country_flag(code: str) -> str:
+        if not code or len(code) < 2:
+            return ""
+        try:
+            return "".join(chr(0x1F1E6 + ord(c) - ord("A")) for c in code.upper()[:2])
+        except (ValueError, TypeError):
+            return ""
+
+    app.jinja_env.filters["country_flag"] = _country_flag
+
+    # from_json filter: parse JSON string in templates (used by admin RDAP block)
+    import json as _json
+
+    def _from_json(value: str | None) -> dict:
+        if not value:
+            return {}
+        try:
+            return _json.loads(value)
+        except (ValueError, TypeError):
+            return {}
+
+    app.jinja_env.filters["from_json"] = _from_json
+
     # Helper for template time comparisons (e.g. expiry check in sessions.html)
     from datetime import datetime as _dt
     app.jinja_env.globals["now"] = lambda: _dt.now(UTC)

@@ -101,7 +101,53 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def create_all_tables() -> None:
-    """Create all tables (dev/test – production: Alembic)."""
+    """Create all tables (dev/test – production: Alembic).
+
+    Also runs lightweight column migrations for tables that already exist,
+    so that an existing installation is upgraded without data loss.
+    """
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Idempotent column additions for existing databases
+        await _add_column_if_missing(conn, "comments", "country_code", "VARCHAR(2)")
+        await _add_column_if_missing(conn, "comments", "rdap_json", "TEXT")
+
+
+async def _add_column_if_missing(
+    conn,
+    table: str,
+    column: str,
+    col_type: str,
+) -> None:
+    """Add *column* to *table* when it does not exist yet (no-op otherwise)."""
+    import sqlalchemy as sa
+
+    dialect = conn.dialect.name
+    try:
+        if dialect == "sqlite":
+            # PRAGMA table_info returns one row per column
+            result = await conn.execute(sa.text(f"PRAGMA table_info({table})"))
+            existing = {row[1] for row in result.fetchall()}
+            if column not in existing:
+                await conn.execute(
+                    sa.text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+                )
+        else:
+            # PostgreSQL / MariaDB / MySQL: information_schema
+            result = await conn.execute(
+                sa.text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = :t AND column_name = :c"
+                ),
+                {"t": table, "c": column},
+            )
+            if result.fetchone() is None:
+                await conn.execute(
+                    sa.text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+                )
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger("arborpress.db").debug(
+            "Column migration skipped for %s.%s (may already exist)", table, column
+        )

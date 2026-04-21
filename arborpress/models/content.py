@@ -288,6 +288,16 @@ class Comment(Base):
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     user_agent:  Mapped[str | None] = mapped_column(String(512), nullable=True)
 
+    # GeoIP-derived country code (ISO 3166-1 alpha-2, e.g. "DE") – used for flag display
+    country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    # RDAP/WHOIS data (JSON string) – stored for admin info panel, never shown publicly
+    rdap_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # GeoIP-derived country code (ISO 3166-1 alpha-2, e.g. "DE") – used for flag display
+    country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    # RDAP/WHOIS data (JSON string) – stored for admin info panel, never shown publicly
+    rdap_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     post: Mapped[Post] = relationship("Post", back_populates="comments", lazy="selectin")

@@ -45,6 +45,37 @@ _PER_PAGE = 20
 
 
 # ---------------------------------------------------------------------------
+# RDAP background task
+# ---------------------------------------------------------------------------
+
+async def _rdap_background(comment_id: str, ip_str: str) -> None:
+    """Look up RDAP data for *ip_str* and store it on the comment (best-effort)."""
+    import json as _json
+    from arborpress.core import rdap as _rdap
+    from arborpress.core.db import async_session
+
+    try:
+        rdap_data = await _rdap.lookup(ip_str)
+        if not rdap_data:
+            return
+        rdap_text = _json.dumps(rdap_data, ensure_ascii=False)
+        async with async_session() as _db:
+            from sqlalchemy import select as _select
+            from arborpress.models.content import Comment as _Comment
+            stmt = _select(_Comment).where(_Comment.id == comment_id)
+            row = (await _db.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                return
+            row.rdap_json = rdap_text
+            # If country_code is still None (no GeoIP configured), fill from RDAP
+            if not row.country_code and rdap_data.get("country"):
+                row.country_code = rdap_data["country"].upper()[:2]
+            await _db.commit()
+    except Exception:  # noqa: BLE001
+        log.debug("RDAP background task failed for comment %s", comment_id, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -597,7 +628,7 @@ async def post_comment_submit(slug: str):
         from arborpress.core.comment_filter import check_comment_ip
         from arborpress.core.site_settings import get_section as _get_section
         net_filter_section = await _get_section("comment_filter", db)
-        net_action, net_reason = await check_comment_ip(
+        net_action, net_reason, country_code = await check_comment_ip(
             request.remote_addr or "", net_filter_section
         )
         if net_action == "block":
@@ -660,10 +691,15 @@ async def post_comment_submit(slug: str):
             confirmation_token=str(_uuid.uuid4()),
             ip_address=request.remote_addr,
             user_agent=request.headers.get("User-Agent", "")[:512],
+            country_code=country_code,
         )
         db.add(comment)
         await db.commit()
         await db.refresh(comment)
+
+        # Fire RDAP lookup in background (stores result on comment.rdap_json)
+        import asyncio as _asyncio
+        _asyncio.ensure_future(_rdap_background(str(comment.id), request.remote_addr or ""))
 
         # Send confirmation mail (if backend != none and not blocked)
         if blocked:

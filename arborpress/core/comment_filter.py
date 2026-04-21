@@ -151,7 +151,7 @@ async def _check_rbl(ip_str: str, rbl_zones: list[str]) -> list[str]:
 async def check_comment_ip(
     ip_str: str,
     filter_settings: dict,
-) -> tuple[FilterAction, str]:
+) -> tuple[FilterAction, str, str | None]:
     """Evaluate all configured network filters for a comment submitter IP.
 
     Args:
@@ -159,10 +159,13 @@ async def check_comment_ip(
         filter_settings: The ``comment_filter`` site-settings section dict.
 
     Returns:
-        ``("allow" | "block" | "flag", reason_str)``
+        ``("allow" | "block" | "flag", reason_str, country_code | None)``
+        country_code is the ISO 3166-1 alpha-2 code if GeoIP is configured,
+        otherwise None. It is returned even when the action is "allow" so
+        the caller can store it on the Comment record.
     """
     if not ip_str:
-        return "allow", "no IP available"
+        return "allow", "no IP available", None
 
     # Parse settings
     whitelist_lines = [
@@ -194,23 +197,23 @@ async def check_comment_ip(
     # 1. IP whitelist / blocklist
     ip_decision = _check_ip_lists(ip_str, blocklist_lines, whitelist_lines)
     if ip_decision == "allow":
-        return "allow", f"IP {ip_str} is on whitelist"
+        return "allow", f"IP {ip_str} is on whitelist", None
     if ip_decision == "block":
-        return "block", f"IP {ip_str} is on blocklist"
+        return "block", f"IP {ip_str} is on blocklist", None
 
-    # 2. Country filter (only when GeoIP DB is configured)
-    if geoip_db and (country_whitelist or country_blocklist):
+    # 2. Country filter (always look up country if GeoIP DB is set, regardless of lists)
+    country: str | None = None
+    if geoip_db:
         loop = asyncio.get_event_loop()
         country = await loop.run_in_executor(None, _lookup_country, ip_str, geoip_db)
         if country:
             if country_whitelist and country not in country_whitelist:
-                return "block", f"Country {country} not in whitelist"
+                return "block", f"Country {country} not in whitelist", country
             if country_blocklist and country in country_blocklist:
-                return "block", f"Country {country} is on country blocklist"
+                return "block", f"Country {country} is on country blocklist", country
         else:
-            # No geo data → treat as unknown, apply configurable fallback
             if filter_settings.get("country_block_unknown", False):
-                return "block", "Country unknown and block_unknown=true"
+                return "block", "Country unknown and block_unknown=true", None
 
     # 3. RBL / DNSBL
     if rbl_enabled and rbl_zones:
@@ -226,6 +229,6 @@ async def check_comment_ip(
         if listed_in:
             reason = f"IP {ip_str} listed in RBL: {', '.join(listed_in)}"
             log.info("comment_filter: %s → %s", rbl_action, reason)
-            return rbl_action, reason
+            return rbl_action, reason, country
 
-    return "allow", "passed all network checks"
+    return "allow", "passed all network checks", country
