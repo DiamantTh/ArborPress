@@ -75,6 +75,26 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "rate_limit_per_hour":        10,
         "blocklist":                  "",   # newline-separated keywords / emails / IPs
     },
+    "comment_filter": {
+        # IP whitelist / blocklist (CIDR or exact IP, one per line)
+        # Whitelist takes priority over blocklist.
+        "ip_whitelist":         "",
+        "ip_blocklist":         "",
+        # Country filter – ISO 3166-1 alpha-2 codes, comma-separated.
+        # country_whitelist: only listed countries allowed (empty = all)
+        # country_blocklist: listed countries blocked (empty = none)
+        "country_whitelist":    "",
+        "country_blocklist":    "",
+        # Block when GeoIP returns no result (e.g. private IPs → no geo data)
+        "country_block_unknown": False,
+        # Path to MaxMind GeoLite2-Country.mmdb (leave empty to disable)
+        "geoip_db_path":        "",
+        # RBL / DNSBL
+        "rbl_enabled":          False,
+        "rbl_zones":            "zen.spamhaus.org\nbl.spamcop.net",
+        # rbl_action: block = reject comment; flag = mark as SPAM silently
+        "rbl_action":           "block",
+    },
     "captcha": {
         "default_type": "custom",   # none|math|custom|hcaptcha|friendly_captcha|…
         "custom_questions": [

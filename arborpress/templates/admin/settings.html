@@ -16,13 +16,14 @@
 
 <!-- Tab-Navigation -->
 <div class="admin-tabs">
-  <a href="#sec-general"    class="btn btn--small">Allgemein</a>
-  <a href="#sec-mail"       class="btn btn--small">E-Mail</a>
-  <a href="#sec-comments"   class="btn btn--small">Kommentare</a>
-  <a href="#sec-federation" class="btn btn--small">Federation</a>
-  <a href="#sec-search"     class="btn btn--small">Suche</a>
-  <a href="#sec-theme"      class="btn btn--small">Theme</a>
-  <a href="#sec-demo"       class="btn btn--small">Demo-Modus</a>
+  <a href="#sec-general"        class="btn btn--small">Allgemein</a>
+  <a href="#sec-mail"           class="btn btn--small">E-Mail</a>
+  <a href="#sec-comments"       class="btn btn--small">Kommentare</a>
+  <a href="#sec-comment-filter" class="btn btn--small">Netzfilter</a>
+  <a href="#sec-federation"     class="btn btn--small">Federation</a>
+  <a href="#sec-search"         class="btn btn--small">Suche</a>
+  <a href="#sec-theme"          class="btn btn--small">Theme</a>
+  <a href="#sec-demo"           class="btn btn--small">Demo-Modus</a>
 </div>
 
 
@@ -213,6 +214,102 @@
 
     <div class="form-actions">
       <button type="submit" class="btn btn--primary">Kommentare speichern</button>
+    </div>
+  </form>
+</section>
+
+
+<!-- ================================================================== -->
+<!-- NETZFILTER FÜR KOMMENTARE                                           -->
+<!-- ================================================================== -->
+<section class="admin-card" id="sec-comment-filter">
+  <h3>Kommentar-Netzfilter</h3>
+  <p class="hint hint--mb-lg">
+    Kommentar-Einreichungen können anhand von IP-Adresse, Herkunftsland und
+    DNS-Blacklists gefiltert werden. Whitelist hat immer Vorrang vor Blocklist.
+  </p>
+  <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    <input type="hidden" name="section" value="comment_filter">
+
+    <fieldset>
+      <legend>IP-Adressen</legend>
+
+      <label>
+        IP-Whitelist <span class="hint">(CIDR oder exakte IP, eine pro Zeile; hat Vorrang)</span>
+        <textarea name="ip_whitelist" rows="4" spellcheck="false"
+                  placeholder="z.&nbsp;B. 10.0.0.0/8">{{ sections.comment_filter.get('ip_whitelist', '') }}</textarea>
+      </label>
+
+      <label>
+        IP-Blocklist <span class="hint">(CIDR oder exakte IP, eine pro Zeile)</span>
+        <textarea name="ip_blocklist" rows="4" spellcheck="false"
+                  placeholder="z.&nbsp;B. 198.51.100.0/24">{{ sections.comment_filter.get('ip_blocklist', '') }}</textarea>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Länderfilter (GeoIP)</legend>
+      <p class="hint">
+        Benötigt eine MaxMind GeoLite2-Country.mmdb-Datei (kostenlos nach Registrierung
+        auf <a href="https://www.maxmind.com" target="_blank" rel="noopener">maxmind.com</a>)
+        und das optionale Python-Paket <code>geoip2</code>.
+      </p>
+
+      <label>
+        Pfad zur GeoLite2-Country.mmdb
+        <input type="text" name="geoip_db_path" spellcheck="false"
+               placeholder="/opt/geoip/GeoLite2-Country.mmdb"
+               value="{{ sections.comment_filter.get('geoip_db_path', '') }}">
+        <span class="hint">Leer lassen = Länderfilter deaktiviert.</span>
+      </label>
+
+      <label>
+        Länder-Whitelist <span class="hint">(ISO 3166-1 alpha-2, kommagetrennt; leer = alle erlaubt)</span>
+        <input type="text" name="country_whitelist" spellcheck="false"
+               placeholder="DE,AT,CH"
+               value="{{ sections.comment_filter.get('country_whitelist', '') }}">
+      </label>
+
+      <label>
+        Länder-Blocklist <span class="hint">(ISO 3166-1 alpha-2, kommagetrennt)</span>
+        <input type="text" name="country_blocklist" spellcheck="false"
+               placeholder=""
+               value="{{ sections.comment_filter.get('country_blocklist', '') }}">
+      </label>
+
+      <label class="checkbox">
+        <input type="checkbox" name="country_block_unknown" value="1"
+               {{ 'checked' if sections.comment_filter.get('country_block_unknown', false) }}>
+        Kommentare blockieren wenn kein Land ermittelt werden kann
+        <span class="hint">(betrifft z.&nbsp;B. private IP-Bereiche)</span>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>RBL / DNSBL</legend>
+
+      <label class="checkbox">
+        <input type="checkbox" name="rbl_enabled" value="1"
+               {{ 'checked' if sections.comment_filter.get('rbl_enabled', false) }}>
+        RBL-Prüfung aktivieren
+      </label>
+
+      <label>
+        RBL-Zonen <span class="hint">(eine DNS-Zone pro Zeile)</span>
+        <textarea name="rbl_zones" rows="4" spellcheck="false">{{ sections.comment_filter.get('rbl_zones', 'zen.spamhaus.org\nbl.spamcop.net') }}</textarea>
+      </label>
+
+      <label>
+        Aktion bei RBL-Treffer
+        <select name="rbl_action">
+          <option value="block" {{ 'selected' if sections.comment_filter.get('rbl_action', 'block') == 'block' }}>Blockieren (Kommentar abweisen)</option>
+          <option value="flag"  {{ 'selected' if sections.comment_filter.get('rbl_action') == 'flag' }}>Markieren als Spam (stilles Akzeptieren)</option>
+        </select>
+      </label>
+    </fieldset>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn--primary">Netzfilter speichern</button>
     </div>
   </form>
 </section>

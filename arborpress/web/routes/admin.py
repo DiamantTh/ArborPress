@@ -922,7 +922,7 @@ async def captcha_settings_save():
 # Website-Einstellungen (DB-basiert via SiteSettings)
 # ---------------------------------------------------------------------------
 
-_SETTINGS_SECTIONS = ("general", "mail", "comments", "federation", "search", "theme", "demo")
+_SETTINGS_SECTIONS = ("general", "mail", "comments", "comment_filter", "federation", "search", "theme", "demo")
 
 
 @admin_bp.get("/settings")
@@ -1056,6 +1056,19 @@ async def site_settings_save():
                 "bg_pattern":          (form.get("bg_pattern") or "auto").strip(),
                 "bg_pattern_color":    (form.get("bg_pattern_color") or "").strip(),
                 "bg_pattern_opacity":  float(form.get("bg_pattern_opacity") or 0.07),
+            })
+
+        elif section == "comment_filter":
+            current.update({
+                "ip_whitelist":          (form.get("ip_whitelist") or ""),
+                "ip_blocklist":          (form.get("ip_blocklist") or ""),
+                "country_whitelist":     (form.get("country_whitelist") or "").strip().upper(),
+                "country_blocklist":     (form.get("country_blocklist") or "").strip().upper(),
+                "country_block_unknown": form.get("country_block_unknown") == "1",
+                "geoip_db_path":         (form.get("geoip_db_path") or "").strip(),
+                "rbl_enabled":           form.get("rbl_enabled") == "1",
+                "rbl_zones":             (form.get("rbl_zones") or ""),
+                "rbl_action":            (form.get("rbl_action") or "block").strip(),
             })
 
         elif section == "demo":

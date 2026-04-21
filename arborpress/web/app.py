@@ -276,6 +276,10 @@ def create_app() -> Quart:
             # Scheduled-Publishing-Worker starten
             asyncio.ensure_future(run_scheduler())
 
+            # Mail-Queue-Worker starten
+            from arborpress.mail.queue import run_queue_worker
+            asyncio.ensure_future(run_queue_worker())
+
     return app
 
 

@@ -28,8 +28,6 @@ SMTP configuration (examples for config.toml):
 from __future__ import annotations
 
 import logging
-from email.headerregistry import Address
-from email.message import EmailMessage
 from typing import TYPE_CHECKING
 
 log = logging.getLogger("arborpress.mail")
@@ -61,10 +59,11 @@ async def _send(
     body_text: str,
     body_html: str | None = None,
 ) -> bool:
-    """Send an e-mail according to the current configuration.
+    """Enqueue an e-mail for delivery via the async mail queue.
 
-    Returns True on success, False on error or backend=none.
-    STARTTLS takes precedence over smtp_tls when both are set.
+    Returns True when the mail was successfully enqueued.
+    Returns False when backend=none (logging only).
+    Actual SMTP delivery is handled by the queue worker (run_queue_worker).
     """
     mc = _mail_s()
 
@@ -75,41 +74,19 @@ async def _send(
         )
         return False
 
+    from arborpress.mail.queue import enqueue_mail
+
     try:
-        import aiosmtplib  # optional dependency
-    except ImportError:
-        log.error(
-            "aiosmtplib not installed – please run 'pip install aiosmtplib'."
+        await enqueue_mail(
+            to=to_address,
+            subject=subject,
+            body_text=body_text,
+            body_html=body_html,
         )
-        return False
-
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"]    = str(Address(mc.get("from_name", ""), addr_spec=mc.get("from_address", "")))
-    msg["To"]      = str(Address(to_name, addr_spec=to_address))
-    msg.set_content(body_text)
-    if body_html:
-        msg.add_alternative(body_html, subtype="html")
-
-    kwargs: dict = {
-        "hostname": mc.get("smtp_host", "localhost"),
-        "port":     mc.get("smtp_port", 587),
-        "username": mc.get("smtp_user") or None,
-        "password": mc.get("smtp_password", "") or None,
-    }
-
-    # Connection mode: explicit TLS (465) or STARTTLS (587)
-    if mc.get("smtp_tls") and not mc.get("smtp_starttls"):
-        kwargs["use_tls"] = True
-    elif mc.get("smtp_starttls"):
-        kwargs["start_tls"] = True
-
-    try:
-        await aiosmtplib.send(msg, **kwargs)
-        log.info("Mail sent to %s (subject: %s)", to_address, subject)
+        log.debug("Mail enqueued: to=%s subject=%r", to_address, subject)
         return True
     except Exception as exc:
-        log.error("Mail error for %s: %s", to_address, exc)
+        log.error("Failed to enqueue mail for %s: %s", to_address, exc)
         return False
 
 

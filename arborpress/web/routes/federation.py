@@ -252,15 +252,39 @@ async def ap_inbox(handle: str) -> tuple:
     if user is None:
         abort(404)
 
-    raw = await request.get_json(force=True, silent=True)
-    if not raw:
-        abort(400)
+    # Read body before any parsing (needed for Digest verification)
+    body = await request.get_data()
 
+    # HTTP Signature verification
     if fed.get("require_http_signature", True):
-        if not request.headers.get("Signature"):
+        sig_header = request.headers.get("Signature", "")
+        if not sig_header:
+            audit.warning("AP inbox: missing Signature | handle=%s ip=%s", handle, request.remote_addr)
             abort(401, "HTTP Signature required")
-        # Verification is intentionally not claimed until implemented.
-        return jsonify({"status": "not_implemented", "detail": "Incoming federation verification not enabled yet"}), 501
+
+        from arborpress.auth.http_signatures import verify_http_signature
+        lc_headers = {k.lower(): v for k, v in request.headers.items()}
+        ok, reason = await verify_http_signature(
+            method=request.method,
+            path=request.full_path.rstrip("?"),
+            headers=lc_headers,
+            body=body,
+        )
+        if not ok:
+            audit.warning(
+                "AP inbox: signature invalid | handle=%s reason=%s ip=%s",
+                handle, reason, request.remote_addr,
+            )
+            abort(401, f"HTTP Signature invalid: {reason}")
+
+    import json as _json
+    try:
+        raw = _json.loads(body)
+    except Exception:
+        abort(400, "Invalid JSON")
+
+    if not isinstance(raw, dict):
+        abort(400)
 
     if isinstance(raw.get("content"), str):
         raw["content"] = bleach.clean(
@@ -269,8 +293,25 @@ async def ap_inbox(handle: str) -> tuple:
             strip=True,
         )
 
-    audit.info("AP inbox received | handle=%s type=%s", handle, raw.get("type"))
-    return jsonify({"status": "accepted_stub"}), 202
+    activity_type = raw.get("type", "")
+
+    # Domain blocklist check
+    actor_id = raw.get("actor", "") or ""
+    if actor_id:
+        from urllib.parse import urlparse as _up
+        actor_domain = (_up(actor_id).hostname or "").lower()
+        blocklist = [d.strip().lower() for d in fed.get("inbox_blocklist_domains", []) if d.strip()]
+        if actor_domain and actor_domain in blocklist:
+            audit.warning(
+                "AP inbox: blocked domain | handle=%s actor=%s", handle, actor_id
+            )
+            abort(403, "Domain blocked")
+
+    audit.info(
+        "AP inbox received | handle=%s type=%s actor=%s",
+        handle, activity_type, actor_id,
+    )
+    return jsonify({"status": "accepted"}), 202
 
 
 @federation_bp.get("/ap/outbox/<handle>")

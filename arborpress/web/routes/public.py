@@ -593,6 +593,22 @@ async def post_comment_submit(slug: str):
         if author_url and not is_safe_url(author_url):
             author_url = None
 
+        # --- Netzfilter (IP whitelist/blocklist, RBL, Country) ---
+        from arborpress.core.comment_filter import check_comment_ip
+        from arborpress.core.site_settings import get_section as _get_section
+        net_filter_section = await _get_section("comment_filter", db)
+        net_action, net_reason = await check_comment_ip(
+            request.remote_addr or "", net_filter_section
+        )
+        if net_action == "block":
+            # Hard block: reject without feedback (same UX as SPAM silent-accept)
+            import logging as _log
+            _log.getLogger("arborpress.comment_filter").info(
+                "Comment blocked | ip=%s reason=%s", request.remote_addr, net_reason
+            )
+            await flash("Thank you for your comment!", "success")
+            return redirect(url_for("public.post_detail", slug=canonical))
+
         # Rate limit (simple IP check)
         rate_limit = comments_section.get("rate_limit_per_hour", 10)
         if rate_limit > 0:
@@ -628,6 +644,9 @@ async def post_comment_submit(slug: str):
             (request.remote_addr or "").lower(),
         ])
         blocked = any(term in _check_fields for term in blocklist)
+        # RBL "flag"-Aktion: ebenfalls als SPAM einstufen (stilles Akzeptieren)
+        if net_action == "flag":
+            blocked = True
 
         comment = Comment(
             id=str(_uuid.uuid4()),
