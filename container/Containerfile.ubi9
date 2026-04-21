@@ -66,7 +66,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
     # Host muss im Container auf 0.0.0.0 gebunden werden.
     ARBORPRESS_WEB__HOST="0.0.0.0" \
-    ARBORPRESS_WEB__PORT="8080" \
+    ARBORPRESS_WEB__PORT="8066" \
     # 1 = ein vorgelagerter Reverse-Proxy (nginx/Traefik/Caddy).
     # 0 setzen, wenn ArborPress direkt erreichbar ist (kein Proxy).
     ARBORPRESS_WEB__TRUSTED_PROXIES="1" \
@@ -101,11 +101,11 @@ USER 1001
 
 VOLUME ["/opt/app-root/src/media", "/opt/app-root/src/logs"]
 
-EXPOSE 8080
+EXPOSE 8066
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD python3 -c \
-        "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/_health')" \
+        "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8066/_health')" \
         || exit 1
 
 ENTRYPOINT ["/opt/app-root/entrypoint.sh"]

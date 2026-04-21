@@ -115,9 +115,9 @@ class DatabaseSettings(BaseSettings):
 
 class WebSettings(BaseSettings):
     host: str = "127.0.0.1"
-    port: int = 8080
+    port: int = 8066
     secret_key: SecretStr = SecretStr("CHANGE_ME_IN_PRODUCTION")
-    base_url: str = "http://localhost:8080"
+    base_url: str = "http://localhost:8066"
     trusted_proxies: int = 0
     admin_path: str = "/admin"
     default_lang: str = "de"

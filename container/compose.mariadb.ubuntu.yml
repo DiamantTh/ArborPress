@@ -50,7 +50,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "${ARBORPRESS_PORT:-8080}:8080"
+      - "${ARBORPRESS_PORT:-8066}:8066"
     volumes:
       - app_media:/app/media
       - app_logs:/app/logs
@@ -61,7 +61,7 @@ services:
         - "CMD"
         - "python3"
         - "-c"
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/_health')"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8066/_health')"
       interval: 30s
       timeout: 5s
       start_period: 30s

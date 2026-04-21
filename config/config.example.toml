@@ -53,7 +53,7 @@ echo      = false
 # ---------------------------------------------------------------------------
 [web]
 host            = "127.0.0.1"
-port            = 8080
+port            = 8066
 secret_key      = "AENDERN_IM_PRODUKTIVBETRIEB_langer_zufaelliger_string"
 base_url        = "https://blog.example.com"
 # Anzahl vertrauter Reverse-Proxy-Hops (0 = kein Proxy)

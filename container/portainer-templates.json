@@ -33,7 +33,7 @@
           "name": "ARBORPRESS_PORT",
           "label": "Host-Port",
           "description": "TCP-Port auf dem Host, auf dem ArborPress erreichbar ist",
-          "default": "8080"
+          "default": "8066"
         },
         {
           "name": "ARBORPRESS_WEB__TRUSTED_PROXIES",
@@ -112,7 +112,7 @@
           "name": "ARBORPRESS_PORT",
           "label": "Host-Port",
           "description": "TCP-Port auf dem Host, auf dem ArborPress erreichbar ist",
-          "default": "8080"
+          "default": "8066"
         },
         {
           "name": "ARBORPRESS_WEB__TRUSTED_PROXIES",
@@ -181,7 +181,7 @@
           "name": "ARBORPRESS_PORT",
           "label": "Host-Port",
           "description": "TCP-Port auf dem Host, auf dem ArborPress erreichbar ist",
-          "default": "8080"
+          "default": "8066"
         },
         {
           "name": "ARBORPRESS_WEB__TRUSTED_PROXIES",

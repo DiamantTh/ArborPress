@@ -113,7 +113,7 @@ class TestReverseProxyMiddleware:
                 (b"x-forwarded-for", b"203.0.113.9, 10.0.0.1"),
             ],
             "client": ("127.0.0.1", 12345),
-            "server": ("127.0.0.1", 8080),
+            "server": ("127.0.0.1", 8066),
         }
 
         async def receive():

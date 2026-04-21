@@ -97,20 +97,12 @@ http:
     # Sicherheits-Header (Traefik ergänzt; ArborPress setzt CSP/X-Frame selbst)
     arborpress-headers:
       headers:
-        # HSTS: 2 Jahre; Proxy terminiert HTTPS, daher hier setzen
-        stsSeconds: 63072000
-        stsIncludeSubdomains: true
-        stsPreload: true
-
-        # Proxy-Flags (optional – ArborPress erkennt X-Forwarded-Proto)
-        # Hinweis: forceSTSHeader setzt HSTS auch für non-200-Responses
-        forceSTSHeader: true
-
-        # Verhindert Double-Header: nur wenn ArborPress den Header NICHT selbst setzt
-        # contentTypeNosniff und browserXssFilter werden von ArborPress als Middleware gesetzt;
-        # nur aktivieren wenn ArborPress-SecurityHeadersMiddleware deaktiviert ist:
-        # contentTypeNosniff: true
-        # browserXssFilter: true
+        # HSTS: auskommentiert – bei Tests/lokalen Setups deaktiviert lassen.
+        # Für Produktion einkommentieren.
+        # stsSeconds: 63072000
+        # stsIncludeSubdomains: true
+        # stsPreload: true
+        # forceSTSHeader: true
 
         # Für ActivityPub korrekte Weiterleitung der Trust-Proxy-Info
         customRequestHeaders:

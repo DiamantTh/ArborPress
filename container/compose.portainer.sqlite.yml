@@ -29,7 +29,7 @@
 #
 # Optionale Variablen (Defaults werden in der Portainer-UI angezeigt):
 #
-#   ARBORPRESS_PORT              Host-Port (Standard: 8080)
+#   ARBORPRESS_PORT              Host-Port (Standard: 8066)
 #   ARBORPRESS_WEB__TRUSTED_PROXIES  Proxy-Hops vor ArborPress (Standard: 1)
 #   ARBORPRESS_WORKERS           Hypercorn-Worker (Standard: 1 bei SQLite)
 #   ARBORPRESS_LOGGING__LEVEL    DEBUG|INFO|WARNING|ERROR (Standard: INFO)
@@ -64,7 +64,7 @@ services:
       ARBORPRESS_LOGGING__LEVEL:       "${ARBORPRESS_LOGGING__LEVEL:-INFO}"
       # DB_HOST / DB_PORT NICHT gesetzt → entrypoint.sh überspringt TCP-Wait
     ports:
-      - "${ARBORPRESS_PORT:-8080}:8080"
+      - "${ARBORPRESS_PORT:-8066}:8066"
     volumes:
       - app_data:/data
       - app_media:/app/media
@@ -76,7 +76,7 @@ services:
         - "CMD"
         - "python3"
         - "-c"
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/_health')"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8066/_health')"
       interval: 30s
       timeout: 5s
       start_period: 30s
