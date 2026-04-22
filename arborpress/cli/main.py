@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import typer
 
 from arborpress.core.config import Settings, get_settings
+from arborpress.core.i18n import cli_gettext as __
 
 if TYPE_CHECKING:
     from cryptography.fernet import Fernet
@@ -90,14 +91,14 @@ def init(
 
     Sample content is inserted by default (use --no-seed to disable).
     """
-    typer.echo("Creating DB schema …")
+    typer.echo(__("Creating DB schema …"))
     asyncio.run(_db_create_all())
     if seed:
-        typer.echo("Inserting sample content …")
+        typer.echo(__("Inserting sample content …"))
         asyncio.run(_seed(force=force))
-    typer.echo("\n✓ ArborPress initialised.")
-    typer.echo("  Next step: arborpress user add")
-    typer.echo("  Server starten:   arborpress serve --dev")
+    typer.echo("\n" + __("✓ ArborPress initialised."))
+    typer.echo("  " + __("Next step: arborpress user add"))
+    typer.echo("  " + __("Start server: arborpress serve --dev"))
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +126,7 @@ def serve(
 
     from arborpress.web.app import create_app
     quart_app = create_app()
-    typer.echo(f"Starting ArborPress on {hcfg.bind[0]}")
+    typer.echo(__("Starting ArborPress on {bind}").format(bind=hcfg.bind[0]))
     asyncio.run(hypercorn.asyncio.serve(quart_app, hcfg))  # type: ignore[arg-type]
 
 
@@ -145,11 +146,11 @@ def healthcheck() -> None:
         engine = get_engine()
         try:
             caps = await detect_capabilities(engine)
-            typer.echo(f"DB: {caps.engine_name} {caps.version_string}")
-            typer.echo(f"FTS: {caps.fts_provider}")
-            typer.echo("Status: OK")
+            typer.echo(__("DB: {engine} {version}").format(engine=caps.engine_name, version=caps.version_string))
+            typer.echo(__("FTS: {provider}").format(provider=caps.fts_provider))
+            typer.echo(__("Status: OK"))
         except Exception as exc:
-            typer.echo(f"DB error: {exc}", err=True)
+            typer.echo(__("DB error: {exc}").format(exc=exc), err=True)
             raise typer.Exit(1) from exc
 
     asyncio.run(_check())
@@ -164,9 +165,9 @@ def healthcheck() -> None:
 def db_migrate() -> None:
     """Creates / updates the database schema (§14 migrate)."""
     import arborpress.models  # noqa: F401 – register models
-    typer.echo("Creating tables …")
+    typer.echo(__("Creating tables …"))
     asyncio.run(_db_create_all())
-    typer.echo("Done.")
+    typer.echo(__("Done."))
 
 
 @db_app.command("seed")
@@ -174,12 +175,12 @@ def db_seed(
     force: bool = typer.Option(False, "--force", help="Overwrite existing seed data"),
 ) -> None:
     """Inserts sample content, imprint and privacy policy (§14)."""
-    typer.echo("Inserting seed data …")
+    typer.echo(__("Inserting seed data …"))
     result = asyncio.run(_seed(force=force))
-    typer.echo(f"  Posts inserted:  {result.get('posts', 0)}")
-    typer.echo(f"  Pages inserted:  {result.get('pages', 0)}")
-    typer.echo(f"  Tags inserted:   {result.get('tags', 0)}")
-    typer.echo("Done.")
+    typer.echo("  " + __("Posts inserted:  {n}").format(n=result.get('posts', 0)))
+    typer.echo("  " + __("Pages inserted:  {n}").format(n=result.get('pages', 0)))
+    typer.echo("  " + __("Tags inserted:   {n}").format(n=result.get('tags', 0)))
+    typer.echo(__("Done."))
 
 
 @db_app.command("capabilities")
@@ -217,7 +218,7 @@ def user_add(
     try:
         role_enum = UserRole(role)
     except ValueError:
-        typer.echo(f"Invalid role: {role}. Allowed: {[r.value for r in UserRole]}", err=True)
+        typer.echo(__("Invalid role: {role}. Allowed: {allowed}").format(role=role, allowed=[r.value for r in UserRole]), err=True)
         raise typer.Exit(1) from None
 
     account_type = AccountType.OPERATIONAL if operational else AccountType.PUBLIC
@@ -234,9 +235,9 @@ def user_add(
             )
             db.add(user)
             await db.commit()
-            typer.echo(f"User created: {username!r} [{account_type.value}/{role_enum.value}]")
-            typer.echo(f"  ID: {user.id}")
-            typer.echo("  Next step: arborpress user mfa add" + " " + username)
+            typer.echo(__("User created: {username!r} [{type}/{role}]").format(username=username, type=account_type.value, role=role_enum.value))
+            typer.echo("  " + __("ID: {id}").format(id=user.id))
+            typer.echo("  " + __("Next step: arborpress user mfa add {username}").format(username=username))
 
     asyncio.run(_create())
 
@@ -248,7 +249,7 @@ def user_disable(
 ) -> None:
     """Disables a user (§14 user management)."""
     if not yes:
-        confirmed = typer.confirm(f"Really disable user {username!r}?")
+        confirmed = typer.confirm(__("Really disable user {username!r}?").format(username=username))
         if not confirmed:
             raise typer.Exit(0)
 
@@ -261,12 +262,12 @@ def user_disable(
             result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
             if not user:
-                typer.echo(f"User {username!r} not found.", err=True)
+                typer.echo(__("User {username!r} not found.").format(username=username), err=True)
                 raise typer.Exit(1)
             user.is_active = False
             db.add(user)
             await db.commit()
-            typer.echo(f"User {username!r} disabled.")
+            typer.echo(__("User {username!r} disabled.").format(username=username))
 
     asyncio.run(_disable())
 
@@ -296,9 +297,9 @@ def user_unlock(
             db.add(user)
             await db.commit()
             if was_locked:
-                typer.echo(f"User {username!r} unlocked (lock removed, failed_login_count reset).")
+                typer.echo(__("User {username!r} unlocked (lock removed, failed_login_count reset).").format(username=username))
             else:
-                typer.echo(f"User {username!r}: no active lock, failed_login_count reset to 0.")
+                typer.echo(__("User {username!r}: no active lock, failed_login_count reset to 0.").format(username=username))
 
     asyncio.run(_unlock())
 
@@ -331,13 +332,13 @@ def user_roles(
             result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
             if not user:
-                typer.echo(f"User {username!r} not found.", err=True)
+                typer.echo(__("User {username!r} not found.").format(username=username), err=True)
                 raise typer.Exit(1)
             old_role = user.role.value
             user.role = role_enum
             db.add(user)
             await db.commit()
-            typer.echo(f"Role: {old_role} → {role_enum.value} for {username!r}")
+            typer.echo(__("Role: {old} → {new} for {username!r}").format(old=old_role, new=role_enum.value, username=username))
 
     asyncio.run(_set_role())
 
@@ -359,9 +360,13 @@ def user_list(
             result = await db.execute(stmt)
             users = result.scalars().all()
             if not users:
-                typer.echo("No users found.")
+                typer.echo(__("No users found."))
                 return
-            typer.echo(f"{'Username':<20} {'Role':<14} {'Type':<14} {'Active':<6} {'Email'}")
+            header = (
+                f"{__('Username'):<20} {__('Role'):<14} "
+                f"{__('Type'):<14} {__('Active'):<6} {__('Email')}"
+            )
+            typer.echo(header)
             typer.echo("-" * 80)
             for u in users:
                 pw_warn = " ⚠ PW active" if u.legacy_password_enabled else ""
@@ -374,10 +379,10 @@ def user_list(
 
 
 def _prompt_password_twice() -> str:
-    first = typer.prompt("New break-glass password", hide_input=True)
-    second = typer.prompt("Confirm break-glass password", hide_input=True)
+    first = typer.prompt(__("New break-glass password"), hide_input=True)
+    second = typer.prompt(__("Confirm break-glass password"), hide_input=True)
     if first != second:
-        typer.echo("Passwords do not match.", err=True)
+        typer.echo(__("Passwords do not match."), err=True)
         raise typer.Exit(2)
     return first
 
@@ -400,14 +405,14 @@ def _build_breakglass_password(
 
 
 def _print_password_assessment(assessment) -> None:
-    typer.echo(f"zxcvbn score:            {assessment.score}/4")
+    typer.echo(__("zxcvbn score:            {score}/4").format(score=assessment.score))
     if assessment.warning:
-        typer.echo(f"Warning:                 {assessment.warning}")
+        typer.echo(__("Warning:                 {warning}").format(warning=assessment.warning))
     if assessment.suggestions:
-        typer.echo(f"Suggestions:             {' | '.join(assessment.suggestions)}")
+        typer.echo(__("Suggestions:             {suggestions}").format(suggestions=' | '.join(assessment.suggestions)))
     offline = assessment.crack_times_display.get("offline_slow_hashing_1e4_per_second")
     if offline:
-        typer.echo(f"Crack time (offline):    {offline}")
+        typer.echo(__("Crack time (offline):    {time}").format(time=offline))
 
 
 @user_app.command("password-status")
@@ -458,7 +463,7 @@ def user_password_set(
     """Sets or changes the break-glass password of an account."""
     cfg = get_settings()
     if password and generate:
-        typer.echo("Use either --password or --generate, not both.", err=True)
+        typer.echo(__("Use either --password or --generate, not both."), err=True)
         raise typer.Exit(2)
     if generate:
         password = _build_breakglass_password(
@@ -481,7 +486,7 @@ def user_password_set(
             user_inputs=[username, "arborpress", "admin"],
         )
     except ValueError as exc:
-        typer.echo(f"Invalid break-glass password: {exc}", err=True)
+        typer.echo(__("Invalid break-glass password: {exc}").format(exc=exc), err=True)
         raise typer.Exit(2) from exc
 
     async def _set_pw() -> None:
@@ -501,10 +506,10 @@ def user_password_set(
             user.legacy_password_enabled = True
             db.add(user)
             await db.commit()
-            typer.echo(f"Password for {username!r} set and activated.")
+            typer.echo(__("Password for {username!r} set and activated.").format(username=username))
             _print_password_assessment(assessment)
             if generate:
-                typer.echo(f"Generated password:      {password}")
+                typer.echo(__("Generated password:      {password}").format(password=password))
 
     asyncio.run(_set_pw())
 
@@ -538,7 +543,7 @@ def user_password_generate(
     if as_json:
         typer.echo(json.dumps({"password": password, "assessment": assessment.to_dict()}))
         return
-    typer.echo(f"Generated password:      {password}")
+    typer.echo(__("Generated password:      {password}").format(password=password))
     _print_password_assessment(assessment)
 
 

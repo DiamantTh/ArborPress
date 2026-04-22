@@ -1,0 +1,144 @@
+# ArborPress translations – nl-NL (Nederlands)
+# This file is distributed under the AGPL-3.0-or-later license.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: arborpress 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-22 00:00+0000\n"
+"PO-Revision-Date: 2026-04-22 00:00+0000\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: nl-NL\n"
+"Language-Team: nl-NL <>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Creating DB schema …"
+msgstr "Databaseschema wordt aangemaakt …"
+
+msgid "Inserting sample content …"
+msgstr "Voorbeeldinhoud wordt ingevoegd …"
+
+msgid "✓ ArborPress initialised."
+msgstr "✓ ArborPress geïnitialiseerd."
+
+msgid "Next step: arborpress user add"
+msgstr "Volgende stap: arborpress user add"
+
+msgid "Start server: arborpress serve --dev"
+msgstr "Server starten: arborpress serve --dev"
+
+msgid "Starting ArborPress on {bind}"
+msgstr "ArborPress wordt gestart op {bind}"
+
+msgid "Creating tables …"
+msgstr "Tabellen worden aangemaakt …"
+
+msgid "Done."
+msgstr "Klaar."
+
+msgid "Inserting seed data …"
+msgstr "Seedgegevens worden ingevoegd …"
+
+msgid "Posts inserted:  {n}"
+msgstr "Ingevoegde berichten:  {n}"
+
+msgid "Pages inserted:  {n}"
+msgstr "Ingevoegde pagina's:  {n}"
+
+msgid "Tags inserted:   {n}"
+msgstr "Ingevoegde tags:   {n}"
+
+msgid "DB: {engine} {version}"
+msgstr "DB: {engine} {version}"
+
+msgid "FTS: {provider}"
+msgstr "Volledige tekst zoeken: {provider}"
+
+msgid "Status: OK"
+msgstr "Status: OK"
+
+msgid "DB error: {exc}"
+msgstr "DB-fout: {exc}"
+
+msgid "Invalid role: {role}. Allowed: {allowed}"
+msgstr "Ongeldige rol: {role}. Toegestaan: {allowed}"
+
+msgid "User created: {username!r} [{type}/{role}]"
+msgstr "Gebruiker aangemaakt: {username!r} [{type}/{role}]"
+
+msgid "ID: {id}"
+msgstr "ID: {id}"
+
+msgid "Next step: arborpress user mfa add {username}"
+msgstr "Volgende stap: arborpress user mfa add {username}"
+
+msgid "Really disable user {username!r}?"
+msgstr "Gebruiker {username!r} echt uitschakelen?"
+
+msgid "User {username!r} not found."
+msgstr "Gebruiker {username!r} niet gevonden."
+
+msgid "User {username!r} disabled."
+msgstr "Gebruiker {username!r} uitgeschakeld."
+
+msgid "User {username!r} unlocked (lock removed, failed_login_count reset)."
+msgstr "Gebruiker {username!r} ontgrendeld (vergrendeling verwijderd, teller gereset)."
+
+msgid "User {username!r}: no active lock, failed_login_count reset to 0."
+msgstr "Gebruiker {username!r}: geen actieve vergrendeling, teller gereset naar 0."
+
+msgid "Role: {old} → {new} for {username!r}"
+msgstr "Rol: {old} → {new} voor {username!r}"
+
+msgid "No users found."
+msgstr "Geen gebruikers gevonden."
+
+msgid "Username"
+msgstr "Gebruikersnaam"
+
+msgid "Role"
+msgstr "Rol"
+
+msgid "Type"
+msgstr "Type"
+
+msgid "Active"
+msgstr "Actief"
+
+msgid "Email"
+msgstr "E-mail"
+
+msgid "New break-glass password"
+msgstr "Nieuw break-glass wachtwoord"
+
+msgid "Confirm break-glass password"
+msgstr "Break-glass wachtwoord bevestigen"
+
+msgid "Passwords do not match."
+msgstr "Wachtwoorden komen niet overeen."
+
+msgid "zxcvbn score:            {score}/4"
+msgstr "zxcvbn-score:            {score}/4"
+
+msgid "Warning:                 {warning}"
+msgstr "Waarschuwing:            {warning}"
+
+msgid "Suggestions:             {suggestions}"
+msgstr "Suggesties:              {suggestions}"
+
+msgid "Crack time (offline):    {time}"
+msgstr "Kraaktijd (offline):     {time}"
+
+msgid "Use either --password or --generate, not both."
+msgstr "Gebruik --password of --generate, niet beide."
+
+msgid "Invalid break-glass password: {exc}"
+msgstr "Ongeldig break-glass wachtwoord: {exc}"
+
+msgid "Password for {username!r} set and activated."
+msgstr "Wachtwoord voor {username!r} ingesteld en geactiveerd."
+
+msgid "Generated password:      {password}"
+msgstr "Gegenereerd wachtwoord:  {password}"

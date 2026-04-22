@@ -46,6 +46,8 @@ dependencies = [
     "idna>=3.10",
     # E-Mail-Validierung: RFC 5321/5322 + IDNA 2008 (Unicode-Domains, §10)
     "email-validator>=2.2",
+    # Internationalization / translations
+    "babel>=2.16",                # gettext runtime + pybabel CLI (§7)
     # Config & version parsing
     # tomllib ist seit Python 3.11 Bestandteil der Standardbibliothek.
     "pydantic>=2.10",

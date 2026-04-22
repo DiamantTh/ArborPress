@@ -1,0 +1,144 @@
+# ArborPress translations – fr-FR (Français)
+# This file is distributed under the AGPL-3.0-or-later license.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: arborpress 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-22 00:00+0000\n"
+"PO-Revision-Date: 2026-04-22 00:00+0000\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: fr-FR\n"
+"Language-Team: fr-FR <>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Creating DB schema …"
+msgstr "Création du schéma de base de données …"
+
+msgid "Inserting sample content …"
+msgstr "Insertion du contenu d’exemple …"
+
+msgid "✓ ArborPress initialised."
+msgstr "✓ ArborPress initialisé."
+
+msgid "Next step: arborpress user add"
+msgstr "Étape suivante : arborpress user add"
+
+msgid "Start server: arborpress serve --dev"
+msgstr "Démarrer le serveur : arborpress serve --dev"
+
+msgid "Starting ArborPress on {bind}"
+msgstr "Démarrage d’ArborPress sur {bind}"
+
+msgid "Creating tables …"
+msgstr "Création des tables …"
+
+msgid "Done."
+msgstr "Terminé."
+
+msgid "Inserting seed data …"
+msgstr "Insertion des données initiales …"
+
+msgid "Posts inserted:  {n}"
+msgstr "Articles insérés :  {n}"
+
+msgid "Pages inserted:  {n}"
+msgstr "Pages insérées :  {n}"
+
+msgid "Tags inserted:   {n}"
+msgstr "Tags insérés :   {n}"
+
+msgid "DB: {engine} {version}"
+msgstr "DB : {engine} {version}"
+
+msgid "FTS: {provider}"
+msgstr "Recherche plein texte : {provider}"
+
+msgid "Status: OK"
+msgstr "Statut : OK"
+
+msgid "DB error: {exc}"
+msgstr "Erreur DB : {exc}"
+
+msgid "Invalid role: {role}. Allowed: {allowed}"
+msgstr "Rôle invalide : {role}. Autorisé : {allowed}"
+
+msgid "User created: {username!r} [{type}/{role}]"
+msgstr "Utilisateur créé : {username!r} [{type}/{role}]"
+
+msgid "ID: {id}"
+msgstr "ID : {id}"
+
+msgid "Next step: arborpress user mfa add {username}"
+msgstr "Étape suivante : arborpress user mfa add {username}"
+
+msgid "Really disable user {username!r}?"
+msgstr "Vraiment désactiver l’utilisateur {username!r} ?"
+
+msgid "User {username!r} not found."
+msgstr "Utilisateur {username!r} introuvable."
+
+msgid "User {username!r} disabled."
+msgstr "Utilisateur {username!r} désactivé."
+
+msgid "User {username!r} unlocked (lock removed, failed_login_count reset)."
+msgstr "Utilisateur {username!r} déverrouillé (verrou supprimé, compteur réinitialisé)."
+
+msgid "User {username!r}: no active lock, failed_login_count reset to 0."
+msgstr "Utilisateur {username!r} : pas de verrou actif, compteur réinitialisé à 0."
+
+msgid "Role: {old} → {new} for {username!r}"
+msgstr "Rôle : {old} → {new} pour {username!r}"
+
+msgid "No users found."
+msgstr "Aucun utilisateur trouvé."
+
+msgid "Username"
+msgstr "Nom d’utilisateur"
+
+msgid "Role"
+msgstr "Rôle"
+
+msgid "Type"
+msgstr "Type"
+
+msgid "Active"
+msgstr "Actif"
+
+msgid "Email"
+msgstr "E-mail"
+
+msgid "New break-glass password"
+msgstr "Nouveau mot de passe break-glass"
+
+msgid "Confirm break-glass password"
+msgstr "Confirmer le mot de passe break-glass"
+
+msgid "Passwords do not match."
+msgstr "Les mots de passe ne correspondent pas."
+
+msgid "zxcvbn score:            {score}/4"
+msgstr "Score zxcvbn :            {score}/4"
+
+msgid "Warning:                 {warning}"
+msgstr "Avertissement :          {warning}"
+
+msgid "Suggestions:             {suggestions}"
+msgstr "Suggestions :            {suggestions}"
+
+msgid "Crack time (offline):    {time}"
+msgstr "Temps de crack (hors ligne) : {time}"
+
+msgid "Use either --password or --generate, not both."
+msgstr "Utilisez --password ou --generate, pas les deux."
+
+msgid "Invalid break-glass password: {exc}"
+msgstr "Mot de passe break-glass invalide : {exc}"
+
+msgid "Password for {username!r} set and activated."
+msgstr "Mot de passe pour {username!r} défini et activé."
+
+msgid "Generated password:      {password}"
+msgstr "Mot de passe généré :    {password}"

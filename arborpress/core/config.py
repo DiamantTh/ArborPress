@@ -120,7 +120,7 @@ class WebSettings(BaseSettings):
     base_url: str = "http://localhost:8066"
     trusted_proxies: int = 0
     admin_path: str = "/admin"
-    default_lang: str = "de"
+    default_lang: str = "de-DE"
     i18n_mode: Literal["single", "prefix"] = "single"
     # Media storage
     media_dir: Path = Path("media")

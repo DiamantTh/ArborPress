@@ -1,0 +1,144 @@
+# ArborPress translations – en-GB (English)
+# This file is distributed under the AGPL-3.0-or-later license.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: arborpress 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-22 00:00+0000\n"
+"PO-Revision-Date: 2026-04-22 00:00+0000\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: en-GB\n"
+"Language-Team: en-GB <>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Creating DB schema …"
+msgstr "Creating DB schema …"
+
+msgid "Inserting sample content …"
+msgstr "Inserting sample content …"
+
+msgid "✓ ArborPress initialised."
+msgstr "✓ ArborPress initialised."
+
+msgid "Next step: arborpress user add"
+msgstr "Next step: arborpress user add"
+
+msgid "Start server: arborpress serve --dev"
+msgstr "Start server: arborpress serve --dev"
+
+msgid "Starting ArborPress on {bind}"
+msgstr "Starting ArborPress on {bind}"
+
+msgid "Creating tables …"
+msgstr "Creating tables …"
+
+msgid "Done."
+msgstr "Done."
+
+msgid "Inserting seed data …"
+msgstr "Inserting seed data …"
+
+msgid "Posts inserted:  {n}"
+msgstr "Posts inserted:  {n}"
+
+msgid "Pages inserted:  {n}"
+msgstr "Pages inserted:  {n}"
+
+msgid "Tags inserted:   {n}"
+msgstr "Tags inserted:   {n}"
+
+msgid "DB: {engine} {version}"
+msgstr "DB: {engine} {version}"
+
+msgid "FTS: {provider}"
+msgstr "FTS: {provider}"
+
+msgid "Status: OK"
+msgstr "Status: OK"
+
+msgid "DB error: {exc}"
+msgstr "DB error: {exc}"
+
+msgid "Invalid role: {role}. Allowed: {allowed}"
+msgstr "Invalid role: {role}. Allowed: {allowed}"
+
+msgid "User created: {username!r} [{type}/{role}]"
+msgstr "User created: {username!r} [{type}/{role}]"
+
+msgid "ID: {id}"
+msgstr "ID: {id}"
+
+msgid "Next step: arborpress user mfa add {username}"
+msgstr "Next step: arborpress user mfa add {username}"
+
+msgid "Really disable user {username!r}?"
+msgstr "Really disable user {username!r}?"
+
+msgid "User {username!r} not found."
+msgstr "User {username!r} not found."
+
+msgid "User {username!r} disabled."
+msgstr "User {username!r} disabled."
+
+msgid "User {username!r} unlocked (lock removed, failed_login_count reset)."
+msgstr "User {username!r} unlocked (lock removed, failed_login_count reset)."
+
+msgid "User {username!r}: no active lock, failed_login_count reset to 0."
+msgstr "User {username!r}: no active lock, failed_login_count reset to 0."
+
+msgid "Role: {old} → {new} for {username!r}"
+msgstr "Role: {old} → {new} for {username!r}"
+
+msgid "No users found."
+msgstr "No users found."
+
+msgid "Username"
+msgstr "Username"
+
+msgid "Role"
+msgstr "Role"
+
+msgid "Type"
+msgstr "Type"
+
+msgid "Active"
+msgstr "Active"
+
+msgid "Email"
+msgstr "Email"
+
+msgid "New break-glass password"
+msgstr "New break-glass password"
+
+msgid "Confirm break-glass password"
+msgstr "Confirm break-glass password"
+
+msgid "Passwords do not match."
+msgstr "Passwords do not match."
+
+msgid "zxcvbn score:            {score}/4"
+msgstr "zxcvbn score:            {score}/4"
+
+msgid "Warning:                 {warning}"
+msgstr "Warning:                 {warning}"
+
+msgid "Suggestions:             {suggestions}"
+msgstr "Suggestions:             {suggestions}"
+
+msgid "Crack time (offline):    {time}"
+msgstr "Crack time (offline):    {time}"
+
+msgid "Use either --password or --generate, not both."
+msgstr "Use either --password or --generate, not both."
+
+msgid "Invalid break-glass password: {exc}"
+msgstr "Invalid break-glass password: {exc}"
+
+msgid "Password for {username!r} set and activated."
+msgstr "Password for {username!r} set and activated."
+
+msgid "Generated password:      {password}"
+msgstr "Generated password:      {password}"
