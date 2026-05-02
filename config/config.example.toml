@@ -55,36 +55,55 @@ echo      = false
 host            = "127.0.0.1"
 port            = 8066
 secret_key      = "AENDERN_IM_PRODUKTIVBETRIEB_langer_zufaelliger_string"
+# Public URL der Installation. WICHTIG: Hostname wird zur WebAuthn rp.id
+# (W3C WebAuthn Level 3 §5.3) – ein Wechsel des registrierbaren Domain-
+# Suffixes invalidiert ALLE bestehenden Passkeys. ArborPress sperrt einen
+# stillen Wechsel ueber rp_id_locked und verlangt eine Bestaetigung in
+# /admin/webauthn (oder per CLI: arborpress webauthn unlock-rp-id).
 base_url        = "https://blog.example.com"
 # Anzahl vertrauter Reverse-Proxy-Hops (0 = kein Proxy)
 trusted_proxies = 1
-# Pfad des Admin-Bereichs – konfigurierbar für Security-by-Obscurity
+# Pfad des Admin-Bereichs – konfigurierbar fuer Security-by-Obscurity
 admin_path      = "/admin"
 
 # ---------------------------------------------------------------------------
-# Authentifizierung
+# Authentifizierung – Infrastruktur
 # ---------------------------------------------------------------------------
+# Wichtig: Die Passwort- und HIBP-Policy wird zur Laufzeit aus der DB
+# (site_settings, Section "security") gelesen und ueber /admin/security
+# gepflegt. Die Werte hier dienen nur als Bootstrap-Defaults beim ersten
+# Start oder fuer CLI-Aktionen ohne DB.
+# WebAuthn-Policy (UV/RK/Attestation/Algorithmen/Timeout/RP-ID-Lock)
+# liegt komplett in site_settings (Section "webauthn", /admin/webauthn).
 [auth]
 # Benutzerverifikation (UV) global erzwingen
 require_uv              = true
-# Break-Glass Passwort-Login aktivieren (standardmäßig aus)
+# Break-Glass Passwort-Login aktivieren (standardmaessig aus)
 legacy_password_enabled = false
-# Mindestlänge für neue/aktualisierte Break-Glass Passwörter.
-# Empfehlung: 16 für normale Admin-Setups, 32 für besonders strikte Umgebungen.
+# Bootstrap-Defaults fuer die Passwort-Policy (DB ueberschreibt):
+# Mindestlaenge fuer neue/aktualisierte Break-Glass Passwoerter.
+# Empfehlung: 16 fuer normale Admin-Setups, 32 fuer strikte Umgebungen.
 legacy_password_min_length = 16
-# Obergrenze für Break-Glass Passwörter. Hoch genug für Passphrasen,
+# Obergrenze fuer Break-Glass Passwoerter. Hoch genug fuer Passphrasen,
 # aber begrenzt, um Fehlbedienungen und Extremwerte zu vermeiden.
 legacy_password_max_length = 128
-# Mindestqualität via zxcvbn (0-4). Empfehlung: 3.
+# Mindestqualitaet via zxcvbn (0-4). Empfehlung: 3.
 legacy_password_min_score = 3
+# HIBP k-Anonymity-Pruefung (Have I Been Pwned, https://haveibeenpwned.com/API/v3#PwnedPasswords)
+# Sendet nur die ersten 5 SHA-1-Hex-Zeichen, kein Klartext, keine Auth.
+# Bootstrap-Defaults; DB-Werte gelten zur Laufzeit.
+hibp_enabled    = false   # erst mit Opt-in aktiv (Datenschutz / DSGVO-Pruefung)
+hibp_timeout    = 3.0     # Sekunden
+hibp_fail_open  = true    # bei API-Ausfall Passwort akzeptieren statt blockieren
+hibp_max_count  = 0       # 0 = jeder Treffer ist ein Treffer; >0 = Toleranzschwelle
 # Step-up-Session TTL in Sekunden
 stepup_ttl              = 900
 # Admin-Session TTL in Sekunden
 admin_session_ttl       = 3600
-# Rate-Limit für Auth-Endpunkte
+# Rate-Limit fuer Auth-Endpunkte
 auth_rate_limit         = "10/minute"
-# Dedizierter Key-Encryption-Key für ActivityPub Actor-Keypairs.
-# Getrennt von secret_key – erlaubt session-Key-Rotation ohne Verlust der AP-Schlüssel.
+# Dedizierter Key-Encryption-Key fuer ActivityPub Actor-Keypairs.
+# Getrennt von secret_key – erlaubt session-Key-Rotation ohne Verlust der AP-Schluessel.
 # Erstmalig generieren mit: arborpress federation kek-init
 # Dann den ausgegebenen Wert hier eintragen:
 # actor_key_enc_key = "<base64url-32-byte-wert>"
