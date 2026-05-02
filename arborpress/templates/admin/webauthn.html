@@ -1,0 +1,206 @@
+{% extends "admin/_base.html" %}
+{% block title %}WebAuthn / Passkeys – ArborPress Admin{% endblock %}
+{% block admin_content %}
+<h2>WebAuthn &amp; Passkey-Einstellungen</h2>
+
+{% if saved %}
+<div class="alert alert-success">Einstellungen gespeichert.</div>
+{% endif %}
+{% if error %}
+<div class="alert alert-danger"><strong>Speichern abgelehnt:</strong> {{ error }}</div>
+{% endif %}
+{% if rp_id_blocked %}
+<div class="alert alert-danger">
+  <strong>RP-ID geändert – Passkey-Anmeldung gesperrt.</strong><br>
+  Aktuell aufgelöst: <code>{{ resolved_rp_id }}</code><br>
+  Eingetragen / gesperrt: <code>{{ wa.rp_id_last_known }}</code><br>
+  Betroffen wären <strong>{{ credential_count }}</strong> bestehende Passkey(s)
+  (W3C WebAuthn L3 §5.3 – Credentials sind an die rp.id der Registrierung
+  gebunden und verlieren bei jeder Domain-Änderung ihre Gültigkeit).
+  Siehe „Gefahrenbereich" weiter unten.
+</div>
+{% endif %}
+
+{% if not stepup_active %}
+<div class="alert alert-warning">
+  <strong>Step-up-Authentifizierung erforderlich.</strong>
+  Bitte bestätigen Sie Ihre Identität, bevor Sie Änderungen vornehmen.
+</div>
+{% endif %}
+
+<section class="admin-form">
+  <h3>Relying Party (read-only, abgeleitet)</h3>
+  <p><small>
+    <code>rp.id</code> und <code>origin</code> werden aus
+    <code>[web].base_url</code> (config.toml) abgeleitet,
+    <code>rp.name</code> aus dem Site-Titel der allgemeinen Einstellungen.
+    Quelle: W3C WebAuthn Level 3 §5.3 (RP ID) und §7.1 Step 9 (origin
+    exact match).
+  </small></p>
+  <dl>
+    <dt>rp.id</dt>     <dd><code>{{ resolved_rp_id }}</code></dd>
+    <dt>rp.name</dt>   <dd><code>{{ resolved_rp_name }}</code></dd>
+    <dt>origin</dt>    <dd><code>{{ resolved_origin }}</code></dd>
+    <dt>RP-ID-Lock</dt><dd>{{ "aktiv" if wa.rp_id_locked else "AUS" }}
+                          (eingetragen: <code>{{ wa.rp_id_last_known or "—" }}</code>)</dd>
+    <dt>Aktive Passkeys</dt><dd>{{ credential_count }}</dd>
+  </dl>
+</section>
+
+<form method="POST" action="{{ url_for('admin.webauthn_update') }}" class="admin-form"
+      id="webauthn-form" {% if not stepup_active %}inert{% endif %}>
+
+  <fieldset>
+    <legend>Authenticator-Auswahl</legend>
+    <p><small>Defaults entsprechen W3C WebAuthn Level 3 §5.4 + den Empfehlungen
+      des W3C/FIDO-Leitfadens auf <a href="https://passkeys.dev">passkeys.dev</a>.</small></p>
+
+    <label>
+      User Verification
+      <select name="user_verification">
+        {% for v in ["required", "preferred", "discouraged"] %}
+          <option value="{{ v }}" {% if wa.user_verification == v %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+      <small>W3C §5.4.6 (UserVerificationRequirement). IDL-Default und
+        Empfehlung: <code>preferred</code>.</small>
+    </label>
+
+    <label>
+      Resident Key
+      <select name="resident_key">
+        {% for v in ["required", "preferred", "discouraged"] %}
+          <option value="{{ v }}" {% if wa.resident_key == v %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+      <small>W3C §5.4.7 (ResidentKeyRequirement). <code>preferred</code>
+        ermöglicht Passkeys ohne legacy security keys auszuschließen.</small>
+    </label>
+
+    <label>
+      Attestation
+      <select name="attestation">
+        {% for v in ["none", "indirect", "direct", "enterprise"] %}
+          <option value="{{ v }}" {% if wa.attestation == v %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+      <small>W3C §5.4 (AttestationConveyancePreference). IDL-Default
+        <code>none</code>; <code>direct</code>/<code>enterprise</code> löst
+        zusätzlichen Plattform-Consent-Dialog aus und sollte nur bei
+        regulierten Umgebungen aktiviert werden.</small>
+    </label>
+
+    <label>
+      Authenticator Attachment
+      <select name="authenticator_attachment">
+        <option value=""               {% if not wa.authenticator_attachment %}selected{% endif %}>—  (beliebig)</option>
+        <option value="platform"       {% if wa.authenticator_attachment == "platform" %}selected{% endif %}>platform</option>
+        <option value="cross-platform" {% if wa.authenticator_attachment == "cross-platform" %}selected{% endif %}>cross-platform</option>
+      </select>
+      <small>W3C §5.4.5. Leer lassen = Browser darf wählen (empfohlen).</small>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Krypto-Algorithmen (COSE-Identifiers)</legend>
+    <p><small>W3C §5.4 + IANA COSE-Registry (RFC 9053). WebAuthn-Clients
+      MÜSSEN <code>-7</code> (ES256) und <code>-257</code> (RS256) unterstützen.</small></p>
+    {% set selected_algs = wa.algorithms %}
+    <label><input type="checkbox" name="alg_-7"   value="1" {% if -7   in selected_algs %}checked{% endif %}>  -7   (ES256, ECDSA P-256, empfohlen)</label>
+    <label><input type="checkbox" name="alg_-257" value="1" {% if -257 in selected_algs %}checked{% endif %}>  -257 (RS256, RSA, empfohlen)</label>
+    <label><input type="checkbox" name="alg_-8"   value="1" {% if -8   in selected_algs %}checked{% endif %}>  -8   (EdDSA / Ed25519, optional)</label>
+    <label><input type="checkbox" name="alg_-35"  value="1" {% if -35  in selected_algs %}checked{% endif %}>  -35  (ES384)</label>
+    <label><input type="checkbox" name="alg_-36"  value="1" {% if -36  in selected_algs %}checked{% endif %}>  -36  (ES512)</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Timeouts und Challenges</legend>
+    <label>
+      Timeout (ms)
+      <input type="number" name="timeout_ms" min="30000" max="600000" step="1000"
+             value="{{ wa.timeout_ms }}">
+      <small>W3C §5.4 / §5.5 RECOMMENDED 30 000–600 000 ms.</small>
+    </label>
+    <label>
+      Challenge-Lebensdauer (Sekunden)
+      <input type="number" name="challenge_ttl_seconds" min="60" max="900"
+             value="{{ wa.challenge_ttl_seconds }}">
+      <small>W3C §13.4.3: Challenges müssen frisch und einmalig sein.</small>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>UX &amp; Verhalten</legend>
+    <label>
+      <input type="checkbox" name="conditional_ui_enabled" value="1"
+             {% if wa.conditional_ui_enabled %}checked{% endif %}>
+      Conditional UI / Autofill aktivieren
+      <small>W3C §5.5 mediation:"conditional" – Standard-Bootstrap-Pattern.</small>
+    </label>
+    <label>
+      <input type="checkbox" name="signal_api_enabled" value="1"
+             {% if wa.signal_api_enabled %}checked{% endif %}>
+      Signal API aktivieren
+      <small>W3C §5.1.7+ (signalUnknownCredential etc.).</small>
+    </label>
+    <label>
+      <input type="checkbox" name="require_2fa_after_passkey" value="1"
+             {% if wa.require_2fa_after_passkey %}checked{% endif %}>
+      Nach Passkey-Login zusätzlichen Faktor verlangen
+      <small>Nicht empfohlen – Passkeys sind selbst phishingresistente MFA
+        (W3C §1.2; FIDO Alliance Guidance).</small>
+    </label>
+    <label>
+      <input type="checkbox" name="counter_strict" value="1"
+             {% if wa.counter_strict %}checked{% endif %}>
+      Sign-Counter strikt erzwingen
+      <small>W3C §6.1.1: Counter ist OPTIONAL. Synced Passkeys liefern oft 0 –
+        strikte Prüfung führt zu False Positives.</small>
+    </label>
+  </fieldset>
+
+  <button type="submit" class="btn btn-primary">Speichern</button>
+</form>
+
+<hr>
+
+<section class="admin-form">
+  <h3 style="color: var(--danger, #b00020);">Gefahrenbereich – RP-ID-Lock</h3>
+  <p><small>
+    Per W3C WebAuthn Level 3 §5.3 ist jede Credential-ID kryptografisch an die
+    <code>rp.id</code> der Registrierung gebunden. Wird die Domain (oder die
+    Subdomain-Ebene der <code>rp.id</code>) gewechselt, sind <strong>alle
+    bestehenden Passkeys ungültig</strong> – die Nutzer:innen können sich nicht
+    mehr per WebAuthn anmelden und müssen über den Break-Glass-Passwort-Pfad
+    rein.
+  </small></p>
+
+  {% if wa.rp_id_locked %}
+    <p>Status: <strong>gesperrt</strong> – aktuelle <code>rp.id</code>
+       (<code>{{ resolved_rp_id }}</code>) wird gegen den eingefrorenen Wert
+       geprüft.</p>
+    {% if rp_id_blocked %}
+    <form method="POST" action="{{ url_for('admin.webauthn_unlock_rp_id') }}" class="admin-form">
+      <p><strong>Bestätigung erforderlich.</strong> Gib zur Bestätigung die
+         neue <code>rp.id</code> ein:</p>
+      <label>
+        Neue rp.id
+        <input type="text" name="confirm_rp_id" value="" placeholder="{{ resolved_rp_id }}">
+      </label>
+      <p><small>Mit dem Bestätigen wird der eingefrorene Wert auf
+        <code>{{ resolved_rp_id }}</code> gesetzt. Bestehende Passkeys
+        ({{ credential_count }}) bleiben in der DB, sind aber kryptografisch
+        wertlos und sollten anschließend manuell entfernt werden.</small></p>
+      <button type="submit" class="btn btn-danger">RP-ID-Wechsel bestätigen</button>
+    </form>
+    {% endif %}
+  {% else %}
+    <p>Status: <strong>entsperrt</strong> – jede Domain-Änderung wird beim
+       nächsten WebAuthn-Aufruf automatisch übernommen. Empfehlung: nach
+       Migration sofort wieder sperren.</p>
+    <form method="POST" action="{{ url_for('admin.webauthn_relock_rp_id') }}">
+      <button type="submit" class="btn btn-primary">RP-ID wieder sperren</button>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

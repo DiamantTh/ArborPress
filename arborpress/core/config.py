@@ -140,6 +140,14 @@ class AuthSettings(BaseSettings):
     legacy_password_min_length: int = Field(default=16, ge=8, le=256)
     legacy_password_max_length: int = Field(default=128, ge=16, le=1024)
     legacy_password_min_score: int = Field(default=3, ge=0, le=4)
+    # Have I Been Pwned (k-Anonymity) – optional breach lookup for
+    # *manually entered* passwords. Generated passwords skip this check
+    # since EFF/Diceware and 24-char random strings are statistically
+    # absent from breach corpora and the round-trip is wasted effort.
+    hibp_enabled: bool = False
+    hibp_timeout: float = Field(default=3.0, ge=0.5, le=30.0)
+    hibp_fail_open: bool = True
+    hibp_max_count: int = Field(default=0, ge=0)
     stepup_ttl: int = 900
     admin_session_ttl: int = 3600
     auth_rate_limit: str = "10/minute"

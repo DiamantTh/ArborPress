@@ -171,6 +171,96 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "show_banner":    True,    # show info banner at the top
         "allow_all_themes": True,  # show all themes (including dark-only)
     },
+    # ---------------------------------------------------------------------
+    # security – Break-Glass password policy + HIBP (Have I Been Pwned)
+    # Mirrors the old [auth] entries in config.toml so operators can manage
+    # them via the admin UI instead of editing files. The TOML values are
+    # used only as bootstrap defaults if the DB row is missing.
+    # ---------------------------------------------------------------------
+    "security": {
+        # Break-Glass policy
+        "legacy_password_min_length": 16,
+        "legacy_password_max_length": 128,
+        "legacy_password_min_score":  3,    # zxcvbn 0–4
+        # HIBP k-Anonymity check
+        "hibp_enabled":   False,
+        "hibp_max_count": 0,    # 0 = reject any breach hit
+        "hibp_timeout":   3.0,  # seconds
+        "hibp_fail_open": True, # do not block on network errors
+    },
+    # ---------------------------------------------------------------------
+    # webauthn – Passkey / FIDO2 policy.
+    #
+    # Default values follow the W3C Web Authentication Level 3 specification
+    # and the joint W3C/FIDO Alliance "passkeys.dev" guidance:
+    #
+    #   user_verification  = "preferred"
+    #     W3C WebAuthn L3 §5.4.6 (UserVerificationRequirement) – "preferred"
+    #     is the IDL default; passkeys.dev "A note about user verification"
+    #     warns that "required" causes painful UX on desktops without
+    #     biometric sensors. Source: https://passkeys.dev/docs/use-cases/bootstrapping/
+    #   resident_key       = "preferred"
+    #     W3C WebAuthn L3 §5.4.7 (ResidentKeyRequirement). "preferred"
+    #     enables discoverable credentials (passkeys) when the authenticator
+    #     supports them, without forcing failure on legacy security keys.
+    #   attestation        = "none"
+    #     W3C WebAuthn L3 §5.4 (AttestationConveyancePreference) – "none"
+    #     is the IDL default. passkeys.dev: "We recommend that most relying
+    #     parties not specify the attestation conveyance parameter (thus
+    #     defaulting to none)" for streamlined UX.
+    #   algorithms         = [-7, -257]
+    #     COSE algorithm identifiers ES256 and RS256, the only algorithms
+    #     all WebAuthn Level 2/3 clients MUST support (W3C WebAuthn L3 §5.4
+    #     and IANA COSE registry, RFC 9053). Ed25519 (-8) is opt-in because
+    #     of historical Firefox/Node interop issues (SimpleWebAuthn docs).
+    #   timeout_ms         = 60000
+    #     W3C WebAuthn L3 §5.4 / §5.5 RECOMMENDED range for both
+    #     PublicKeyCredentialCreationOptions and …RequestOptions is
+    #     30 000 – 600 000 ms; 60 000 is the widely adopted middle ground
+    #     (Yubico Developer Guide, MDN).
+    #   challenge_ttl_seconds = 300
+    #     W3C WebAuthn L3 §13.4.3 requires fresh, single-use challenges;
+    #     OWASP Authentication Cheat Sheet recommends short TTLs.
+    #   conditional_ui_enabled = True
+    #     W3C WebAuthn L3 §5.5 (mediation: "conditional") – the documented
+    #     bootstrapping pattern for autofill UI.
+    #   signal_api_enabled = True
+    #     W3C WebAuthn L3 §5.1.7+ Signal methods
+    #     (PublicKeyCredential.signalUnknownCredential etc.) keep
+    #     credential providers in sync with the RP's database.
+    #   require_2fa_after_passkey = False
+    #     A successful passkey assertion already provides phishing-resistant
+    #     multi-factor authentication (W3C WebAuthn L3 §1.2). Demanding an
+    #     additional factor on top is explicitly discouraged by web.dev /
+    #     FIDO Alliance passkey UX guidance.
+    #   counter_strict     = False
+    #     W3C WebAuthn L3 §6.1.1 ("Signature Counter") states the counter
+    #     is OPTIONAL for authenticators and many synced passkeys always
+    #     return 0. Strict enforcement causes false positives, so we log
+    #     anomalies but do not block by default (SimpleWebAuthn note).
+    #
+    # rp.id, rp.name and origin are NOT stored here – they are derived
+    # from [web].base_url and the general/site_title setting via the
+    # resolver in arborpress.auth.webauthn. Changing the deployment domain
+    # invalidates every existing passkey (W3C WebAuthn L3 §5.3 RP ID), so
+    # the change must pass through the rp_id_locked guard below.
+    # ---------------------------------------------------------------------
+    "webauthn": {
+        "user_verification":         "preferred",
+        "resident_key":              "preferred",
+        "attestation":               "none",
+        "authenticator_attachment":  "",       # "" | "platform" | "cross-platform"
+        "algorithms":                [-7, -257],
+        "timeout_ms":                60_000,
+        "challenge_ttl_seconds":     300,
+        "conditional_ui_enabled":    True,
+        "signal_api_enabled":        True,
+        "require_2fa_after_passkey": False,
+        "counter_strict":            False,
+        # Domain-change guard
+        "rp_id_locked":              True,
+        "rp_id_last_known":          "",       # empty until first successful resolve
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -271,3 +361,214 @@ async def save_section(
     except Exception as exc:
         log.error("SiteSettings.save_section(%r) error: %s", section, exc)
         raise
+
+
+# ---------------------------------------------------------------------------
+# Security section helper
+# ---------------------------------------------------------------------------
+
+# Whitelist of fields the admin UI may set; protects against arbitrary keys.
+_SECURITY_FIELDS: dict[str, type] = {
+    "legacy_password_min_length": int,
+    "legacy_password_max_length": int,
+    "legacy_password_min_score":  int,
+    "hibp_enabled":   bool,
+    "hibp_max_count": int,
+    "hibp_timeout":   float,
+    "hibp_fail_open": bool,
+}
+
+_SECURITY_BOUNDS: dict[str, tuple[float, float]] = {
+    "legacy_password_min_length": (8, 256),
+    "legacy_password_max_length": (16, 1024),
+    "legacy_password_min_score":  (0, 4),
+    "hibp_max_count": (0, 10_000_000),
+    "hibp_timeout":   (0.5, 30.0),
+}
+
+
+async def get_security_settings(db: Any) -> dict[str, Any]:
+    """Return the merged security settings, using config.toml as bootstrap.
+
+    Order of precedence: DB > [auth] in config.toml > built-in defaults.
+    The result always carries the full set of keys defined in _SECURITY_FIELDS.
+    """
+    from arborpress.core.config import get_settings
+
+    cfg = get_settings()
+    bootstrap = {
+        "legacy_password_min_length": cfg.auth.legacy_password_min_length,
+        "legacy_password_max_length": cfg.auth.legacy_password_max_length,
+        "legacy_password_min_score":  cfg.auth.legacy_password_min_score,
+        "hibp_enabled":   cfg.auth.hibp_enabled,
+        "hibp_max_count": cfg.auth.hibp_max_count,
+        "hibp_timeout":   cfg.auth.hibp_timeout,
+        "hibp_fail_open": cfg.auth.hibp_fail_open,
+    }
+
+    db_values = await get_section("security", db)
+    # Drop unknown keys from cache/DB so the caller never sees stale fields.
+    merged = bootstrap.copy()
+    for key, value in db_values.items():
+        if key in _SECURITY_FIELDS:
+            merged[key] = value
+    return merged
+
+
+def coerce_security_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate and coerce an admin-form payload to the security schema.
+
+    Raises ``ValueError`` on invalid input. Unknown keys are dropped silently.
+    """
+    cleaned: dict[str, Any] = {}
+    for key, expected_type in _SECURITY_FIELDS.items():
+        if key not in payload:
+            continue
+        raw = payload[key]
+        try:
+            if expected_type is bool:
+                if isinstance(raw, str):
+                    value: Any = raw.strip().lower() in {"1", "true", "on", "yes"}
+                else:
+                    value = bool(raw)
+            elif expected_type is int:
+                value = int(raw)
+            elif expected_type is float:
+                value = float(raw)
+            else:
+                value = raw
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid value for {key!r}: {raw!r}") from exc
+
+        if key in _SECURITY_BOUNDS:
+            lo, hi = _SECURITY_BOUNDS[key]
+            if value < lo or value > hi:
+                raise ValueError(
+                    f"{key!r} must be between {lo} and {hi} (got {value})"
+                )
+        cleaned[key] = value
+
+    # Cross-field invariant
+    if (
+        "legacy_password_min_length" in cleaned
+        and "legacy_password_max_length" in cleaned
+        and cleaned["legacy_password_max_length"] < cleaned["legacy_password_min_length"]
+    ):
+        raise ValueError(
+            "legacy_password_max_length must be greater than or equal to "
+            "legacy_password_min_length"
+        )
+    return cleaned
+
+
+# ---------------------------------------------------------------------------
+# WebAuthn section helper
+#
+# Whitelist + value bounds for the admin UI.  Sources for the allowed
+# values are the W3C Web Authentication Level 3 spec and IANA COSE
+# registry (RFC 9053):
+#   user_verification         §5.4.6 UserVerificationRequirement
+#   resident_key              §5.4.7 ResidentKeyRequirement
+#   attestation               §5.4   AttestationConveyancePreference
+#   authenticator_attachment  §5.4.5 AuthenticatorAttachment
+#   algorithms                §5.4   pubKeyCredParams + IANA COSE
+#   timeout_ms                §5.4 / §5.5 RECOMMENDED 30 000–600 000 ms
+# ---------------------------------------------------------------------------
+
+_WEBAUTHN_FIELDS: dict[str, type] = {
+    "user_verification":         str,
+    "resident_key":              str,
+    "attestation":               str,
+    "authenticator_attachment":  str,
+    "algorithms":                list,
+    "timeout_ms":                int,
+    "challenge_ttl_seconds":     int,
+    "conditional_ui_enabled":    bool,
+    "signal_api_enabled":        bool,
+    "require_2fa_after_passkey": bool,
+    "counter_strict":            bool,
+    "rp_id_locked":              bool,
+    "rp_id_last_known":          str,
+}
+
+_WEBAUTHN_ENUMS: dict[str, set[str]] = {
+    # W3C WebAuthn L3 §5.4.6
+    "user_verification":        {"required", "preferred", "discouraged"},
+    # W3C WebAuthn L3 §5.4.7
+    "resident_key":             {"required", "preferred", "discouraged"},
+    # W3C WebAuthn L3 §5.4
+    "attestation":              {"none", "indirect", "direct", "enterprise"},
+    # W3C WebAuthn L3 §5.4.5 ("" = unset)
+    "authenticator_attachment": {"", "platform", "cross-platform"},
+}
+
+_WEBAUTHN_BOUNDS: dict[str, tuple[float, float]] = {
+    # W3C WebAuthn L3 §5.4 / §5.5 RECOMMENDED upper bound 600 000 ms
+    "timeout_ms":            (30_000, 600_000),
+    "challenge_ttl_seconds": (60, 900),
+}
+
+# IANA COSE algorithm registry (RFC 9053). ArborPress whitelists the
+# values WebAuthn clients are most likely to support.
+_WEBAUTHN_ALGORITHMS_ALLOWED: set[int] = {-7, -8, -35, -36, -37, -38, -39, -257, -258, -259}
+
+
+async def get_webauthn_settings(db: Any) -> dict[str, Any]:
+    """Return merged WebAuthn settings (defaults + DB)."""
+    merged = dict(_DEFAULTS["webauthn"])
+    db_values = await get_section("webauthn", db)
+    for key, value in db_values.items():
+        if key in _WEBAUTHN_FIELDS:
+            merged[key] = value
+    return merged
+
+
+def coerce_webauthn_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate an admin-form payload against the WebAuthn schema.
+
+    Drops unknown keys silently. Raises ``ValueError`` on invalid values.
+    """
+    cleaned: dict[str, Any] = {}
+    for key, expected_type in _WEBAUTHN_FIELDS.items():
+        if key not in payload:
+            continue
+        raw = payload[key]
+        try:
+            if expected_type is bool:
+                if isinstance(raw, str):
+                    value: Any = raw.strip().lower() in {"1", "true", "on", "yes"}
+                else:
+                    value = bool(raw)
+            elif expected_type is int:
+                value = int(raw)
+            elif expected_type is list:
+                if isinstance(raw, str):
+                    parts = [p.strip() for p in raw.split(",") if p.strip()]
+                else:
+                    parts = list(raw)
+                value = [int(p) for p in parts]
+            else:
+                value = str(raw).strip()
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid value for {key!r}: {raw!r}") from exc
+
+        if key in _WEBAUTHN_ENUMS and value not in _WEBAUTHN_ENUMS[key]:
+            raise ValueError(
+                f"{key!r} must be one of {sorted(_WEBAUTHN_ENUMS[key])} (got {value!r})"
+            )
+        if key in _WEBAUTHN_BOUNDS:
+            lo, hi = _WEBAUTHN_BOUNDS[key]
+            if value < lo or value > hi:
+                raise ValueError(f"{key!r} must be between {lo} and {hi} (got {value})")
+        if key == "algorithms":
+            if not value:
+                raise ValueError("algorithms must contain at least one COSE identifier")
+            for alg in value:
+                if alg not in _WEBAUTHN_ALGORITHMS_ALLOWED:
+                    raise ValueError(
+                        f"unsupported COSE algorithm {alg!r}; allowed: "
+                        f"{sorted(_WEBAUTHN_ALGORITHMS_ALLOWED)}"
+                    )
+        cleaned[key] = value
+
+    return cleaned

@@ -114,22 +114,51 @@ async def _rate_limit_auth():
 
 
 def _get_webauthn() -> WebAuthnService:
+    """Synchronous fallback factory (config-only, no DB-backed policy).
+
+    Kept for code paths that cannot easily await; new code should use
+    :func:`_get_webauthn_async` so admin policy and the RP-ID change
+    guard apply.
+    """
     cfg = get_settings()
-    from urllib.parse import urlparse
-    parsed = urlparse(cfg.web.base_url)
-    _host = parsed.hostname or "localhost"
-    # WebAuthn spec: rp_id must be ASCII/Punycode – no Unicode for IDN domains
-    if _host not in ("localhost", "127.0.0.1", "::1"):
-        try:
-            import idna as _idna  # idna>=3.7 (IDNA 2008)
-            _host = _idna.encode(_host, alg="TRANSITIONAL").decode("ascii")
-        except Exception:
-            _host = _host.encode("idna").decode("ascii")
+    from arborpress.auth.webauthn import resolve_origin, resolve_rp_id
+
     return WebAuthnService(
-        rp_id=_host,
+        rp_id=resolve_rp_id(cfg.web.base_url),
         rp_name="ArborPress",
-        origin=cfg.web.base_url,
+        origin=resolve_origin(cfg.web.base_url),
     )
+
+
+async def _get_webauthn_async() -> WebAuthnService:
+    """Build a fully configured WebAuthnService from DB site_settings.
+
+    Aborts with HTTP 503 if the deployment URL changed and the
+    operator has not confirmed the new RP ID via /admin/webauthn
+    (W3C WebAuthn L3 §5.3 RP ID lock-out protection).
+    """
+    from arborpress.auth.webauthn import RPIDChangeBlocked, build_webauthn_service
+
+    cfg = get_settings()
+    async for db in get_db_session():
+        try:
+            return await build_webauthn_service(db, cfg.web.base_url)
+        except RPIDChangeBlocked as exc:
+            log.error("WebAuthn unavailable: %s", exc)
+            from quart import Response
+            abort(Response(
+                json.dumps({
+                    "error": "rp_id_change_blocked",
+                    "message": str(exc),
+                    "current_rp_id": exc.current,
+                    "locked_rp_id": exc.expected,
+                    "credential_count": exc.credential_count,
+                }),
+                status=503,
+                headers={"Content-Type": "application/json"},
+            ))
+    # Should never reach here – get_db_session yields at least once.
+    return _get_webauthn()
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +196,7 @@ async def register_begin():
 
     display_name: str = str(data.get("display_name") or user_name).strip()[:128]
 
-    wa = _get_webauthn()
+    wa = await _get_webauthn_async()
 
     async for db in get_db_session():
         from arborpress.models.user import User
@@ -224,7 +253,7 @@ async def register_complete():
     if not challenge or not user_id_str:
         abort(400, "Keine aktive Registrierungssession")
 
-    wa = _get_webauthn()
+    wa = await _get_webauthn_async()
 
     try:
         credential = RegistrationCredential.parse_raw(json.dumps(raw))
@@ -271,7 +300,7 @@ async def login_begin():
     data = await request.get_json() or {}
     user_name: str | None = data.get("user_name")
 
-    wa = _get_webauthn()
+    wa = await _get_webauthn_async()
     allowed_credentials: list[bytes] = []
 
     if user_name:
@@ -307,7 +336,7 @@ async def login_complete():
     if not challenge:
         abort(400, "Keine aktive Auth-Session")
 
-    wa = _get_webauthn()
+    wa = await _get_webauthn_async()
     credential_id: bytes = bytes.fromhex(raw.get("id", "").replace("-", ""))
 
     async for db in get_db_session():
@@ -649,7 +678,7 @@ async def stepup_begin():
     if not user_id:
         abort(401, "Nicht eingeloggt")
 
-    wa = _get_webauthn()
+    wa = await _get_webauthn_async()
 
     async for db in get_db_session():
         from arborpress.models.user import WebAuthnCredential
@@ -676,7 +705,7 @@ async def stepup_complete():
     if not challenge or not user_id:
         abort(401)
 
-    wa = _get_webauthn()
+    wa = await _get_webauthn_async()
     credential_id: bytes = bytes.fromhex(raw.get("id", "").replace("-", ""))
 
     async for db in get_db_session():

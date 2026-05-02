@@ -86,6 +86,10 @@ def validate_password_policy(
     max_length: int,
     min_score: int,
     user_inputs: list[str] | tuple[str, ...] | None = None,
+    check_hibp: bool = False,
+    hibp_max_count: int = 0,
+    hibp_timeout: float = 3.0,
+    hibp_fail_open: bool = True,
 ) -> PasswordAssessment:
     length = len(password)
     if length < min_length:
@@ -107,6 +111,18 @@ def validate_password_policy(
         if hint:
             message = f"{message} {hint}"
         raise ValueError(message)
+
+    if check_hibp:
+        # Local import to keep zxcvbn import path light and to avoid a
+        # hard httpx dependency when HIBP is disabled.
+        from arborpress.auth.hibp import enforce_hibp_policy
+
+        enforce_hibp_policy(
+            password,
+            max_count=hibp_max_count,
+            timeout=hibp_timeout,
+            fail_open=hibp_fail_open,
+        )
     return assessment
 
 

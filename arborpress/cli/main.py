@@ -42,6 +42,7 @@ cache_app = typer.Typer(help="Cache management", no_args_is_help=True)
 federation_app = typer.Typer(help="Federation / ActivityPub (§5, §14)", no_args_is_help=True)
 mail_app = typer.Typer(help="Mail queue (§13)", no_args_is_help=True)
 plugin_app = typer.Typer(help="Plugin management (§15)", no_args_is_help=True)
+webauthn_app = typer.Typer(help="WebAuthn / Passkey recovery (§17)", no_args_is_help=True)
 
 app.add_typer(db_app, name="db")
 app.add_typer(user_app, name="user")
@@ -52,6 +53,7 @@ app.add_typer(cache_app, name="cache")
 app.add_typer(federation_app, name="federation")
 app.add_typer(mail_app, name="mail")
 app.add_typer(plugin_app, name="plugin")
+app.add_typer(webauthn_app, name="webauthn")
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +463,6 @@ def user_password_set(
     length: int = typer.Option(24, "--length", min=16, max=256, help="Length for random passwords"),
 ) -> None:
     """Sets or changes the break-glass password of an account."""
-    cfg = get_settings()
     if password and generate:
         typer.echo(__("Use either --password or --generate, not both."), err=True)
         raise typer.Exit(2)
@@ -475,15 +476,30 @@ def user_password_set(
     elif password is None:
         password = _prompt_password_twice()
 
+    async def _load_security() -> dict:
+        from arborpress.core.db import get_db_session
+        from arborpress.core.site_settings import get_security_settings
+
+        async for db in get_db_session():
+            return await get_security_settings(db)
+        return {}
+
+    sec = asyncio.run(_load_security())
+
     try:
         from arborpress.auth.breakglass import validate_password_policy
 
         assessment = validate_password_policy(
             password,
-            min_length=cfg.auth.legacy_password_min_length,
-            max_length=cfg.auth.legacy_password_max_length,
-            min_score=cfg.auth.legacy_password_min_score,
+            min_length=sec["legacy_password_min_length"],
+            max_length=sec["legacy_password_max_length"],
+            min_score=sec["legacy_password_min_score"],
             user_inputs=[username, "arborpress", "admin"],
+            # HIBP only on manually entered passwords; skip for --generate
+            check_hibp=sec["hibp_enabled"] and not generate,
+            hibp_max_count=sec["hibp_max_count"],
+            hibp_timeout=sec["hibp_timeout"],
+            hibp_fail_open=sec["hibp_fail_open"],
         )
     except ValueError as exc:
         typer.echo(__("Invalid break-glass password: {exc}").format(exc=exc), err=True)
@@ -524,8 +540,17 @@ def user_password_generate(
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
 ) -> None:
     """Generates a break-glass password and prints the quality assessment."""
-    cfg = get_settings()
     from arborpress.auth.breakglass import validate_password_policy
+
+    async def _load_security() -> dict:
+        from arborpress.core.db import get_db_session
+        from arborpress.core.site_settings import get_security_settings
+
+        async for db in get_db_session():
+            return await get_security_settings(db)
+        return {}
+
+    sec = asyncio.run(_load_security())
 
     password = _build_breakglass_password(
         generator=generator,
@@ -535,9 +560,9 @@ def user_password_generate(
     )
     assessment = validate_password_policy(
         password,
-        min_length=cfg.auth.legacy_password_min_length,
-        max_length=cfg.auth.legacy_password_max_length,
-        min_score=cfg.auth.legacy_password_min_score,
+        min_length=sec["legacy_password_min_length"],
+        max_length=sec["legacy_password_max_length"],
+        min_score=sec["legacy_password_min_score"],
         user_inputs=[item for item in [username, "arborpress", "admin"] if item],
     )
     if as_json:
@@ -1436,6 +1461,99 @@ def _load_plugin_cli_extensions() -> None:
                 f"Warning: CLI extension from plugin {plugin.id!r} failed: {exc}",
                 err=True,
             )
+
+
+# ---------------------------------------------------------------------------
+# WebAuthn recovery (RP-ID lock)
+# ---------------------------------------------------------------------------
+
+@webauthn_app.command("status")
+def webauthn_status() -> None:
+    """Show resolved RP ID, locked value, and credential count."""
+    import asyncio
+
+    from arborpress.auth.webauthn import (
+        resolve_origin,
+        resolve_rp_id,
+        resolve_rp_name,
+    )
+    from arborpress.core.config import get_settings as _gs
+    from arborpress.core.db import get_db_session as _gds
+    from arborpress.core.site_settings import get_webauthn_settings
+
+    cfg = _gs()
+    rp_id = resolve_rp_id(cfg.web.base_url)
+    origin = resolve_origin(cfg.web.base_url)
+
+    async def _run():
+        from sqlalchemy import func, select
+
+        from arborpress.models.user import WebAuthnCredential
+
+        async for db in _gds():
+            wa = await get_webauthn_settings(db)
+            count = (await db.execute(
+                select(func.count()).select_from(WebAuthnCredential)
+            )).scalar_one() or 0
+            rp_name = await resolve_rp_name(db)
+            return wa, count, rp_name
+
+    wa, count, rp_name = asyncio.run(_run())
+    typer.echo(f"resolved rp.id   : {rp_id}")
+    typer.echo(f"resolved origin  : {origin}")
+    typer.echo(f"resolved rp.name : {rp_name}")
+    typer.echo(f"locked rp.id     : {wa.get('rp_id_last_known') or '-'}")
+    typer.echo(f"rp_id_locked     : {wa.get('rp_id_locked')}")
+    typer.echo(f"credentials in DB: {count}")
+
+
+@webauthn_app.command("unlock-rp-id")
+def webauthn_cli_unlock(
+    confirm: str = typer.Option(
+        ..., "--confirm", help="Must equal the new resolved rp.id."
+    ),
+) -> None:
+    """Operator escape hatch: confirm an RP-ID change from the shell.
+
+    Use when no admin can log in because their passkeys were invalidated
+    by a domain change (W3C WebAuthn L3 §5.3).
+    """
+    import asyncio
+
+    from arborpress.auth.webauthn import resolve_rp_id
+    from arborpress.core.config import get_settings as _gs
+    from arborpress.core.db import get_db_session as _gds
+    from arborpress.core.site_settings import (
+        get_webauthn_settings,
+        save_section,
+    )
+
+    cfg = _gs()
+    resolved = resolve_rp_id(cfg.web.base_url)
+
+    if confirm != resolved:
+        typer.echo(
+            f"ERROR: --confirm {confirm!r} does not match the current "
+            f"resolved rp.id {resolved!r}.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    async def _run():
+        async for db in _gds():
+            wa = await get_webauthn_settings(db)
+            old = wa.get("rp_id_last_known", "")
+            wa["rp_id_last_known"] = resolved
+            wa["rp_id_locked"] = True
+            await save_section("webauthn", wa, db, updated_by="cli:webauthn-unlock")
+            return old
+
+    old = asyncio.run(_run())
+    typer.echo(f"OK - rp.id unlocked: {old or '(unset)'} -> {resolved}")
+    typer.echo(
+        "Existing WebAuthn credentials are no longer valid for this rp.id "
+        "and should be removed manually."
+    )
 
 
 if __name__ == "__main__":

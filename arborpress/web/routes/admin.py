@@ -495,12 +495,13 @@ async def user_breakglass_password_set(user_id: str):
     words = int(form.get("words") or 5)
     delimiter = form.get("delimiter") or "-"
     length = int(form.get("length") or 24)
-    cfg = get_settings()
 
     async for db in get_db_session():
         from arborpress.auth.breakglass import hash_password
+        from arborpress.core.site_settings import get_security_settings
         from arborpress.models.user import User
 
+        sec = await get_security_settings(db)
         user = await db.get(User, user_id)
         if user is None:
             abort(404)
@@ -510,19 +511,24 @@ async def user_breakglass_password_set(user_id: str):
                 password = manual_password
                 validate_password_policy(
                     password,
-                    min_length=cfg.auth.legacy_password_min_length,
-                    max_length=cfg.auth.legacy_password_max_length,
-                    min_score=cfg.auth.legacy_password_min_score,
+                    min_length=sec["legacy_password_min_length"],
+                    max_length=sec["legacy_password_max_length"],
+                    min_score=sec["legacy_password_min_score"],
                     user_inputs=[user.username, user.display_name or "", "arborpress", "admin"],
+                    # HIBP only for manually entered passwords
+                    check_hibp=sec["hibp_enabled"],
+                    hibp_max_count=sec["hibp_max_count"],
+                    hibp_timeout=sec["hibp_timeout"],
+                    hibp_fail_open=sec["hibp_fail_open"],
                 )
                 generated = False
             elif mode in {"diceware", "xkcd"}:
                 password = generate_diceware_passphrase(word_count=words, delimiter=delimiter)
                 validate_password_policy(
                     password,
-                    min_length=cfg.auth.legacy_password_min_length,
-                    max_length=cfg.auth.legacy_password_max_length,
-                    min_score=cfg.auth.legacy_password_min_score,
+                    min_length=sec["legacy_password_min_length"],
+                    max_length=sec["legacy_password_max_length"],
+                    min_score=sec["legacy_password_min_score"],
                     user_inputs=[user.username, user.display_name or "", "arborpress", "admin"],
                 )
                 generated = True
@@ -530,9 +536,9 @@ async def user_breakglass_password_set(user_id: str):
                 password = generate_random_password(length=length)
                 validate_password_policy(
                     password,
-                    min_length=cfg.auth.legacy_password_min_length,
-                    max_length=cfg.auth.legacy_password_max_length,
-                    min_score=cfg.auth.legacy_password_min_score,
+                    min_length=sec["legacy_password_min_length"],
+                    max_length=sec["legacy_password_max_length"],
+                    min_score=sec["legacy_password_min_score"],
                     user_inputs=[user.username, user.display_name or "", "arborpress", "admin"],
                 )
                 generated = True
@@ -655,10 +661,16 @@ async def security():
     user_id = session.get("user_id", "")
     stepup_active = is_stepup_active(session, user_id)
     cfg = get_settings()
+    from arborpress.core.site_settings import get_security_settings
+
+    async for db in get_db_session():
+        sec = await get_security_settings(db)
+        break
     return await render_template(
         "admin/security.html",
         stepup_active=stepup_active,
         cfg=cfg,
+        sec=sec,
         noindex=True,
     )
 
@@ -672,14 +684,273 @@ async def security_update():
         assert_stepup(session, user_id, "change_security_settings")
     except PermissionError:
         return jsonify({"error": "step_up_required"}), 403
-    audit.info("SECURITY settings changed | user=%s", user_id)
-    return jsonify({"status": "not_implemented"}), 501
+
+    from arborpress.core.site_settings import (
+        coerce_security_payload,
+        get_security_settings,
+        save_section,
+    )
+
+    form = await request.form
+    raw = {
+        "legacy_password_min_length": form.get("legacy_password_min_length"),
+        "legacy_password_max_length": form.get("legacy_password_max_length"),
+        "legacy_password_min_score":  form.get("legacy_password_min_score"),
+        "hibp_enabled":   form.get("hibp_enabled"),
+        "hibp_max_count": form.get("hibp_max_count"),
+        "hibp_timeout":   form.get("hibp_timeout"),
+        "hibp_fail_open": form.get("hibp_fail_open"),
+    }
+    # Checkboxes that are unchecked do not appear in the form payload at all,
+    # so an explicitly missing key means the operator turned the toggle off.
+    for bool_key in ("hibp_enabled", "hibp_fail_open"):
+        if raw[bool_key] is None:
+            raw[bool_key] = False
+    # Drop entries the operator did not submit (None) so we keep current value.
+    raw = {k: v for k, v in raw.items() if v is not None}
+
+    try:
+        cleaned = coerce_security_payload(raw)
+    except ValueError as exc:
+        async for db in get_db_session():
+            sec = await get_security_settings(db)
+            break
+        return await render_template(
+            "admin/security.html",
+            stepup_active=True,
+            cfg=get_settings(),
+            sec=sec,
+            error=str(exc),
+            noindex=True,
+        ), 400
+
+    async for db in get_db_session():
+        await save_section("security", cleaned, db, updated_by=user_id)
+        sec = await get_security_settings(db)
+        break
+
+    audit.info("SECURITY settings changed | user=%s keys=%s", user_id, ",".join(cleaned))
+    return await render_template(
+        "admin/security.html",
+        stepup_active=True,
+        cfg=get_settings(),
+        sec=sec,
+        saved=True,
+        noindex=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# WebAuthn / Passkey settings
+# ---------------------------------------------------------------------------
+
+async def _webauthn_view_context(db, **extra):
+    """Build the template context for /admin/webauthn (view + post)."""
+    from sqlalchemy import func, select
+
+    from arborpress.auth.webauthn import (
+        resolve_origin,
+        resolve_rp_id,
+        resolve_rp_name,
+    )
+    from arborpress.core.site_settings import get_webauthn_settings
+    from arborpress.models.user import WebAuthnCredential
+
+    cfg = get_settings()
+    wa_settings = await get_webauthn_settings(db)
+    resolved_rp_id = resolve_rp_id(cfg.web.base_url)
+    resolved_origin = resolve_origin(cfg.web.base_url)
+    resolved_rp_name = await resolve_rp_name(db)
+
+    count_stmt = select(func.count()).select_from(WebAuthnCredential)
+    credential_count = (await db.execute(count_stmt)).scalar_one() or 0
+
+    last_known = (wa_settings.get("rp_id_last_known") or "").strip()
+    rp_id_blocked = bool(
+        last_known
+        and last_known != resolved_rp_id
+        and credential_count > 0
+        and wa_settings.get("rp_id_locked", True)
+    )
+
+    ctx = {
+        "wa": wa_settings,
+        "resolved_rp_id": resolved_rp_id,
+        "resolved_origin": resolved_origin,
+        "resolved_rp_name": resolved_rp_name,
+        "credential_count": credential_count,
+        "rp_id_blocked": rp_id_blocked,
+        "noindex": True,
+    }
+    ctx.update(extra)
+    return ctx
+
+
+@admin_bp.get("/webauthn")
+async def webauthn_settings_page():
+    _require_session()
+    require_role("admin")
+    user_id = session.get("user_id", "")
+    stepup_active = is_stepup_active(session, user_id)
+
+    async for db in get_db_session():
+        ctx = await _webauthn_view_context(db, stepup_active=stepup_active)
+        break
+
+    return await render_template("admin/webauthn.html", **ctx)
+
+
+@admin_bp.post("/webauthn")
+async def webauthn_update():
+    _require_session()
+    require_role("admin")
+    user_id = session.get("user_id", "")
+    try:
+        assert_stepup(session, user_id, "change_webauthn_settings")
+    except PermissionError:
+        return jsonify({"error": "step_up_required"}), 403
+
+    from arborpress.core.site_settings import (
+        coerce_webauthn_payload,
+        get_webauthn_settings,
+        save_section,
+    )
+
+    form = await request.form
+
+    # Algorithms come in as alg_<int>=1 checkboxes.
+    selected_algs: list[int] = []
+    for key in form.keys():
+        if key.startswith("alg_"):
+            try:
+                selected_algs.append(int(key[len("alg_"):]))
+            except ValueError:
+                continue
+
+    raw: dict = {
+        "user_verification":         form.get("user_verification"),
+        "resident_key":              form.get("resident_key"),
+        "attestation":               form.get("attestation"),
+        "authenticator_attachment":  form.get("authenticator_attachment"),
+        "algorithms":                selected_algs or None,
+        "timeout_ms":                form.get("timeout_ms"),
+        "challenge_ttl_seconds":     form.get("challenge_ttl_seconds"),
+        "conditional_ui_enabled":    form.get("conditional_ui_enabled"),
+        "signal_api_enabled":        form.get("signal_api_enabled"),
+        "require_2fa_after_passkey": form.get("require_2fa_after_passkey"),
+        "counter_strict":            form.get("counter_strict"),
+    }
+    # Unchecked checkboxes ⇒ explicit False (form omits them).
+    for bool_key in (
+        "conditional_ui_enabled", "signal_api_enabled",
+        "require_2fa_after_passkey", "counter_strict",
+    ):
+        if raw[bool_key] is None:
+            raw[bool_key] = False
+    raw = {k: v for k, v in raw.items() if v is not None}
+
+    try:
+        cleaned = coerce_webauthn_payload(raw)
+    except ValueError as exc:
+        async for db in get_db_session():
+            ctx = await _webauthn_view_context(db, stepup_active=True, error=str(exc))
+            break
+        return await render_template("admin/webauthn.html", **ctx), 400
+
+    async for db in get_db_session():
+        # Preserve guard fields – never editable through this form.
+        existing = await get_webauthn_settings(db)
+        cleaned["rp_id_locked"] = existing.get("rp_id_locked", True)
+        cleaned["rp_id_last_known"] = existing.get("rp_id_last_known", "")
+        await save_section("webauthn", cleaned, db, updated_by=user_id)
+        ctx = await _webauthn_view_context(db, stepup_active=True, saved=True)
+        break
+
+    audit.info("WEBAUTHN settings changed | user=%s keys=%s", user_id, ",".join(cleaned))
+    return await render_template("admin/webauthn.html", **ctx)
+
+
+@admin_bp.post("/webauthn/unlock-rp-id")
+async def webauthn_unlock_rp_id():
+    """Confirm an RP-ID change after the operator typed the new rp.id.
+
+    W3C WebAuthn L3 §5.3 – this irrevocably invalidates every existing
+    credential bound to the previous rp.id.
+    """
+    _require_session()
+    require_role("admin")
+    user_id = session.get("user_id", "")
+    try:
+        assert_stepup(session, user_id, "unlock_webauthn_rp_id")
+    except PermissionError:
+        return jsonify({"error": "step_up_required"}), 403
+
+    from arborpress.auth.webauthn import resolve_rp_id
+    from arborpress.core.site_settings import (
+        get_webauthn_settings,
+        save_section,
+    )
+
+    cfg = get_settings()
+    resolved = resolve_rp_id(cfg.web.base_url)
+
+    form = await request.form
+    confirm = (form.get("confirm_rp_id") or "").strip()
+    if confirm != resolved:
+        async for db in get_db_session():
+            ctx = await _webauthn_view_context(
+                db,
+                stepup_active=True,
+                error=f"Bestätigung stimmt nicht mit aktueller rp.id ({resolved!r}) überein.",
+            )
+            break
+        return await render_template("admin/webauthn.html", **ctx), 400
+
+    async for db in get_db_session():
+        wa = await get_webauthn_settings(db)
+        old = wa.get("rp_id_last_known", "")
+        wa["rp_id_last_known"] = resolved
+        wa["rp_id_locked"] = True
+        await save_section("webauthn", wa, db, updated_by=user_id)
+        ctx = await _webauthn_view_context(db, stepup_active=True, saved=True)
+        break
+
+    audit.warning(
+        "WEBAUTHN rp_id unlocked | user=%s old=%s new=%s",
+        user_id, old, resolved,
+    )
+    return await render_template("admin/webauthn.html", **ctx)
+
+
+@admin_bp.post("/webauthn/relock-rp-id")
+async def webauthn_relock_rp_id():
+    _require_session()
+    require_role("admin")
+    user_id = session.get("user_id", "")
+    try:
+        assert_stepup(session, user_id, "lock_webauthn_rp_id")
+    except PermissionError:
+        return jsonify({"error": "step_up_required"}), 403
+
+    from arborpress.core.site_settings import (
+        get_webauthn_settings,
+        save_section,
+    )
+
+    async for db in get_db_session():
+        wa = await get_webauthn_settings(db)
+        wa["rp_id_locked"] = True
+        await save_section("webauthn", wa, db, updated_by=user_id)
+        ctx = await _webauthn_view_context(db, stepup_active=True, saved=True)
+        break
+
+    audit.info("WEBAUTHN rp_id relocked | user=%s", user_id)
+    return await render_template("admin/webauthn.html", **ctx)
 
 
 @admin_bp.post("/security/password-tools/generate")
 async def security_password_generate():
     require_role("admin")
-    cfg = get_settings()
     payload = await request.get_json() or {}
     mode = str(payload.get("mode") or "random").strip().lower()
     try:
@@ -693,11 +964,17 @@ async def security_password_generate():
         else:
             abort(400, "Unknown generator mode")
 
+        from arborpress.core.site_settings import get_security_settings
+
+        async for db in get_db_session():
+            sec = await get_security_settings(db)
+            break
+
         assessment = validate_password_policy(
             password,
-            min_length=cfg.auth.legacy_password_min_length,
-            max_length=cfg.auth.legacy_password_max_length,
-            min_score=cfg.auth.legacy_password_min_score,
+            min_length=sec["legacy_password_min_length"],
+            max_length=sec["legacy_password_max_length"],
+            min_score=sec["legacy_password_min_score"],
             user_inputs=[session.get("user_name", ""), "arborpress", "admin"],
         )
     except ValueError as exc:
@@ -708,9 +985,9 @@ async def security_password_generate():
             "password": password,
             "assessment": assessment.to_dict(),
             "policy": {
-                "min_length": cfg.auth.legacy_password_min_length,
-                "max_length": cfg.auth.legacy_password_max_length,
-                "min_score": cfg.auth.legacy_password_min_score,
+                "min_length": sec["legacy_password_min_length"],
+                "max_length": sec["legacy_password_max_length"],
+                "min_score": sec["legacy_password_min_score"],
                 "accepted": True,
             },
         }
@@ -720,7 +997,6 @@ async def security_password_generate():
 @admin_bp.post("/security/password-tools/evaluate")
 async def security_password_evaluate():
     require_role("admin")
-    cfg = get_settings()
     payload = await request.get_json() or {}
     password = str(payload.get("password") or "")
     if not password:
@@ -730,14 +1006,25 @@ async def security_password_evaluate():
         password,
         user_inputs=[session.get("user_name", ""), "arborpress", "admin"],
     )
+    from arborpress.core.site_settings import get_security_settings
+
+    async for db in get_db_session():
+        sec = await get_security_settings(db)
+        break
+
     policy_error = ""
     try:
         validate_password_policy(
             password,
-            min_length=cfg.auth.legacy_password_min_length,
-            max_length=cfg.auth.legacy_password_max_length,
-            min_score=cfg.auth.legacy_password_min_score,
+            min_length=sec["legacy_password_min_length"],
+            max_length=sec["legacy_password_max_length"],
+            min_score=sec["legacy_password_min_score"],
             user_inputs=[session.get("user_name", ""), "arborpress", "admin"],
+            # Evaluate endpoint operates on user input; HIBP applies
+            check_hibp=sec["hibp_enabled"],
+            hibp_max_count=sec["hibp_max_count"],
+            hibp_timeout=sec["hibp_timeout"],
+            hibp_fail_open=sec["hibp_fail_open"],
         )
         accepted = True
     except ValueError as exc:
@@ -748,9 +1035,9 @@ async def security_password_evaluate():
         {
             "assessment": assessment.to_dict(),
             "policy": {
-                "min_length": cfg.auth.legacy_password_min_length,
-                "max_length": cfg.auth.legacy_password_max_length,
-                "min_score": cfg.auth.legacy_password_min_score,
+                "min_length": sec["legacy_password_min_length"],
+                "max_length": sec["legacy_password_max_length"],
+                "min_score":  sec["legacy_password_min_score"],
                 "accepted": accepted,
                 "error": policy_error,
             },

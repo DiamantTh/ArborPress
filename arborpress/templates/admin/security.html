@@ -3,6 +3,13 @@
 {% block admin_content %}
 <h2>Sicherheitseinstellungen</h2>
 
+{% if saved %}
+<div class="alert alert-success">Sicherheitseinstellungen gespeichert.</div>
+{% endif %}
+{% if error %}
+<div class="alert alert-danger"><strong>Speichern abgelehnt:</strong> {{ error }}</div>
+{% endif %}
+
 {% if not stepup_active %}
 <div class="alert alert-warning">
   <strong>Step-up-Authentifizierung erforderlich.</strong>
@@ -23,35 +30,54 @@
       RPID
       <input type="text" name="rp_id" value="{{ cfg.auth.rp_id | default('') }}">
     </label>
+    <p><small>WebAuthn-Felder sind aktuell read-only und werden weiterhin aus
+      <code>config.toml</code> gelesen.</small></p>
   </fieldset>
 
   <fieldset>
-    <legend>Break-Glass</legend>
+    <legend>Break-Glass Passwort-Policy</legend>
+    <label>
+      Mindestlänge
+      <input type="number" name="legacy_password_min_length" min="8" max="256"
+             value="{{ sec.legacy_password_min_length }}">
+    </label>
+    <label>
+      Maximallänge
+      <input type="number" name="legacy_password_max_length" min="16" max="1024"
+             value="{{ sec.legacy_password_max_length }}">
+    </label>
+    <label>
+      zxcvbn Mindest-Score (0–4)
+      <input type="number" name="legacy_password_min_score" min="0" max="4"
+             value="{{ sec.legacy_password_min_score }}">
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Have I Been Pwned (k-Anonymity)</legend>
+    <p><small>Prüft manuell eingegebene Passwörter gegen
+      <code>api.pwnedpasswords.com</code>. Es werden nur die ersten 5 Zeichen
+      des SHA-1-Hashs übertragen; das Passwort verlässt den Server nicht.
+      Generierte Passwörter werden nicht geprüft.</small></p>
     <label class="checkbox">
-      <input type="checkbox" name="breakglass_enabled"
-             {{ 'checked' if cfg.auth.legacy_password_enabled else '' }}>
-      Break-Glass-Login aktivieren (nur für Notfälle)
-    </label>
-    <p>
-      Policy: mindestens {{ cfg.auth.legacy_password_min_length }} Zeichen,
-      maximal {{ cfg.auth.legacy_password_max_length }} Zeichen,
-      zxcvbn mindestens {{ cfg.auth.legacy_password_min_score }}/4.
-    </p>
-  </fieldset>
-
-  <fieldset>
-    <legend>Mail</legend>
-    <label>
-      SMTP-Host
-      <input type="text" name="smtp_host" value="{{ cfg.mail.smtp_host | default('') }}">
+      <input type="checkbox" name="hibp_enabled" value="true"
+             {{ 'checked' if sec.hibp_enabled else '' }}>
+      HIBP-Prüfung aktivieren
     </label>
     <label>
-      SMTP-Port
-      <input type="number" name="smtp_port" value="{{ cfg.mail.smtp_port | default(587) }}">
+      Maximal tolerierte Treffer (0 = jeder Treffer blockt)
+      <input type="number" name="hibp_max_count" min="0" max="10000000"
+             value="{{ sec.hibp_max_count }}">
     </label>
     <label>
-      Absender-Adresse
-      <input type="email" name="from_address" value="{{ cfg.mail.from_address | default('') }}">
+      Timeout (Sekunden, 0.5–30)
+      <input type="number" step="0.1" name="hibp_timeout" min="0.5" max="30"
+             value="{{ sec.hibp_timeout }}">
+    </label>
+    <label class="checkbox">
+      <input type="checkbox" name="hibp_fail_open" value="true"
+             {{ 'checked' if sec.hibp_fail_open else '' }}>
+      Fail-open: bei Netzfehler trotzdem zulassen
     </label>
   </fieldset>
 
