@@ -54,17 +54,13 @@ content/                  Betreiber-Inhalte  (≡ wp-content)
 config/                   Konfigurationsverzeichnis
   config.example.toml     Beispielkonfiguration (→ config/config.toml kopieren)
 container/                Container-Dateien (OCI – Docker/Podman)
-  Containerfile.ubuntu    Produktions-Image auf Ubuntu 24.04 LTS
+  Containerfile.ubuntu    Produktions-Image auf Ubuntu 26.04 LTS
   Containerfile.ubi9      Produktions-Image auf UBI9 (RHEL9)
   entrypoint.sh           Container-Entrypoint
   compose.postgresql.yml  Compose: UBI9 + PostgreSQL (RHEL9-Images)
   compose.postgresql.ubuntu.yml  Compose: Ubuntu + PostgreSQL
   compose.mariadb.yml     Compose: UBI9 + MariaDB (RHEL9-Images)
   compose.mariadb.ubuntu.yml     Compose: Ubuntu + MariaDB
-  compose.portainer.postgresql.yml  Portainer-Stack: PostgreSQL
-  compose.portainer.mariadb.yml     Portainer-Stack: MariaDB
-  compose.portainer.sqlite.yml      Portainer-Stack: SQLite (UX-Only)
-  portainer-templates.json          Portainer App-Template v2 Definition
 docs/                     Proxy-Konfigurationen + Spezifikation (§0–§17)
 frontend/                 SvelteKit-Frontend (Build-Zeit, §9)
 tests/                    Automatisierte Tests

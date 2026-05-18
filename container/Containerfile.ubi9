@@ -33,14 +33,14 @@ USER root
 # Build-Werkzeuge für C-Erweiterungen:
 #   pillow (Bilder), cryptography, argon2-cffi
 #   asyncpg und aiomysql bringen eigene C-Teile mit bzw. sind pure Python
-RUN microdnf install -y \
+RUN dnf install -y \
         gcc \
         python3-devel \
         libffi-devel \
         libjpeg-turbo-devel \
         libpng-devel \
         zlib-devel \
-    && microdnf clean all
+    && dnf clean all
 
 # Isolierte Python-Umgebung (vom Runtime-Image getrennt)
 RUN python3 -m venv /opt/venv
@@ -51,6 +51,7 @@ WORKDIR /build
 # Paket inkl. aller Abhängigkeiten installieren.
 # cache-redis: optionaler Redis-Cache-Backend-Support.
 COPY pyproject.toml ./
+COPY README.md ./
 COPY arborpress/ ./arborpress/
 RUN pip install --no-cache-dir ".[cache-redis]"
 
@@ -75,11 +76,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 USER root
 
 # Nur Laufzeit-Bibliotheken – keine Build-Werkzeuge im finalen Image
-RUN microdnf install -y \
+RUN dnf install -y \
         libjpeg-turbo \
         libpng \
+        nmap-ncat \
         zlib \
-    && microdnf clean all \
+    && dnf clean all \
     # Verzeichnisse anlegen (OpenShift-kompatibel: group 0 = root)
     && install -d -m 0775 -o 1001 -g 0 \
         /opt/app-root/src/media \

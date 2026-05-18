@@ -1,9 +1,9 @@
 # ======================================================================
-# ArborPress – Docker Compose  (Ubuntu 24.04 LTS + MariaDB 11.4 LTS)
+# ArborPress – Docker Compose  (Ubuntu 26.04 LTS + MariaDB 11.4 LTS)
 # ======================================================================
 #
 # Genutzte Images:
-#   App:  python:3.12-slim-noble  (Ubuntu 24.04 LTS "Noble Numbat")
+#   App:  ubuntu:26.04 + Python 3.14
 #   DB:   mariadb:11.4            (MariaDB 11.4 LTS, EOL: Mai 2029)
 #         Alternativ:  mariadb:11.8  (aktueller, non-LTS)
 #
@@ -23,8 +23,8 @@
 #
 # 2) MARIADB INNODB (kritisch!):
 #    InnoDB-Tablespaces und Systemtabellen sind an die libc des jeweiligen
-#    Container-Images gebunden. Ein roher Volume-Copy zwischen Ubuntu (glibc
-#    Noble) und UBI9 (glibc RHEL9) führt zu Datenbankkorruption – auch bei
+#    Container-Images gebunden. Ein roher Volume-Copy zwischen Ubuntu 26.04
+#    und UBI9 (glibc RHEL9) führt zu Datenbankkorruption – auch bei
 #    identischer MariaDB-Version.
 #    Nicht getestet; verlasse dich NICHT darauf.
 #

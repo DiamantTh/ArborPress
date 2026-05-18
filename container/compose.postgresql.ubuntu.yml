@@ -1,9 +1,9 @@
 # ======================================================================
-# ArborPress – Docker Compose  (Ubuntu 24.04 LTS + PostgreSQL 17)
+# ArborPress – Docker Compose  (Ubuntu 26.04 LTS + PostgreSQL 17)
 # ======================================================================
 #
 # Genutzte Images:
-#   App:  python:3.12-slim-noble  (Ubuntu 24.04 LTS "Noble Numbat")
+#   App:  ubuntu:26.04 + Python 3.14
 #   DB:   postgres:17             (offizielles PostgreSQL-Image)
 #         Alternativ:  postgres:16  (falls SQL-Kompatibilität mit PG 16 benötigt)
 #
@@ -23,7 +23,7 @@
 #
 # 2) POSTGRESQL PGDATA (kritisch!):
 #    PostgreSQL-PGDATA ist an die libc/locale des Container-Images gebunden.
-#    Ein roher Volume-Copy zwischen Ubuntu (glibc Noble) und UBI9 (glibc RHEL9)
+#    Ein roher Volume-Copy zwischen Ubuntu 26.04 und UBI9 (glibc RHEL9)
 #    führt zu Datenbankkorruption – auch bei identischer PostgreSQL-Version.
 #    Nicht getestet; verlasse dich NICHT darauf.
 #

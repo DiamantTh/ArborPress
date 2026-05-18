@@ -58,5 +58,5 @@ Makefile
 container/compose*.yml
 
 # README
-README.md
+!README.md
 LICENSE

@@ -13,7 +13,8 @@ fi
 
 # ── 1a. SQLite-Datenverzeichnis vorbereiten (UX-Only-Modus) ──────────
 # Wird nur aktiv wenn ARBORPRESS_DB__URL auf sqlite+aiosqlite zeigt.
-# /data ist ein persistentes Volume (compose.portainer.sqlite.yml).
+# /data ist als persistenter SQLite-Datenpfad vorgesehen, wenn ein Volume
+# darauf gemountet wird.
 case "${ARBORPRESS_DB__URL:-}" in
     sqlite+aiosqlite://*)
         SQLITE_DIR="/data"
