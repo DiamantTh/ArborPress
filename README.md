@@ -56,7 +56,7 @@ content/                  Operator content (≡ wp-content)
 config/                   Configuration directory
   config.example.toml     Example configuration (→ copy to config/config.toml)
 container/                Container files (OCI – Docker/Podman)
-  Containerfile.ubuntu    Production image on Ubuntu 26.04 LTS
+  Containerfile.ubuntu    Production image on Ubuntu 24.04 LTS
   Containerfile.ubi9      Production image on UBI9 (RHEL9)
   entrypoint.sh           Container entrypoint
   compose.postgresql.yml  Compose: UBI9 + PostgreSQL (RHEL9 images)
