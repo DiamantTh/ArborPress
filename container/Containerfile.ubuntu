@@ -1,8 +1,7 @@
 # syntax=docker/dockerfile:1
 # ======================================================================
 # ArborPress – Produktions-Image  (Ubuntu 24.04 LTS)
-# Basis: python:3.12-slim-noble  (Ubuntu 24.04 LTS "Noble Numbat")
-#        hub.docker.com/_/python  →  Tag: 3.12-slim-noble
+# Basis: ubuntu:24.04 mit Ubuntu-Python 3.12.
 #
 # Python-Versionsstatus (Stand März 2026):
 #   3.10  EOL: Oktober 2026  ← veraltet – nicht mehr verwenden!
@@ -43,20 +42,24 @@
 # ======================================================================
 
 # ── Stage 1: Builder ───────────────────────────────────────────────────
-FROM python:3.12-slim-noble AS builder
+FROM ubuntu:24.04 AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive
 
 # Build-Werkzeuge für C-Erweiterungen:
 #   pillow (Bilder), cryptography, argon2-cffi
 #   asyncpg und aiomysql bringen eigene C-Teile mit bzw. sind pure Python
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        ca-certificates \
         gcc \
+        python3 \
         python3-dev \
+        python3-venv \
         libffi-dev \
         libjpeg-dev \
         libpng-dev \
@@ -89,15 +92,16 @@ RUN set -e; \
     pip install --no-cache-dir ".[${INSTALL_EXTRAS}]"
 
 # ── Stage 2: Runtime ───────────────────────────────────────────────────
-FROM python:3.12-slim-noble AS runtime
+FROM ubuntu:24.04 AS runtime
 
 LABEL org.opencontainers.image.title="ArborPress" \
       org.opencontainers.image.description="ArborPress Blog-Plattform (Ubuntu 24.04 LTS)" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
-      org.opencontainers.image.base.name="docker.io/library/python:3.12-slim-noble"
+      org.opencontainers.image.base.name="docker.io/library/ubuntu:24.04"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive \
     PATH="/opt/venv/bin:$PATH" \
     # Host muss im Container auf 0.0.0.0 gebunden werden.
     ARBORPRESS_WEB__HOST="0.0.0.0" \
@@ -110,8 +114,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Nur Laufzeit-Bibliotheken – keine Build-Werkzeuge im finalen Image
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        libjpeg62-turbo \
-        libpng16-16 \
+        ca-certificates \
+        python3 \
+        libjpeg-turbo8 \
+        libpng16-16t64 \
         netcat-openbsd \
         zlib1g \
     && rm -rf /var/lib/apt/lists/* \

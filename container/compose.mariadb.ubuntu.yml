@@ -3,7 +3,7 @@
 # ======================================================================
 #
 # Genutzte Images:
-#   App:  python:3.12-slim-noble  (Ubuntu 24.04 LTS "Noble Numbat")
+#   App:  ubuntu:24.04 + Ubuntu-Python 3.12
 #   DB:   mariadb:11.4            (MariaDB 11.4 LTS, EOL: Mai 2029)
 #         Alternativ:  mariadb:11.8  (aktueller, non-LTS)
 #

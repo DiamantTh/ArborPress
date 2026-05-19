@@ -3,7 +3,7 @@
 # ======================================================================
 #
 # Genutzte Images:
-#   App:  python:3.12-slim-noble  (Ubuntu 24.04 LTS "Noble Numbat")
+#   App:  ubuntu:24.04 + Ubuntu-Python 3.12
 #   DB:   postgres:17             (offizielles PostgreSQL-Image)
 #         Alternativ:  postgres:16  (falls SQL-Kompatibilität mit PG 16 benötigt)
 #
