@@ -324,44 +324,48 @@ Kernbeispiele stehen in [docs/proxy/traefik.yml](docs/proxy/traefik.yml).
 
 ---
 
-## Abhängigkeiten: Audit & Upgrade-Roadmap
+## Abhängigkeiten: LTS-/Stabilitätsstrategie
 
-### Phase 1: Sofort
+ArborPress folgt bewusst einer **tested-major-line**-Strategie: pro Paket
+wird eine aktuell getestete Major-Linie festgelegt und per Upper Bound gegen
+unkontrollierte Sprünge abgesichert. Major-Upgrades erfolgen erst, wenn die
+gesamte Testmatrix erfolgreich ist.
 
-```toml
-# pyproject.toml – zu aktualisieren
-cryptography = ">=45.0"           # ← CRITICAL (OpenSSL-3.x)
-sqlalchemy = ">=2.1.0"            # ← CRITICAL (Security-Releases)
-pydantic = ">=2.11"               # ← Bessere Validators
-pydantic-settings = ">=2.11"
-bleach = ">=6.3"                  # ← Strengere TAG-Whitelist
-```
+### Aktuell getestete Linien
 
-**Aktion**: `pip install -U cryptography sqlalchemy && pip-audit`
+| Paket | Getestet | Stabiler Bereich |
+|-------|----------|------------------|
+| quart | 0.20.0 | `>=0.20,<0.21` |
+| hypercorn | 0.18.0 | `>=0.18,<0.19` |
+| sqlalchemy | 2.0.49 | `>=2.0.49,<2.1` |
+| cryptography | 46.0.6 | `>=46.0,<47` |
+| bleach | 6.3.0 | `>=6.3,<7` |
+| pydantic | 2.12.5 | `>=2.12,<3` |
+| pydantic-settings | 2.13.1 | `>=2.13,<3` |
+| httpx | 0.28.1 | `>=0.28,<0.29` |
+| idna | 3.11 | `>=3.11,<4` |
+| webauthn | 2.7.1 | `>=2.7,<3` |
+| argon2-cffi | 25.1.0 | `>=25.1,<26` |
+| pyotp | 2.9.0 | `>=2.9,<3` |
+| limits | 5.8.0 | `>=5.8,<6` |
+| aiosmtplib | 5.1.0 | `>=5.1,<6` |
+| babel | 2.18.0 | `>=2.18,<3` |
 
-### Phase 2: Nächster Stabilisierungsschritt
+### Pflege-Regel
 
-```toml
-idna = ">=3.11"                   # Unicode-Fixes
-httpx = ">=0.29"                  # TLS-Hardening
-argon2-cffi = ">=25.2"
-email-validator = ">=2.3"         # RFC-Compliance
-```
+- Patch-Updates innerhalb der stabilen Linie sind erwünscht, sobald die
+  Tests grün bleiben.
+- Major-Upgrades nur nach expliziter Prüfung der betroffenen Oberfläche.
+- Wenn ein Paket keine formale LTS-Linie hat, wird die **aktuell getestete
+  Major-Linie** als LTS-Ersatz behandelt.
 
-**Aktion**: Security-Audit durchführen, CVE-Tracking
+### Beobachtete Upgrade-Kandidaten
 
-### Phase 3: Später, nach Stabilisierung
-
-```toml
-# Neue Security-Features
-structlog = ">=24.0"              # Structured Logging
-# Monitoring
-prometheus-client = ">=0.20"      # Metriken
-# Audit-Log-Immutability
-merkle-tree = ">=0.1"             # Hash-Chain für Audit-Log (falls verfügbar)
-```
-
-**Aktion**: Logging-Infrastruktur aufbauen, Alerting
+- `sqlalchemy 2.1` erst dann anheben, wenn die DB-Tests und die App-Session-
+  Pfade ohne Regression laufen.
+- `quart 0.21` und `hypercorn 0.19` erst nach einem separaten Web-Stack-
+  Durchlauf.
+- `pydantic 3` und `httpx 0.29` nur mit gezielter Kompatibilitätsprüfung.
 
 ---
 
