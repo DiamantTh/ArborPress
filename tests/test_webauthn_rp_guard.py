@@ -118,3 +118,20 @@ class TestAssertRpIdLockedMatch:
         assert exc.value.current == "new.test"
         assert exc.value.expected == "old.test"
         assert exc.value.credential_count >= 1
+
+    async def test_mismatch_locked_with_many_credentials_raises(self, test_engine):
+        factory = _factory(test_engine)
+        async with factory() as db:
+            for _ in range(100):
+                await _add_credential(db)
+            await site_settings.save_section(
+                "webauthn",
+                {"rp_id_last_known": "old.test", "rp_id_locked": True},
+                db,
+                updated_by="test",
+            )
+            site_settings.invalidate_cache("webauthn")
+            with pytest.raises(RPIDChangeBlocked) as exc:
+                await assert_rp_id_locked_match(db, current_rp_id="new.test")
+
+        assert exc.value.credential_count >= 100

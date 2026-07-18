@@ -18,37 +18,15 @@
 
 ## Versionsschema
 
-### Empfehlung: Semantische Versionierung (SemVer) mit Security-Tags
+### Empfehlung: SemVer ohne Vorab-Zeitplan
 
-```
-v0.1.0           → Beta-Release (aktuell)
-v0.2.0           → Security-Hardening & CI/CD
-v1.0.0           → Production-Ready (Hauptversion)
-v1.0.1-sec       → Security-Patch (innerhalb v1.0.x)
-v1.1.0           → Feature-Release (Minor-Bump)
-v2.0.0           → Breaking Changes (neue Architektur, wenn nötig)
-```
+Versionen werden erst beim Release festgelegt. Bis dahin gelten nur
+die branch-internen Labels `alpha`, `beta`, `rc` und `patch-sec`.
 
-**Tagging-Konvention**:
-```bash
-# Feature-Release
-git tag -a v0.2.0 -m "Security-Hardening & DB-backed Settings"
-
-# Security-Patch (out-of-band bei kritischen Bugs)
-git tag -a v1.0.1-sec -m "CRITICAL: Fix RCE in theme loader" -s
-
-# Pre-release für Testing
-git tag -a v0.2.0-rc1 -m "Release Candidate"
-```
-
-### Versionszyklus
-
-| Phase | Zeitrahmen | Focus | Beispiel |
-|-------|-----------|-------|---------|
-| **Alpha** | 0.0.x | Nur Entwickler, Breaking Changes OK | 0.0.3 |
-| **Beta** | 0.1.x–0.x.y | Closed Testing, DB-Migrations testen | 0.1.0 ← **aktuell** |
-| **Release Candidate** | 1.0.0-rc1/2 | Public Security Review | Juli 2026 |
-| **Production (LTS)** | 1.0.x–1.y.z | 12–18 Monate Support | Geplant Aug 2026 |
+**Praktische Regel**:
+- `0.x.y` für laufende Entwicklungs- und Stabilisierungsschritte
+- `1.0.0` erst, wenn die Kern-Sicherheitsblöcke abgeschlossen und validiert sind
+- `x.y.z-sec` nur für kritische, außerplanmäßige Security-Fixes
 
 ---
 
@@ -328,83 +306,27 @@ trivy image --severity HIGH,CRITICAL arborpress:latest
 
 ### ⚠️ KATEGORIE 10: Reverse Proxy-Szenarien
 
-**Status**: DOKUMENTIERT (aber Konfiguration kritisch)
+**Status**: DOKUMENTIERT (essenzielle Blöcke nur)
 
-#### Nginx-Best-Practice (siehe docs/proxy/nginx.conf)
+#### nginx / Apache2
+- Nur diese Blöcke dokumentieren: HTTPS-Redirect, Proxy-Header, Limit/Body-Size, statische Assets, optionales Auth-Rate-Limit.
+- Vollständige vHosts sind bewusst nicht mehr Teil der Doku.
+- `trusted_proxies` muss den echten Hop-Count widerspiegeln.
 
-```nginx
-# ✅ HSTS (diese gehört HIERHER, nicht in App)
-add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+Beispielhafte Kernblöcke stehen in [docs/proxy/nginx.conf](docs/proxy/nginx.conf) und [docs/proxy/apache2.conf](docs/proxy/apache2.conf).
 
-# ✅ Sichere Cipher
-ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:...';
-ssl_protocols TLSv1.2 TLSv1.3;
-ssl_prefer_server_ciphers on;
+#### Traefik
+- Labels sind die bevorzugte Betriebsart.
+- Dokumentiert werden nur: Router, Middleware, Service, Healthcheck.
+- Kein vollständiges `dynamic/*.yml`-Gerüst nötig.
 
-# ✅ Rate Limiting
-limit_req_zone $binary_remote_addr zone=general:10m rate=10r/s;
-limit_req_zone $binary_remote_addr zone=auth:10m rate=10r/m;
-
-location /auth/ {
-  limit_req zone=auth burst=3 nodelay;
-  proxy_pass http://app:8066;
-}
-
-# ✅ Real-IP
-set_real_ip_from 10.0.0.0/8;
-real_ip_header X-Forwarded-For;
-real_ip_recursive on;
-
-# ✅ Body-Size Limit
-client_max_body_size 50M;  # Upload-Limit
-```
-
-#### Traefik-Best-Practice (siehe docs/proxy/traefik.yml)
-
-```yaml
-# ✅ Middleware
-middleware:
-  security:
-    headers:
-      sslRedirect: true
-      sslHost: blog.example.com
-      sslForceHost: true
-      stsSeconds: 31536000
-      stsIncludeSubdomains: true
-      stsPreload: true
-      contentTypeNosniff: true
-      browserXssFilter: true
-      referrerPolicy: "strict-origin-when-cross-origin"
-      permissionsPolicy: "geolocation=(), microphone=()"
-  
-  rateLimitAuth:
-    ratelimit:
-      average: 10
-      period: 60s
-      burst: 3
-      sourceCriterion:
-        requestHeaderName: X-Forwarded-For
-
-# ✅ Router
-routers:
-  arborpress-auth:
-    rule: "Host(`blog.example.com`) && PathPrefix(`/auth/`)"
-    service: backend
-    middlewares:
-      - rateLimitAuth
-      - security
-```
-
-**Kritische Punkte**:
-- ❌ `trusted_proxies` muss = Proxy-Hop-Count sein (z. B. 1 für nginx, 2 für nginx→cloudflare)
-- ⚠️ `X-Forwarded-Proto` muss korrekt sein (sonst SESSION_COOKIE_SECURE wird False)
-- ⚠️ `X-Forwarded-For` muss whitelisted sein (sonst IP-Spoofing)
+Kernbeispiele stehen in [docs/proxy/traefik.yml](docs/proxy/traefik.yml).
 
 ---
 
 ## Abhängigkeiten: Audit & Upgrade-Roadmap
 
-### Phase 1: Sofort (Juli 2026 – vor v0.2.0)
+### Phase 1: Sofort
 
 ```toml
 # pyproject.toml – zu aktualisieren
@@ -417,7 +339,7 @@ bleach = ">=6.3"                  # ← Strengere TAG-Whitelist
 
 **Aktion**: `pip install -U cryptography sqlalchemy && pip-audit`
 
-### Phase 2: Kurzfristig (August 2026 – v0.2.0-rc1)
+### Phase 2: Nächster Stabilisierungsschritt
 
 ```toml
 idna = ">=3.11"                   # Unicode-Fixes
@@ -428,7 +350,7 @@ email-validator = ">=2.3"         # RFC-Compliance
 
 **Aktion**: Security-Audit durchführen, CVE-Tracking
 
-### Phase 3: Mittelfristig (Sept–Okt 2026 – v1.0.0)
+### Phase 3: Später, nach Stabilisierung
 
 ```toml
 # Neue Security-Features
