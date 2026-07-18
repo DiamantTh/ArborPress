@@ -326,12 +326,12 @@ Kernbeispiele stehen in [docs/proxy/traefik.yml](docs/proxy/traefik.yml).
 
 ## Abhängigkeiten: LTS-/Stabilitätsstrategie
 
-ArborPress folgt bewusst einer **tested-major-line**-Strategie: pro Paket
-wird eine aktuell getestete Major-Linie festgelegt und per Upper Bound gegen
-unkontrollierte Sprünge abgesichert. Major-Upgrades erfolgen erst, wenn die
-gesamte Testmatrix erfolgreich ist.
+ArborPress folgt einer dreistufigen Pflege:
 
-### Aktuell getestete Linien
+### Klasse A – Kern/LTS-artig stabil halten
+
+Diese Pakete bleiben auf einer getesteten Major-Linie und werden nur bei
+gezieltem Bedarf angehoben.
 
 | Paket | Getestet | Stabiler Bereich |
 |-------|----------|------------------|
@@ -339,33 +339,57 @@ gesamte Testmatrix erfolgreich ist.
 | hypercorn | 0.18.0 | `>=0.18,<0.19` |
 | sqlalchemy | 2.0.49 | `>=2.0.49,<2.1` |
 | cryptography | 46.0.6 | `>=46.0,<47` |
+| webauthn | 2.7.1 | `>=2.7,<3` |
+
+### Klasse B – regelmäßig patchen
+
+Diese Bibliotheken bleiben innerhalb der getesteten Major-Linie, werden aber
+bei Security- oder Bugfix-Releases regelmäßig aktualisiert.
+
+| Paket | Getestet | Stabiler Bereich |
+|-------|----------|------------------|
 | bleach | 6.3.0 | `>=6.3,<7` |
 | pydantic | 2.12.5 | `>=2.12,<3` |
 | pydantic-settings | 2.13.1 | `>=2.13,<3` |
 | httpx | 0.28.1 | `>=0.28,<0.29` |
 | idna | 3.11 | `>=3.11,<4` |
-| webauthn | 2.7.1 | `>=2.7,<3` |
 | argon2-cffi | 25.1.0 | `>=25.1,<26` |
 | pyotp | 2.9.0 | `>=2.9,<3` |
 | limits | 5.8.0 | `>=5.8,<6` |
 | aiosmtplib | 5.1.0 | `>=5.1,<6` |
 | babel | 2.18.0 | `>=2.18,<3` |
+| pillow | 12.2.0 | `>=12.2,<13` |
+| aiofiles | 24.1.0 | `>=24.1,<25` |
+| python-slugify | 8.0.4 | `>=8.0,<9` |
+| markdown-it-py | 4.0.0 | `>=4.0,<5` |
+| mdit-py-plugins | 0.5.0 | `>=0.5,<1` |
+| zxcvbn | 4.5.0 | `>=4.5,<5` |
+| email-validator | 2.2.0 | `>=2.2,<3` |
+
+### Klasse C – nur bei Bedarf / optionale Backends
+
+Diese Pakete werden nur aktualisiert, wenn die jeweilige Funktionalität
+aktiv genutzt wird oder ein Sicherheitsgrund vorliegt.
+
+| Paket | Getestet | Stabiler Bereich |
+|-------|----------|------------------|
+| asyncpg | 0.31.0 | `>=0.31,<1` |
+| aiomysql | 0.3.x | `>=0.3,<1` |
+| aiosqlite | 0.20.x | `>=0.20,<1` |
+| redis | 5.x | `>=5.0,<6` |
+| valkey | 6.x | `>=6.0,<7` |
+| aiomcache | 0.8.x | `>=0.8,<1` |
+| geoip2 | 4.8.x | `>=4.8,<5` |
+| meilisearch-python-sdk | 3.x | `>=3.0,<4` |
+| typesense | 0.21.x | `>=0.21,<1` |
+| elasticsearch[async] | 8.x | `>=8.0,<9` |
+| markdownify | 1.2.x | `>=1.2,<2` |
 
 ### Pflege-Regel
 
-- Patch-Updates innerhalb der stabilen Linie sind erwünscht, sobald die
-  Tests grün bleiben.
-- Major-Upgrades nur nach expliziter Prüfung der betroffenen Oberfläche.
-- Wenn ein Paket keine formale LTS-Linie hat, wird die **aktuell getestete
-  Major-Linie** als LTS-Ersatz behandelt.
-
-### Beobachtete Upgrade-Kandidaten
-
-- `sqlalchemy 2.1` erst dann anheben, wenn die DB-Tests und die App-Session-
-  Pfade ohne Regression laufen.
-- `quart 0.21` und `hypercorn 0.19` erst nach einem separaten Web-Stack-
-  Durchlauf.
-- `pydantic 3` und `httpx 0.29` nur mit gezielter Kompatibilitätsprüfung.
+- Klasse A: nur gezielte Major-Wechsel nach vollständiger Testmatrix.
+- Klasse B: Patch-/Minor-Updates innerhalb der Linie bevorzugt mitnehmen.
+- Klasse C: nur bei Feature-Nutzung, Security-Fix oder explizitem Bedarf.
 
 ---
 
