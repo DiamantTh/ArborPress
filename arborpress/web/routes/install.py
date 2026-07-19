@@ -143,7 +143,12 @@ async def install_submit():
 
         # 3. Set site title
         async for db in get_db_session():
-            await save_section("general", {"site_title": site_name}, db, by="install")
+            await save_section(
+                "general",
+                {"site_title": site_name},
+                db,
+                updated_by="install",
+            )
 
         # 4. Write installation marker, delete token
         marker = installed_marker_path()
