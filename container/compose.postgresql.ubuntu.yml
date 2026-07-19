@@ -38,7 +38,6 @@ services:
     build:
       context: ..
       dockerfile: container/Containerfile.ubuntu
-    image: arborpress:ubuntu
     restart: unless-stopped
     env_file: ../.env
     environment:
