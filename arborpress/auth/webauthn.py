@@ -13,6 +13,7 @@ guard managed via the admin UI.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from typing import Any
 from urllib.parse import urlparse
@@ -54,11 +55,27 @@ class RPIDChangeBlocked(RuntimeError):
 def _to_punycode(host: str) -> str:
     """Encode IDN hostnames as ASCII (W3C WebAuthn L3 §5.3 requires
     rp.id to be a registrable domain in ASCII)."""
+    # Canonicalize host syntax variants first. Some user-entered base URLs
+    # contain a trailing dot or Unicode dot separators.
+    host = (
+        host.strip()
+        .replace("。", ".")
+        .replace("．", ".")
+        .replace("｡", ".")
+        .rstrip(".")
+        .lower()
+    )
     if host in ("localhost", "127.0.0.1", "::1"):
         return host
+    # IP literals are already ASCII; no IDNA transform needed.
+    try:
+        ipaddress.ip_address(host)
+        return host
+    except ValueError:
+        pass
     try:
         import idna as _idna
-        return _idna.encode(host, alg="TRANSITIONAL").decode("ascii")
+        return _idna.encode(host, uts46=True, transitional=False, std3_rules=True).decode("ascii")
     except Exception:
         try:
             return host.encode("idna").decode("ascii")

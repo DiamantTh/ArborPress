@@ -25,6 +25,10 @@ class TestResolveRpId:
     def test_lowercases_host(self):
         assert wa.resolve_rp_id("https://EXAMPLE.com/") == "example.com"
 
+    def test_unicode_dot_and_trailing_dot(self):
+        # U+3002 IDEOGRAPHIC FULL STOP and trailing dot should canonicalize.
+        assert wa.resolve_rp_id("https://bücher。example./") == "xn--bcher-kva.example"
+
 
 class TestResolveOrigin:
     def test_omits_default_https_port(self):
@@ -39,3 +43,6 @@ class TestResolveOrigin:
     def test_idn_origin_punycode(self):
         origin = wa.resolve_origin("https://bücher.example/")
         assert origin.startswith("https://xn--")
+
+    def test_origin_canonicalizes_trailing_dot(self):
+        assert wa.resolve_origin("https://EXAMPLE.COM.:443/path") == "https://example.com"

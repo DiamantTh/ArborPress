@@ -80,7 +80,7 @@ class TestWebInstall:
                     "site_name": "ArborPress Test",
                     "admin_username": "admin1",
                     "admin_display_name": "Admin",
-                    "admin_email": "admin@example.test",
+                    "admin_email": "admin@example.com",
                 }
             )
             response = await client.post(
