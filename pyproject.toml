@@ -37,7 +37,7 @@ dependencies = [
     "mdit-py-plugins>=0.5,<1",     # Markdown-Erweiterungen (Tasklists, Footnotes)
     # Media
     "pillow>=12.2,<13",           # image handling §1
-    "aiofiles>=24.1,<25",         # async file I/O
+    "aiofiles>=24.1,<26",         # async file I/O
     # Mail §13
     "aiosmtplib>=5.1,<6",         # py3.10+ baseline, aktuelle API
     # Rate-limiting §10
@@ -54,14 +54,14 @@ dependencies = [
     # tomllib ist seit Python 3.11 Bestandteil der Standardbibliothek.
     "pydantic>=2.12,<3",
     "pydantic-settings>=2.13,<3",
-    "packaging>=25.0,<26",
+    "packaging>=25.0,<27",
 ]
 
 [project.optional-dependencies]
  # Klasse C – nur bei Bedarf / Feature-Backends / optionale Integrationen
 dev = [
-    "pytest>=8.0,<9",
-    "pytest-asyncio>=0.23,<1",
+    "pytest>=9.0,<10",
+    "pytest-asyncio>=1.3,<2",
     "httpx>=0.28,<0.29",
     "aiosqlite>=0.20,<1",  # In-Memory-DB für Tests + SQLite-Backend allgemein
     "ruff>=0.4,<1",

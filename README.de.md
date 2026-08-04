@@ -57,9 +57,9 @@ container/                Container-Dateien (OCI – Docker/Podman)
   Containerfile.ubuntu    Produktions-Image auf Ubuntu 24.04 LTS
   Containerfile.ubi9      Produktions-Image auf UBI9 (RHEL9)
   entrypoint.sh           Container-Entrypoint
-  compose.postgresql.yml  Compose: UBI9 + PostgreSQL (RHEL9-Images)
+  compose.postgresql.yml  Compose: UBI9-App + PostgreSQL (Upstream-Image)
   compose.postgresql.ubuntu.yml  Compose: Ubuntu + PostgreSQL
-  compose.mariadb.yml     Compose: UBI9 + MariaDB (RHEL9-Images)
+  compose.mariadb.yml     Compose: UBI9-App + MariaDB (Upstream-Image)
   compose.mariadb.ubuntu.yml     Compose: Ubuntu + MariaDB
 docs/                     Proxy-Konfigurationen + Spezifikation (§0–§17)
 frontend/                 SvelteKit-Frontend (Build-Zeit, §9)
@@ -188,3 +188,9 @@ Audit-Log: Nur relevante Ereignisse, minimale sensitive Daten (§16 no sensitive
 | CLI            | Typer ≥ 0.15                                     |
 | Frontend       | SvelteKit + @simplewebauthn/browser              |
 | Config         | pydantic-settings v2, TOML                       |
+
+## Release-Planung
+
+Fuer den aktuellen Stabilisierungsschritt siehe:
+
+- [0.2.0 Stabilitaets-Checkliste](docs/release-0.2.0-checklist.md)
