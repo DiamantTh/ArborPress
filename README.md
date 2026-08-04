@@ -57,11 +57,11 @@ config/                   Configuration directory
   config.example.toml     Example configuration (→ copy to config/config.toml)
 container/                Container files (OCI – Docker/Podman)
   Containerfile.ubuntu    Production image on Ubuntu 24.04 LTS
-  Containerfile.ubi9      Production image on UBI9 (RHEL9)
+  Containerfile.ubi9      Production image on AlmaLinux 10 (filename retained)
   entrypoint.sh           Container entrypoint
-  compose.postgresql.yml  Compose: UBI9 app + PostgreSQL (upstream image)
+  compose.postgresql.yml  Compose: AlmaLinux app + PostgreSQL (upstream image)
   compose.postgresql.ubuntu.yml  Compose: Ubuntu + PostgreSQL
-  compose.mariadb.yml     Compose: UBI9 app + MariaDB (upstream image)
+  compose.mariadb.yml     Compose: AlmaLinux app + MariaDB (upstream image)
   compose.mariadb.ubuntu.yml     Compose: Ubuntu + MariaDB
 docs/                     Proxy configurations + specification (§0–§17)
 frontend/                 SvelteKit frontend (build-time, §9)
@@ -181,7 +181,7 @@ Audit log: only relevant events, minimal sensitive data (§16 no sensitive data 
 
 | Component      | Technology                                       |
 |----------------|--------------------------------------------------|
-| Backend        | Python 3.12+, Quart (ASGI), Hypercorn            |
+| Backend        | Python 3.13+, Quart (ASGI), Hypercorn            |
 | Database       | PostgreSQL ≥ 16 / MariaDB ≥ 11                   |
 | ORM            | SQLAlchemy 2.0 async + asyncpg / aiomysql        |
 | Auth           | webauthn ≥ 2, argon2-cffi, pyotp                 |

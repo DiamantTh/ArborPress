@@ -1,9 +1,9 @@
 # ======================================================================
-# ArborPress – Docker Compose  (UBI9 + MariaDB)
+# ArborPress – Docker Compose  (AlmaLinux 10 + MariaDB)
 # ======================================================================
 #
 # Genutzte Images:
-#   App:  registry.access.redhat.com/ubi9/python-312   (kostenlos, kein Abo)
+#   App:  AlmaLinux 10 + CPython 3.13 (Source-Build aus Containerfile.ubi9)
 #   DB:   mariadb:11.4
 #
 # Starten:    docker compose -f container/compose.mariadb.yml up -d
@@ -13,17 +13,17 @@
 # !! WICHTIGER HINWEIS – KEIN OS-WECHSEL IM BETRIEB !!
 # -------------------------------------------------------
 # Es existiert auch eine Ubuntu-Variante (compose.mariadb.ubuntu.yml).
-# Ein Wechsel zwischen UBI9 und Ubuntu auf einer laufenden Instanz
+# Ein Wechsel zwischen AlmaLinux und Ubuntu auf einer laufenden Instanz
 # wird AUSDRÜCKLICH NICHT empfohlen:
 #
 # 1) APP-VOLUMES: Pfade und UIDs unterscheiden sich:
-#      UBI9:    /opt/app-root/src/media  /opt/app-root/src/logs  (UID 1001/GID 0)
+#      AlmaLinux: /opt/app-root/src/media  /opt/app-root/src/logs  (UID 1001/GID 0)
 #      Ubuntu:  /app/media  /app/logs                            (UID/GID 1001)
 #
 # 2) MARIADB INNODB (kritisch!):
 #    InnoDB-Tablespaces und Systemtabellen sind an die libc des jeweiligen
-#    Container-Images gebunden. Ein roher Volume-Copy zwischen UBI9 (glibc
-#    RHEL9) und Ubuntu (glibc Noble) führt zu Datenbankkorruption – auch bei
+#    Container-Images gebunden. Ein roher Volume-Copy zwischen AlmaLinux (glibc
+#    EL10) und Ubuntu (glibc Noble) führt zu Datenbankkorruption – auch bei
 #    identischer MariaDB-Version.
 #    Nicht getestet; verlasse dich NICHT darauf.
 #
