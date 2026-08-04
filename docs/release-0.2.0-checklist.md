@@ -72,6 +72,12 @@ Pruefpunkte pro Release:
 - [ ] Testlauf auf 3.13 (empfohlene Produktionslinie)
 - [ ] Testlauf auf aktuellster unterstuetzter Version (derzeit 3.14)
 
+Operativer Hinweis (UBI-only Deployments):
+- Auf `registry.access.redhat.com` ist derzeit kein `ubi9/python-313` Repository
+	verfuegbar; UBI-Container basieren daher vorerst auf Python 3.12.
+- Zielbild bleibt: 3.13 als Produktionslinie, sobald die UBI-Basis verfuegbar ist
+	oder ein freigegebener interner Build-Standard fuer 3.13 existiert.
+
 ## 3. Dependency-Update-Prozess
 
 Prinzip:

@@ -6,11 +6,15 @@
 #        Kommerzielle gehärtete Alternative (Subscription vorausgesetzt):
 #          hub.docker.com/hardened-images/catalog/dhi/python
 #
-# Python-Versionsstatus (Stand März 2026):
+# Python-Versionsstatus (Stand August 2026):
 #   3.10  EOL: Oktober 2026  ← veraltet – nicht mehr verwenden!
 #   3.11  EOL: Oktober 2027
 #   3.12  EOL: Oktober 2028  ← diese Basis  ✓
 #   3.13  EOL: Oktober 2029
+#   3.14  EOL: Oktober 2030
+# Hinweis: Auf registry.access.redhat.com ist derzeit kein
+# ubi9/python-313 Repository verfuegbar; daher bleibt die UBI-Basis
+# vorerst auf python-312.
 #
 # Dieses Image ist DATENBANK-AGNOSTISCH.
 # Es enthält beide Treiber (asyncpg für PostgreSQL und aiomysql für
