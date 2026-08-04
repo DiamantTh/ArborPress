@@ -181,7 +181,7 @@ Audit log: only relevant events, minimal sensitive data (§16 no sensitive data 
 
 | Component      | Technology                                       |
 |----------------|--------------------------------------------------|
-| Backend        | Python 3.11+, Quart (ASGI), Hypercorn            |
+| Backend        | Python 3.12+, Quart (ASGI), Hypercorn            |
 | Database       | PostgreSQL ≥ 16 / MariaDB ≥ 11                   |
 | ORM            | SQLAlchemy 2.0 async + asyncpg / aiomysql        |
 | Auth           | webauthn ≥ 2, argon2-cffi, pyotp                 |

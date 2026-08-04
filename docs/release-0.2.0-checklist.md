@@ -58,17 +58,18 @@ Nachweisartefakte:
 ## 2. Python-Support-Policy
 
 Gueltig fuer 0.2.x:
-- Support: CPython 3.11 bis 3.14
-- Produktions-Empfehlung: CPython 3.12 (Container-Basis und breite Wheel-Abdeckung)
-- Mindestversion im Paket: `requires-python >=3.11`
+- Support: CPython 3.12 bis 3.14
+- Produktions-Empfehlung: CPython 3.13 (reifer als 3.14, deutlich moderner als 3.11)
+- Aktive Kompatibilitaetspruefung: CPython 3.14 (fruehe Regressionserkennung)
+- Mindestversion im Paket: `requires-python >=3.12`
 
 Lebenszyklusregel:
 - Eine Python-Version wird spaetestens im naechsten Minor-Release nach Upstream-EOL als "deprecated" markiert.
 - Entfernung erfolgt fruehestens ein Minor-Release spaeter, mit Migrationshinweis.
 
 Pruefpunkte pro Release:
-- [ ] Testlauf auf 3.11
-- [ ] Testlauf auf 3.12
+- [ ] Testlauf auf 3.12 (Mindestlinie)
+- [ ] Testlauf auf 3.13 (empfohlene Produktionslinie)
 - [ ] Testlauf auf aktuellster unterstuetzter Version (derzeit 3.14)
 
 ## 3. Dependency-Update-Prozess
