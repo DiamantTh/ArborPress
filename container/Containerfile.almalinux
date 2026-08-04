@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # ======================================================================
 # ArborPress – Produktions-Image  (AlmaLinux 10)
-# Datei-Name historisch: Containerfile.ubi9
+# Datei-Name: Containerfile.almalinux
 #
 # Ziel: Python 3.13 als Mindestlinie trotz fehlender UBI-3.13-Base-Images.
 # Daher wird CPython 3.13 aus Source gebaut und in ein schlankes Runtime-

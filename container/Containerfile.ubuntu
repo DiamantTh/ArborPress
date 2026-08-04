@@ -21,7 +21,7 @@
 #
 # !! WICHTIGER HINWEIS – KEIN OS-WECHSEL IM BETRIEB !!
 # -------------------------------------------------------
-# Es existiert auch eine UBI9-Variante (Containerfile.ubi9).
+# Es existiert auch eine AlmaLinux-Variante (Containerfile.almalinux).
 # Ein Wechsel des Basis-OS (UBI9 ↔ Ubuntu) auf einer laufenden Instanz
 # wird AUSDRÜCKLICH NICHT empfohlen:
 #

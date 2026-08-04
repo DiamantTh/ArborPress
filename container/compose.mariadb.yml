@@ -3,7 +3,7 @@
 # ======================================================================
 #
 # Genutzte Images:
-#   App:  AlmaLinux 10 + CPython 3.13 (Source-Build aus Containerfile.ubi9)
+#   App:  AlmaLinux 10 + CPython 3.13 (Source-Build aus Containerfile.almalinux)
 #   DB:   mariadb:11.4
 #
 # Starten:    docker compose -f container/compose.mariadb.yml up -d
@@ -37,7 +37,7 @@ services:
   app:
     build:
       context: ..
-      dockerfile: container/Containerfile.ubi9
+      dockerfile: container/Containerfile.almalinux
     restart: unless-stopped
     env_file: ../.env
     environment:

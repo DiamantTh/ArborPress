@@ -55,7 +55,7 @@ config/                   Konfigurationsverzeichnis
   config.example.toml     Beispielkonfiguration (→ config/config.toml kopieren)
 container/                Container-Dateien (OCI – Docker/Podman)
   Containerfile.ubuntu    Produktions-Image auf Ubuntu 24.04 LTS
-  Containerfile.ubi9      Produktions-Image auf AlmaLinux 10 (Dateiname bleibt)
+  Containerfile.almalinux Produktions-Image auf AlmaLinux 10
   entrypoint.sh           Container-Entrypoint
   compose.postgresql.yml  Compose: AlmaLinux-App + PostgreSQL (Upstream-Image)
   compose.postgresql.ubuntu.yml  Compose: Ubuntu + PostgreSQL
