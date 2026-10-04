@@ -394,24 +394,38 @@ def _require_admin_session() -> None:
     """Validates admin session. Raises 401/403 if not authenticated (§2)."""
     if not session.get("user_id"):
         abort(401, "Authentifizierung erforderlich")
+    if session.get("recovery_only"):
+        abort(403, "Recovery-only session")
     if session.get("user_role", "") not in _ADMIN_ROLES:
         abort(403, "Unzureichende Berechtigungen")
 
 
-def _require_stepup(operation: str) -> None:
+async def _require_stepup(operation: str, target: str | None = None) -> None:
     """Validates step-up session for sensitive operations (§2)."""
     from quart import session
 
     from arborpress.auth.stepup import assert_stepup
     try:
-        assert_stepup(session, session.get("user_id"), operation)
+        await assert_stepup(session, session.get("user_id"), operation, target=target)
     except PermissionError as exc:
         abort(403, str(exc))
 
 
 @api_admin_bp.before_request
-def _admin_api_guard():
+async def _admin_api_guard():
     _origin_check()
+    if not session.get("user_id") or session.get("recovery_only"):
+        abort(401, "Authentifizierung erforderlich")
+    from arborpress.core.db import get_db_session
+
+    async for db in get_db_session():
+        from arborpress.auth.sessions import refresh_session_identity
+
+        if await refresh_session_identity(db, session) is None:
+            session.clear()
+            abort(401, "Session expired or revoked")
+        await db.commit()
+        break
     _require_admin_session()
 
 
@@ -597,7 +611,7 @@ async def admin_api_post_update(slug: str):
 async def admin_api_post_delete(slug: str):
     """Admin: Post löschen (§8) – editor or above."""
     require_role("editor")
-    _require_stepup("delete_post")
+    await _require_stepup("delete_post", target=slug)
 
     from arborpress.core.db import get_db_session
     from arborpress.models.content import Post
@@ -618,7 +632,7 @@ async def admin_api_post_delete(slug: str):
 async def admin_api_user_set_role(username: str):
     """Admin: Benutzerrolle setzen – nur Admins (§2, §8)."""
     require_role("admin")
-    _require_stepup("change_roles")
+    await _require_stepup("change_roles", target=username.lower())
 
     data = await request.get_json(silent=True) or {}
     new_role = data.get("role", "")
@@ -638,6 +652,17 @@ async def admin_api_user_set_role(username: str):
         )).scalar_one_or_none()
         if user is None:
             abort(404)
+        if user.role.value == "admin" and role_enum.value != "admin":
+            from arborpress.auth.policy import is_last_active_admin
+            if await is_last_active_admin(db, user):
+                from arborpress.core.audit import write_audit_event
+                await write_audit_event(
+                    event_type="auth_lockout_prevention", outcome="blocked",
+                    actor_id=str(session.get("user_id")), target_id=str(user.id),
+                    detail="last_active_admin_demotion", db=db,
+                )
+                await db.commit()
+                abort(409, "The last active administrator cannot be demoted")
         user.role = role_enum
         db.add(user)
         await db.commit()
@@ -648,7 +673,7 @@ async def admin_api_user_set_role(username: str):
 async def admin_api_set_auth_policy():
     """Admin: Auth-Policy setzen – nur Admins (§2, §8)."""
     require_role("admin")
-    _require_stepup("modify_auth_policy")
+    await _require_stepup("modify_auth_policy", target="instance")
     data = await request.get_json()
     return jsonify({"status": "policy_updated", "data": data})
 
@@ -657,7 +682,7 @@ async def admin_api_set_auth_policy():
 async def admin_api_plugin_enable(plugin_id: str):
     """Admin: Plugin aktivieren – nur Admins (§15, §2)."""
     require_role("admin")
-    _require_stepup("install_plugin")
+    await _require_stepup("enable_plugin", target=plugin_id)
     from arborpress.plugins.registry import get_registry
     reg = get_registry()
     plugin = reg.get(plugin_id)
@@ -670,6 +695,7 @@ async def admin_api_plugin_enable(plugin_id: str):
 async def admin_api_plugin_disable(plugin_id: str):
     """Admin: Plugin deaktivieren – nur Admins (§15)."""
     require_role("admin")
+    await _require_stepup("disable_plugin", target=plugin_id)
     from arborpress.plugins.registry import get_registry
     reg = get_registry()
     plugin = reg.get(plugin_id)
@@ -1040,4 +1066,3 @@ async def admin_api_post_export(slug: str):
             mimetype="application/xml; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{slug}.xml"'},
         )
-

@@ -101,10 +101,11 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def create_all_tables() -> None:
-    """Create all tables (dev/test – production: Alembic).
+    """Create tables and apply the repository's additive DB migrations.
 
-    Also runs lightweight column migrations for tables that already exist,
-    so that an existing installation is upgraded without data loss.
+    ``arborpress db migrate`` and the production container entrypoint call
+    this idempotent migration path. Existing auth rows are retained and the
+    legacy transport column is copied into its new list representation.
     """
     engine = get_engine()
     async with engine.begin() as conn:
@@ -112,6 +113,28 @@ async def create_all_tables() -> None:
         # Idempotent column additions for existing databases
         await _add_column_if_missing(conn, "comments", "country_code", "VARCHAR(2)")
         await _add_column_if_missing(conn, "comments", "rdap_json", "TEXT")
+        # Auth schema evolution is additive: legacy credentials, MFA devices,
+        # users, and sessions remain intact during upgrades.
+        for column, col_type in (
+            ("aaguid", "VARCHAR(64)"),
+            ("transports", "TEXT"),
+            ("authenticator_attachment", "VARCHAR(32)"),
+            ("backup_eligible", "BOOLEAN"),
+            ("backup_state", "BOOLEAN"),
+            ("verification_status", "VARCHAR(32) NOT NULL DEFAULT 'unknown'"),
+        ):
+            await _add_column_if_missing(conn, "webauthn_credentials", column, col_type)
+        await _add_column_if_missing(
+            conn, "user_sessions", "auth_method", "VARCHAR(64) NOT NULL DEFAULT 'unknown'"
+        )
+        await _add_column_if_missing(
+            conn, "user_sessions", "assurance_level", "VARCHAR(32) NOT NULL DEFAULT 'unknown'"
+        )
+        await _add_column_if_missing(
+            conn, "mfa_devices", "verification_status", "VARCHAR(32) NOT NULL DEFAULT 'unknown'"
+        )
+        await _add_column_if_missing(conn, "audit_events", "target_id", "VARCHAR(36)")
+        await _backfill_legacy_transports(conn)
 
 
 async def _add_column_if_missing(
@@ -162,8 +185,28 @@ async def _add_column_if_missing(
                 await conn.execute(
                     sa.text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
                 )
-    except Exception:  # noqa: BLE001
-        import logging
-        logging.getLogger("arborpress.db").debug(
-            "Column migration skipped for %s.%s (may already exist)", table, column
-        )
+    except Exception as exc:  # noqa: BLE001
+        # Do not hide production schema failures. A deployment must not start
+        # with a half-applied security migration.
+        log.exception("Column migration failed for %s.%s", table, column)
+        raise RuntimeError(f"Failed to migrate {table}.{column}") from exc
+
+
+async def _backfill_legacy_transports(conn) -> None:
+    """Copy the old single `transport` value into the new JSON list field."""
+    import json
+    import sqlalchemy as sa
+
+    result = await conn.execute(sa.text(
+        "SELECT id, transport FROM webauthn_credentials "
+        "WHERE transports IS NULL AND transport IS NOT NULL"
+    ))
+    for credential_id, transport in result.fetchall():
+        value = str(transport).strip()
+        if value:
+            await conn.execute(
+                sa.text(
+                    "UPDATE webauthn_credentials SET transports = :transports WHERE id = :id"
+                ),
+                {"transports": json.dumps([value]), "id": credential_id},
+            )

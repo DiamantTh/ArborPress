@@ -8,30 +8,26 @@
   <h1>{{ _('Sicherheitsschlüssel registrieren') }}</h1>
 
   <p class="auth-box__hint">
-    {{ _('Registriere einen Hardware-Token, Passkey oder biometrischen Schlüssel.') }}
+    {% if initial_enrollment %}
+      {{ _('Richte den ersten FIDO2-Sicherheitsschlüssel für %(user)s ein.', user=prefill_username) }}
+    {% else %}
+      {{ _('Füge einen Authenticator zu deinem angemeldeten Konto hinzu. Eine frische WebAuthn-Bestätigung ist erforderlich.') }}
+    {% endif %}
   </p>
 
   <form id="register-form" class="auth-form">
-    <div class="form-group">
-      <label for="user_name">{{ _('Benutzername') }}</label>
-      <input type="text" id="user_name" name="user_name" autocomplete="username"
-             autofocus required maxlength="64" pattern="[a-z0-9._-]+"
-             title="{{ _('Nur Kleinbuchstaben, Ziffern, . _ -') }}"
-             value="{{ prefill_username | default('') }}">
-    </div>
-    <div class="form-group">
-      <label for="display_name">{{ _('Anzeigename') }}</label>
-      <input type="text" id="display_name" name="display_name"
-             autocomplete="name" maxlength="128">
-    </div>
+    <p><strong>{{ _('Konto') }}:</strong> {{ prefill_username }}</p>
     <div class="form-group">
       <label for="key_label">{{ _('Schlüssel-Bezeichnung') }}</label>
       <input type="text" id="key_label" name="key_label"
-             placeholder="{{ _('z. B. YubiKey 5 Nano') }}" maxlength="64">
+             placeholder="{{ _('z. B. Arbeitsschlüssel') }}" maxlength="128">
       <small>{{ _('Hilft dir, mehrere Schlüssel zu unterscheiden (§2).') }}</small>
     </div>
-    <button type="submit" class="btn btn--primary" id="register-btn">
-      {{ _('Schlüssel registrieren') }}
+    <button type="submit" class="btn btn--primary" id="register-btn" value="security_key">
+      {{ _('FIDO2-Sicherheitsschlüssel hinzufügen (empfohlen)') }}
+    </button>
+    <button type="submit" class="btn" id="passkey-register-btn" value="passkey">
+      {{ _('Passkey / anderes Gerät hinzufügen') }}
     </button>
   </form>
 

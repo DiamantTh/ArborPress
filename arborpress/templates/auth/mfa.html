@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ _('Zweite Authentifizierung') }}{% endblock %}
+{% set noindex = true %}
+{% block body_class %}auth-page{% endblock %}
+
+{% block content %}
+<div class="auth-box">
+  <h1>{{ _('Zweite Authentifizierung') }}</h1>
+  <p class="auth-box__hint">{{ _('Bestätige den Login mit einem registrierten Authenticator.') }}</p>
+  {% if 'webauthn' in methods %}
+  <button type="button" class="btn btn--primary" id="mfa-webauthn">
+    {{ _('Mit FIDO2-Sicherheitsschlüssel bestätigen') }}
+  </button>
+  {% endif %}
+  {% if 'totp' in methods %}
+  <form id="mfa-totp-form" class="auth-form">
+    <label for="totp-code">{{ _('Authenticator-Code') }}</label>
+    <input id="totp-code" inputmode="numeric" autocomplete="one-time-code" required>
+    <button type="submit" class="btn">{{ _('Mit TOTP bestätigen') }}</button>
+  </form>
+  {% endif %}
+  <p class="flash--error" id="mfa-error" hidden></p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='js/auth-mfa.js') }}"></script>
+{% endblock %}

@@ -187,6 +187,9 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "hibp_max_count": 0,    # 0 = reject any breach hit
         "hibp_timeout":   3.0,  # seconds
         "hibp_fail_open": True, # do not block on network errors
+        "totp_credential_limit": 5,
+        "hotp_credential_limit": 10,
+        "plugin_mfa_limit": 20,
     },
     # ---------------------------------------------------------------------
     # webauthn – Passkey / FIDO2 policy.
@@ -246,16 +249,19 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
     # the change must pass through the rp_id_locked guard below.
     # ---------------------------------------------------------------------
     "webauthn": {
-        "user_verification":         "preferred",
+        # UV is required for passwordless login, MFA, and step-up.
+        "user_verification":         "required",
         "resident_key":              "preferred",
         "attestation":               "none",
         "authenticator_attachment":  "",       # "" | "platform" | "cross-platform"
         "algorithms":                [-7, -257],
         "timeout_ms":                60_000,
         "challenge_ttl_seconds":     300,
+        "webauthn_credential_limit": 10,
         "conditional_ui_enabled":    True,
         "signal_api_enabled":        True,
         "require_2fa_after_passkey": False,
+        "require_mfa_after_sso":     False,
         "counter_strict":            False,
         # Domain-change guard
         "rp_id_locked":              True,
@@ -376,6 +382,9 @@ _SECURITY_FIELDS: dict[str, type] = {
     "hibp_max_count": int,
     "hibp_timeout":   float,
     "hibp_fail_open": bool,
+    "totp_credential_limit": int,
+    "hotp_credential_limit": int,
+    "plugin_mfa_limit": int,
 }
 
 _SECURITY_BOUNDS: dict[str, tuple[float, float]] = {
@@ -384,6 +393,9 @@ _SECURITY_BOUNDS: dict[str, tuple[float, float]] = {
     "legacy_password_min_score":  (0, 4),
     "hibp_max_count": (0, 10_000_000),
     "hibp_timeout":   (0.5, 30.0),
+    "totp_credential_limit": (1, 50),
+    "hotp_credential_limit": (1, 50),
+    "plugin_mfa_limit": (1, 50),
 }
 
 
@@ -483,9 +495,11 @@ _WEBAUTHN_FIELDS: dict[str, type] = {
     "algorithms":                list,
     "timeout_ms":                int,
     "challenge_ttl_seconds":     int,
+    "webauthn_credential_limit": int,
     "conditional_ui_enabled":    bool,
     "signal_api_enabled":        bool,
     "require_2fa_after_passkey": bool,
+    "require_mfa_after_sso":     bool,
     "counter_strict":            bool,
     "rp_id_locked":              bool,
     "rp_id_last_known":          str,
@@ -506,6 +520,7 @@ _WEBAUTHN_BOUNDS: dict[str, tuple[float, float]] = {
     # W3C WebAuthn L3 §5.4 / §5.5 RECOMMENDED upper bound 600 000 ms
     "timeout_ms":            (30_000, 600_000),
     "challenge_ttl_seconds": (60, 900),
+    "webauthn_credential_limit": (1, 100),
 }
 
 # IANA COSE algorithm registry (RFC 9053). ArborPress whitelists the
@@ -520,6 +535,19 @@ async def get_webauthn_settings(db: Any) -> dict[str, Any]:
     for key, value in db_values.items():
         if key in _WEBAUTHN_FIELDS:
             merged[key] = value
+    # A legacy row with "preferred" must never weaken passwordless login,
+    # MFA, or step-up verification after this upgrade.
+    merged["user_verification"] = "required"
+    try:
+        ttl = int(merged.get("challenge_ttl_seconds", 300))
+    except (TypeError, ValueError):
+        ttl = 300
+    merged["challenge_ttl_seconds"] = min(900, max(60, ttl))
+    try:
+        credential_limit = int(merged.get("webauthn_credential_limit", 10))
+    except (TypeError, ValueError):
+        credential_limit = 10
+    merged["webauthn_credential_limit"] = min(100, max(1, credential_limit))
     return merged
 
 
@@ -570,5 +598,10 @@ def coerce_webauthn_payload(payload: dict[str, Any]) -> dict[str, Any]:
                         f"{sorted(_WEBAUTHN_ALGORITHMS_ALLOWED)}"
                     )
         cleaned[key] = value
+
+    # Keep the security baseline fixed even if an old database row or a
+    # manually crafted settings request still says "preferred".
+    if cleaned.get("user_verification") not in (None, "required"):
+        raise ValueError("user_verification must be 'required'")
 
     return cleaned

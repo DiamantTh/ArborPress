@@ -15,19 +15,25 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import base64
+import re
 from typing import Any
 from urllib.parse import urlparse
 
 import webauthn
 from webauthn.helpers.structs import (
     AuthenticationCredential,
+    AuthenticatorAttachment,
     PublicKeyCredentialCreationOptions,
+    PublicKeyCredentialDescriptor,
     PublicKeyCredentialRequestOptions,
+    PublicKeyCredentialType,
     RegistrationCredential,
 )
 
 log = logging.getLogger("arborpress.auth.webauthn")
 audit = logging.getLogger("arborpress.audit")
+_DEFAULT_ATTACHMENT = object()
 
 
 class RPIDChangeBlocked(RuntimeError):
@@ -46,6 +52,20 @@ class RPIDChangeBlocked(RuntimeError):
         self.current = current
         self.expected = expected
         self.credential_count = credential_count
+
+
+def decode_credential_id(value: str) -> bytes:
+    """Decode a WebAuthn credential id (Base64URL, never hexadecimal)."""
+    if not isinstance(value, str) or not value or not re.fullmatch(r"[A-Za-z0-9_-]+={0,2}", value):
+        raise ValueError("invalid WebAuthn credential id")
+    try:
+        unpadded = value.rstrip("=")
+        decoded = base64.urlsafe_b64decode(unpadded + "=" * (-len(unpadded) % 4))
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError("invalid WebAuthn credential id") from exc
+    if not decoded:
+        raise ValueError("empty WebAuthn credential id")
+    return decoded
 
 
 # ---------------------------------------------------------------------------
@@ -192,22 +212,27 @@ class WebAuthnService:
         rp_name: str,
         origin: str,
         *,
-        user_verification: str = "preferred",
+        user_verification: str = "required",
         resident_key: str = "preferred",
         attestation: str = "none",
         authenticator_attachment: str = "",
         algorithms: list[int] | None = None,
         timeout_ms: int = 60_000,
+        counter_strict: bool = False,
     ) -> None:
         self.rp_id = rp_id
         self.rp_name = rp_name
         self.origin = origin
-        self.user_verification = user_verification
+        # User verification is the ArborPress baseline for every assertion
+        # and registration ceremony. Legacy settings may still contain
+        # "preferred", but they cannot weaken the effective policy.
+        self.user_verification = "required"
         self.resident_key = resident_key
         self.attestation = attestation
         self.authenticator_attachment = authenticator_attachment or None
         self.algorithms = algorithms or [-7, -257]
         self.timeout_ms = timeout_ms
+        self.counter_strict = counter_strict
 
     # ------------------------------------------------------------------
     # Registrierung
@@ -219,6 +244,7 @@ class WebAuthnService:
         user_name: str,
         user_display_name: str,
         existing_credentials: list[bytes] | None = None,
+        authenticator_attachment: str | None | object = _DEFAULT_ATTACHMENT,
     ) -> PublicKeyCredentialCreationOptions:
         kwargs: dict[str, Any] = dict(
             rp_id=self.rp_id,
@@ -227,7 +253,9 @@ class WebAuthnService:
             user_name=user_name,
             user_display_name=user_display_name,
             exclude_credentials=[
-                {"id": cred, "type": "public-key"}
+                PublicKeyCredentialDescriptor(
+                    id=cred, type=PublicKeyCredentialType.PUBLIC_KEY
+                )
                 for cred in (existing_credentials or [])
             ],
             timeout=self.timeout_ms,
@@ -240,12 +268,29 @@ class WebAuthnService:
                 AuthenticatorSelectionCriteria,
                 ResidentKeyRequirement,
                 UserVerificationRequirement,
+                COSEAlgorithmIdentifier,
             )
             kwargs["attestation"] = AttestationConveyancePreference(self.attestation)
             kwargs["authenticator_selection"] = AuthenticatorSelectionCriteria(
                 resident_key=ResidentKeyRequirement(self.resident_key),
                 user_verification=UserVerificationRequirement(self.user_verification),
+                authenticator_attachment=(
+                    AuthenticatorAttachment(
+                        self.authenticator_attachment
+                        if authenticator_attachment is _DEFAULT_ATTACHMENT
+                        else authenticator_attachment
+                    )
+                    if (
+                        self.authenticator_attachment
+                        if authenticator_attachment is _DEFAULT_ATTACHMENT
+                        else authenticator_attachment
+                    )
+                    else None
+                ),
             )
+            kwargs["supported_pub_key_algs"] = [
+                COSEAlgorithmIdentifier(value) for value in self.algorithms
+            ]
         except Exception as exc:  # pragma: no cover – fall back to library defaults
             log.warning("WebAuthn enum mapping unavailable, using defaults: %s", exc)
         return webauthn.generate_registration_options(**kwargs)
@@ -271,13 +316,17 @@ class WebAuthnService:
         self,
         allowed_credentials: list[bytes] | None = None,
     ) -> PublicKeyCredentialRequestOptions:
+        from webauthn.helpers.structs import UserVerificationRequirement
+
         return webauthn.generate_authentication_options(
             rp_id=self.rp_id,
             allow_credentials=[
-                {"id": cred, "type": "public-key"}
+                PublicKeyCredentialDescriptor(
+                    id=cred, type=PublicKeyCredentialType.PUBLIC_KEY
+                )
                 for cred in (allowed_credentials or [])
             ],
-            user_verification=self.user_verification,
+            user_verification=UserVerificationRequirement.REQUIRED,
             timeout=self.timeout_ms,
         )
 
@@ -294,7 +343,10 @@ class WebAuthnService:
             expected_rp_id=self.rp_id,
             expected_origin=self.origin,
             credential_public_key=credential_public_key,
-            credential_current_sign_count=current_sign_count,
+            # py_webauthn rejects non-increasing counters by default. Synced
+            # authenticators commonly return zero or repeat counters, so only
+            # pass the stored counter when the explicit strict policy is on.
+            credential_current_sign_count=(current_sign_count if self.counter_strict else 0),
             require_user_verification=(self.user_verification == "required"),
         )
 
@@ -323,11 +375,11 @@ async def build_webauthn_service(db: Any, base_url: str) -> WebAuthnService:
         rp_id=rp_id,
         rp_name=rp_name,
         origin=origin,
-        user_verification=settings.get("user_verification", "preferred"),
+        user_verification="required",
         resident_key=settings.get("resident_key", "preferred"),
         attestation=settings.get("attestation", "none"),
         authenticator_attachment=settings.get("authenticator_attachment", ""),
         algorithms=settings.get("algorithms", [-7, -257]),
         timeout_ms=int(settings.get("timeout_ms", 60_000)),
+        counter_strict=bool(settings.get("counter_strict", False)),
     )
-

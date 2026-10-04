@@ -40,10 +40,10 @@ class TestCoerceWebAuthnPayload:
         assert cleaned["counter_strict"] is True
 
     def test_drops_unknown_keys(self):
-        cleaned = site_settings.coerce_webauthn_payload(
-            {"evil": "x", "user_verification": "preferred"}
-        )
-        assert cleaned == {"user_verification": "preferred"}
+        cleaned = site_settings.coerce_webauthn_payload({"evil": "x"})
+        assert cleaned == {}
+        with pytest.raises(ValueError, match="must be 'required'"):
+            site_settings.coerce_webauthn_payload({"user_verification": "preferred"})
 
     def test_rejects_invalid_enum(self):
         with pytest.raises(ValueError, match="user_verification"):
@@ -71,7 +71,7 @@ class TestGetWebAuthnSettings:
             wa = await site_settings.get_webauthn_settings(db)
 
         # W3C / passkeys.dev recommended defaults
-        assert wa["user_verification"] == "preferred"
+        assert wa["user_verification"] == "required"
         assert wa["resident_key"] == "preferred"
         assert wa["attestation"] == "none"
         assert wa["algorithms"] == [-7, -257]

@@ -1,7 +1,7 @@
 """TOTP/HOTP service (§3 – system-level MFA module).
 
-SHA-256 minimum, 6–8 digits configurable.
-Multiple MFA devices per account supported (named, max. MFA_MAX_DEVICES).
+SHA-256 minimum, 8 digits by default. TOTP, HOTP, and plugin device limits
+are independent instance settings.
 """
 
 from __future__ import annotations
@@ -24,8 +24,49 @@ _DIGITS = 8
 _DIGEST = hashlib.sha256
 _INTERVAL = 30  # TOTP window in seconds
 
-# Maximum number of MFA devices (TOTP+HOTP+plugin) per account
+# Retained as a deprecated import alias for older extensions. New code uses
+# per-factor policies and never applies this value across factor types.
 MFA_MAX_DEVICES: int = 20
+
+
+def encrypt_secret(secret: bytes) -> bytes:
+    """Encrypt an OTP secret with the instance session key."""
+    import base64
+    import hashlib
+
+    from cryptography.fernet import Fernet
+    from arborpress.core.config import get_settings
+
+    key = base64.urlsafe_b64encode(
+        hashlib.sha256(get_settings().web.secret_key.get_secret_value().encode()).digest()
+    )
+    return Fernet(key).encrypt(secret)
+
+
+def decrypt_secret(secret_enc: bytes) -> bytes:
+    """Decrypt a persisted OTP secret."""
+    import base64
+    import hashlib
+
+    from cryptography.fernet import Fernet
+    from arborpress.core.config import get_settings
+
+    key = base64.urlsafe_b64encode(
+        hashlib.sha256(get_settings().web.secret_key.get_secret_value().encode()).digest()
+    )
+    return Fernet(key).decrypt(secret_enc)
+
+
+async def get_device_limit(db, device_type) -> int:
+    """Resolve the independent instance limit for one MFA provider type."""
+    from arborpress.core.site_settings import get_security_settings
+
+    settings = await get_security_settings(db)
+    if str(getattr(device_type, "value", device_type)) == "totp":
+        return min(50, max(1, int(settings.get("totp_credential_limit", 5))))
+    if str(getattr(device_type, "value", device_type)) == "hotp":
+        return min(50, max(1, int(settings.get("hotp_credential_limit", 10))))
+    return min(50, max(1, int(settings.get("plugin_mfa_limit", 20))))
 
 
 class TOTPService:

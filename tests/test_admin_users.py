@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import uuid
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -69,7 +70,12 @@ class TestAdminBreakglassUsers:
             sess["user_role"] = "admin"
             sess["account_type"] = "operational"
             sess["session_id"] = session_id
-            grant_stepup(sess, user_id=admin_user_id)
+            await grant_stepup(
+                sess,
+                user_id=admin_user_id,
+                action="set_breakglass_password",
+                target=target_user_id,
+            )
             sess["_csrf_token"] = "test-token"
 
         response = await client.post(
@@ -92,5 +98,88 @@ class TestAdminBreakglassUsers:
             target_user = await db.get(User, target_user_id)
             assert target_user is not None
             assert target_user.legacy_password_enabled is True
-            assert target_user.legacy_password_hash is not None
-            assert target_user.legacy_password_hash != hash_password("correct horse battery staple")
+        assert target_user.legacy_password_hash is not None
+        assert target_user.legacy_password_hash != hash_password("correct horse battery staple")
+
+    @pytest.mark.asyncio
+    async def test_admin_authenticator_reset_is_audited_and_revokes_sessions(
+        self, client, test_engine, monkeypatch
+    ):
+        from arborpress.core.config import Settings
+
+        cfg = Settings()
+        cfg.auth.legacy_password_enabled = True
+        monkeypatch.setattr("arborpress.web.routes.admin.get_settings", lambda: cfg)
+        admin_name = f"reset-admin-{uuid.uuid4().hex[:8]}"
+        target_name = f"reset-target-{uuid.uuid4().hex[:8]}"
+        admin_user_id, session_id = await _seed_admin_user(test_engine, username=admin_name)
+        target_user_id = await _seed_target_user(test_engine, username=target_name)
+
+        factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+        async with factory() as db:
+            from arborpress.models.user import MFADevice, MFADeviceType, User, UserSession, WebAuthnCredential
+
+            target = await db.get(User, target_user_id)
+            target.legacy_password_enabled = True
+            target.legacy_password_hash = hash_password("correct horse battery staple")
+            credential = WebAuthnCredential(
+                user_id=target_user_id,
+                label="Lost key",
+                credential_id=uuid.uuid4().bytes,
+                public_key=b"test-public-key",
+            )
+            totp = MFADevice(
+                user_id=target_user_id,
+                device_type=MFADeviceType.TOTP,
+                label="Lost phone",
+                secret_enc=b"encrypted-secret",
+                is_active=True,
+                verification_status="verified",
+            )
+            target_session = UserSession(
+                user_id=target_user_id,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                last_seen_at=datetime.now(UTC),
+                is_valid=True,
+                is_tls=False,
+                is_cli=False,
+            )
+            db.add_all([credential, totp, target_session])
+            await db.commit()
+            target_session_id = target_session.id
+
+        async with client.session_transaction() as sess:
+            sess["user_id"] = admin_user_id
+            sess["user_name"] = admin_name
+            sess["user_role"] = "admin"
+            sess["account_type"] = "operational"
+            sess["session_id"] = session_id
+            await grant_stepup(
+                sess,
+                user_id=admin_user_id,
+                action="admin_credential_reset",
+                target=target_user_id,
+            )
+            sess["_csrf_token"] = "test-token"
+
+        response = await client.post(
+            f"/admin/users/{target_user_id}/auth-reset",
+            form={"_csrf": "test-token", "confirm_username": target_name},
+        )
+        assert response.status_code == 200
+
+        async with factory() as db:
+            from sqlalchemy import func, select
+            from arborpress.models.user import MFADevice, UserSession, WebAuthnCredential
+
+            credential_count = (await db.execute(
+                select(func.count()).select_from(WebAuthnCredential).where(
+                    WebAuthnCredential.user_id == target_user_id
+                )
+            )).scalar_one()
+            revoked_totp = await db.get(MFADevice, str(totp.id))
+            revoked_session = await db.get(UserSession, target_session_id)
+        assert credential_count == 0
+        assert revoked_totp is not None and not revoked_totp.is_active
+        assert revoked_totp.verification_status == "revoked"
+        assert revoked_session is not None and not revoked_session.is_valid

@@ -25,6 +25,8 @@
 <div class="alert alert-warning">
   <strong>Step-up-Authentifizierung erforderlich.</strong>
   Bitte bestätigen Sie Ihre Identität, bevor Sie Änderungen vornehmen.
+  <button id="stepup-btn" class="btn btn-sm btn-primary"
+          data-action="change_webauthn_settings" data-target="instance">Jetzt authentifizieren</button>
 </div>
 {% endif %}
 
@@ -48,23 +50,16 @@
 </section>
 
 <form method="POST" action="{{ url_for('admin.webauthn_update') }}" class="admin-form"
-      id="webauthn-form" {% if not stepup_active %}inert{% endif %}>
+      id="webauthn-form" data-stepup-action="change_webauthn_settings" data-stepup-target="instance"
+      data-stepup-active="{{ 'true' if stepup_active else 'false' }}"
+      {% if not stepup_active %}inert{% endif %}>
 
   <fieldset>
     <legend>Authenticator-Auswahl</legend>
     <p><small>Defaults entsprechen W3C WebAuthn Level 3 §5.4 + den Empfehlungen
       des W3C/FIDO-Leitfadens auf <a href="https://passkeys.dev">passkeys.dev</a>.</small></p>
 
-    <label>
-      User Verification
-      <select name="user_verification">
-        {% for v in ["required", "preferred", "discouraged"] %}
-          <option value="{{ v }}" {% if wa.user_verification == v %}selected{% endif %}>{{ v }}</option>
-        {% endfor %}
-      </select>
-      <small>W3C §5.4.6 (UserVerificationRequirement). IDL-Default und
-        Empfehlung: <code>preferred</code>.</small>
-    </label>
+    <p><strong>User Verification:</strong> <code>required</code> (verbindliche Instanzrichtlinie)</p>
 
     <label>
       Resident Key
@@ -127,6 +122,12 @@
              value="{{ wa.challenge_ttl_seconds }}">
       <small>W3C §13.4.3: Challenges müssen frisch und einmalig sein.</small>
     </label>
+    <label>
+      WebAuthn-Credentials pro Konto (Standard 10, technisch max. 100)
+      <input type="number" name="webauthn_credential_limit" min="1" max="100"
+             value="{{ wa.webauthn_credential_limit }}">
+      <small>Eine Senkung löscht keine vorhandenen Credentials; sie sperrt nur weitere Registrierungen.</small>
+    </label>
   </fieldset>
 
   <fieldset>
@@ -149,6 +150,12 @@
       Nach Passkey-Login zusätzlichen Faktor verlangen
       <small>Nicht empfohlen – Passkeys sind selbst phishingresistente MFA
         (W3C §1.2; FIDO Alliance Guidance).</small>
+    </label>
+    <label>
+      <input type="checkbox" name="require_mfa_after_sso" value="1"
+             {% if wa.require_mfa_after_sso %}checked{% endif %}>
+      Nach SSO-Login einen zusätzlichen FIDO2- oder TOTP-Faktor verlangen
+      <small>SSO erzeugt erst nach erfolgreicher Bestätigung eine Session.</small>
     </label>
     <label>
       <input type="checkbox" name="counter_strict" value="1"
@@ -180,7 +187,7 @@
        (<code>{{ resolved_rp_id }}</code>) wird gegen den eingefrorenen Wert
        geprüft.</p>
     {% if rp_id_blocked %}
-    <form method="POST" action="{{ url_for('admin.webauthn_unlock_rp_id') }}" class="admin-form">
+    <form method="POST" action="{{ url_for('admin.webauthn_unlock_rp_id') }}" class="admin-form" data-stepup-action="unlock_webauthn_rp_id" data-stepup-target="instance">
       <p><strong>Bestätigung erforderlich.</strong> Gib zur Bestätigung die
          neue <code>rp.id</code> ein:</p>
       <label>
@@ -198,9 +205,13 @@
     <p>Status: <strong>entsperrt</strong> – jede Domain-Änderung wird beim
        nächsten WebAuthn-Aufruf automatisch übernommen. Empfehlung: nach
        Migration sofort wieder sperren.</p>
-    <form method="POST" action="{{ url_for('admin.webauthn_relock_rp_id') }}">
+    <form method="POST" action="{{ url_for('admin.webauthn_relock_rp_id') }}" data-stepup-action="lock_webauthn_rp_id" data-stepup-target="instance">
       <button type="submit" class="btn btn-primary">RP-ID wieder sperren</button>
     </form>
   {% endif %}
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='js/admin-security.js') }}"></script>
 {% endblock %}

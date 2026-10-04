@@ -14,7 +14,8 @@
 <div class="alert alert-warning">
   <strong>Step-up-Authentifizierung erforderlich.</strong>
   Bitte bestätigen Sie Ihre Identität, bevor Sie Änderungen vornehmen.
-  <button id="stepup-btn" class="btn btn-sm btn-primary">Jetzt authentifizieren</button>
+  <button id="stepup-btn" class="btn btn-sm btn-primary"
+          data-action="change_security_settings" data-target="instance">Jetzt authentifizieren</button>
 </div>
 {% endif %}
 
@@ -78,6 +79,19 @@
       <input type="checkbox" name="hibp_fail_open" value="true"
              {{ 'checked' if sec.hibp_fail_open else '' }}>
       Fail-open: bei Netzfehler trotzdem zulassen
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>MFA-Gerätelimits</legend>
+    <label>TOTP pro Konto (Standard 5, technisch max. 50)
+      <input type="number" name="totp_credential_limit" min="1" max="50" value="{{ sec.totp_credential_limit }}">
+    </label>
+    <label>HOTP pro Konto (Standard 10, technisch max. 50)
+      <input type="number" name="hotp_credential_limit" min="1" max="50" value="{{ sec.hotp_credential_limit }}">
+    </label>
+    <label>Plugin-MFA pro Konto (Standard 20, technisch max. 50)
+      <input type="number" name="plugin_mfa_limit" min="1" max="50" value="{{ sec.plugin_mfa_limit }}">
     </label>
   </fieldset>
 

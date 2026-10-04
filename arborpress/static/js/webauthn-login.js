@@ -13,7 +13,7 @@ const loginBtn  = document.getElementById("login-btn");
 if (loginForm) {
   loginForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const userName = loginForm.querySelector("#user_name").value.trim();
+    const identifier = loginForm.querySelector("#user_name").value.trim();
     loginBtn.disabled = true;
     loginBtn.textContent = "Warte auf Schlüssel…";
 
@@ -22,7 +22,7 @@ if (loginForm) {
       const beginRes = await fetch("/auth/login/begin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_name: userName }),
+        body: JSON.stringify({ identifier }),
       });
       if (!beginRes.ok) throw new Error(await beginRes.text());
       const options = await beginRes.json();

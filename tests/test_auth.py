@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import uuid
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -269,37 +269,57 @@ class TestSSO:
 
 class TestStepup:
     def _make_session(self) -> dict:
-        return {}
+        return {"session_id": "session-1"}
 
-    def test_grant_and_assert_stepup(self):
+    async def _make_user(self, db_session) -> str:
+        from arborpress.models.user import User
+
+        username = f"step-{uuid.uuid4().hex[:12]}"
+        user = User(username=username, display_name=username)
+        db_session.add(user)
+        await db_session.flush()
+        return str(user.id)
+
+    @pytest.mark.asyncio
+    async def test_grant_and_assert_stepup(self, db_session):
         session = self._make_session()
-        grant_stepup(session, user_id=1)
+        user_id = await self._make_user(db_session)
+        await grant_stepup(
+            session, user_id=user_id, action="change_roles", target="alice", db=db_session
+        )
         # darf keine Exception werfen
-        assert_stepup(session, user_id=1, operation="change_roles")
+        await assert_stepup(
+            session, user_id=user_id, operation="change_roles", target="alice", db=db_session
+        )
 
-    def test_assert_stepup_without_grant_raises(self):
+    @pytest.mark.asyncio
+    async def test_assert_stepup_without_grant_raises(self, db_session):
         session = self._make_session()
+        user_id = await self._make_user(db_session)
         with pytest.raises(PermissionError, match="step-up"):
-            assert_stepup(session, user_id=1, operation="change_roles")
+            await assert_stepup(
+                session, user_id=user_id, operation="change_roles", target="alice", db=db_session
+            )
 
-    def test_revoke_stepup(self):
+    @pytest.mark.asyncio
+    async def test_revoke_stepup(self, db_session):
         session = self._make_session()
-        grant_stepup(session, user_id=1)
-        revoke_stepup(session, user_id=1)
+        user_id = await self._make_user(db_session)
+        await grant_stepup(
+            session, user_id=user_id, action="change_roles", target="alice", db=db_session
+        )
+        await revoke_stepup(session, user_id=user_id, db=db_session)
         with pytest.raises(PermissionError):
-            assert_stepup(session, user_id=1, operation="change_roles")
+            await assert_stepup(
+                session, user_id=user_id, operation="change_roles", target="alice", db=db_session
+            )
 
     def test_stepup_not_required_for_normal_op(self):
-        """Nicht-Step-up-Operationen dürfen nicht blockiert werden."""
-        session = self._make_session()
-        # "view_posts" ist keine Step-up-Operation
+        """Normal operations remain outside the sensitive-operation policy."""
         assert "view_posts" not in STEPUP_REQUIRED_OPERATIONS
-        # Kein Grant nötig – operation nicht in verbotener Liste → kein Fehler
-        # (assert_stepup prüft nur wenn operation in STEPUP_REQUIRED_OPERATIONS)
-        if "view_posts" not in STEPUP_REQUIRED_OPERATIONS:
-            pass  # korrekt – normale Operationen werden nicht blockiert
 
-    def test_stepup_ttl_expiry(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_stepup_ttl_expiry(self, db_session, monkeypatch):
         session = self._make_session()
         # Step-up mit TTL=0 simulieren via Config-Mock
         import arborpress.auth.stepup as su_mod
@@ -311,10 +331,10 @@ class TestStepup:
             auth = _FakeAuth()
 
         monkeypatch.setattr(su_mod, "get_settings", lambda: _FakeCfg())
-        grant_stepup(session, user_id=1)
-        time.sleep(0.01)
         with pytest.raises(PermissionError):
-            assert_stepup(session, user_id=1, operation="change_roles")
+            await grant_stepup(
+                session, user_id="1", action="change_roles", target="alice", db=db_session
+            )
 
     def test_stepup_required_operations_set(self):
         required = {
@@ -327,3 +347,39 @@ class TestStepup:
             "change_security_settings",
         }
         assert required.issubset(STEPUP_REQUIRED_OPERATIONS)
+
+    @pytest.mark.asyncio
+    async def test_stepup_is_user_action_and_target_bound_and_one_shot(self, db_session):
+        session = self._make_session()
+        user_id = await self._make_user(db_session)
+        other_user_id = await self._make_user(db_session)
+        await grant_stepup(session, user_id, "change_roles", "alice", db=db_session)
+        stale_cookie = dict(session)
+        with pytest.raises(PermissionError):
+            await assert_stepup(
+                session, other_user_id, "change_roles", "alice", db=db_session
+            )
+        with pytest.raises(PermissionError):
+            await assert_stepup(
+                session, user_id, "change_roles", "bob", db=db_session
+            )
+        with pytest.raises(PermissionError):
+            await assert_stepup(
+                session, user_id, "disable_password", "alice", db=db_session
+            )
+        await assert_stepup(session, user_id, "change_roles", "alice", db=db_session)
+        with pytest.raises(PermissionError):
+            await assert_stepup(
+                session, user_id, "change_roles", "alice", db=db_session
+            )
+        with pytest.raises(PermissionError):
+            await assert_stepup(
+                stale_cookie, user_id, "change_roles", "alice", db=db_session
+            )
+
+    @pytest.mark.asyncio
+    async def test_unknown_operation_fails_closed(self):
+        with pytest.raises(PermissionError, match="unregistered"):
+            await assert_stepup(
+                self._make_session(), "u1", "sensitive_typo", "target"
+            )

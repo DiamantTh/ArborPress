@@ -24,6 +24,7 @@ from arborpress.auth.password_tools import (
 from arborpress.auth.roles import require_role
 from arborpress.auth.stepup import assert_stepup, is_stepup_active
 from arborpress.core.config import get_settings
+from arborpress.core.audit import write_audit_event
 from arborpress.core.db import get_db_session
 from arborpress.core.markdown import (
     editorjs_to_html,
@@ -104,6 +105,8 @@ async def _resolve_body(form, db) -> tuple[str, str, dict | None]:
 def _require_session():
     if not session.get("user_id"):
         abort(redirect(url_for("auth.login_page")))
+    if session.get("recovery_only"):
+        abort(403, "Recovery-only session")
 
 
 @admin_bp.before_request
@@ -117,30 +120,16 @@ async def _csrf_protect() -> None:
 async def _session_guard() -> None:
     """Enforces auth session + minimum role 'author' + DB session validity (§2, §4)."""
     _require_session()
-    require_role("author")
-
-    # Validate DB session for validity and expiry; update last_seen_at
-    session_id = session.get("session_id")
-    if not session_id:
-        return
-
-    from datetime import UTC, datetime
-
-    from sqlalchemy import update as sa_update
-
-    from arborpress.models.user import UserSession
-
     async for db in get_db_session():
-        db_sess = await db.get(UserSession, session_id)
-        if db_sess is None or not db_sess.is_valid or db_sess.is_expired:
+        from arborpress.auth.sessions import refresh_session_identity
+
+        user = await refresh_session_identity(db, session)
+        if user is None:
             session.clear()
             abort(redirect(url_for("auth.login_page")))
-        await db.execute(
-            sa_update(UserSession)
-            .where(UserSession.id == session_id)
-            .values(last_seen_at=datetime.now(UTC))
-        )
         await db.commit()
+        break
+    require_role("author")
 
 
 @admin_bp.context_processor
@@ -485,7 +474,7 @@ async def user_breakglass_password_set(user_id: str):
     require_role("admin")
     actor_id = session.get("user_id", "")
     try:
-        assert_stepup(session, actor_id, "change_security_settings")
+        await assert_stepup(session, actor_id, "set_breakglass_password", target=user_id)
     except PermissionError:
         return jsonify({"error": "step_up_required"}), 403
 
@@ -552,9 +541,19 @@ async def user_breakglass_password_set(user_id: str):
                 }
             )
 
+        password_was_enabled = bool(user.legacy_password_enabled and user.legacy_password_hash)
         user.legacy_password_hash = hash_password(password)
         user.legacy_password_enabled = True
         db.add(user)
+        await write_audit_event(
+            event_type="password_changed" if password_was_enabled else "password_enabled",
+            outcome="success",
+            actor_id=actor_id, target_id=str(user.id), detail="admin_set_breakglass_password", db=db,
+        )
+        await write_audit_event(
+            event_type="breakglass_password_set", outcome="success",
+            actor_id=actor_id, target_id=str(user.id), detail="breakglass_password_set", db=db,
+        )
         await db.commit()
 
         audit.info(
@@ -578,18 +577,25 @@ async def user_breakglass_password_disable(user_id: str):
     require_role("admin")
     actor_id = session.get("user_id", "")
     try:
-        assert_stepup(session, actor_id, "change_security_settings")
+        await assert_stepup(session, actor_id, "disable_password", target=user_id)
     except PermissionError:
         return jsonify({"error": "step_up_required"}), 403
 
     async for db in get_db_session():
+        from arborpress.auth.policy import assert_auth_path_remains
         from arborpress.models.user import User
 
         user = await db.get(User, user_id)
         if user is None:
             abort(404)
-        await db.refresh(user, ["credentials", "mfa_devices"])
-        if not user.credentials and not user.mfa_devices:
+        try:
+            await assert_auth_path_remains(db, user, exclude_password=True)
+        except ValueError:
+            await write_audit_event(
+                event_type="auth_lockout_prevention", outcome="blocked",
+                actor_id=actor_id, target_id=str(user.id), detail="last_auth_path_password_disable", db=db,
+            )
+            await db.commit()
             return await _render_users_page(
                 breakglass_result={
                     "level": "warning",
@@ -602,6 +608,10 @@ async def user_breakglass_password_disable(user_id: str):
         user.legacy_password_enabled = False
         user.legacy_password_hash = None
         db.add(user)
+        await write_audit_event(
+            event_type="password_disabled", outcome="success",
+            actor_id=actor_id, target_id=str(user.id), db=db,
+        )
         await db.commit()
 
         audit.info("BREAKGLASS password disabled | actor=%s target=%s", actor_id, user.username)
@@ -609,6 +619,99 @@ async def user_breakglass_password_disable(user_id: str):
             breakglass_result={
                 "level": "success",
                 "message": f"Break-Glass-Passwort fuer {user.username} deaktiviert.",
+            }
+        )
+
+
+@admin_bp.post("/users/<user_id>/auth-reset")
+async def user_authenticator_reset(user_id: str):
+    """Revoke a user's lost authenticators for audited password recovery."""
+    _require_session()
+    require_role("admin")
+    actor_id = str(session.get("user_id") or "")
+    try:
+        await assert_stepup(session, actor_id, "admin_credential_reset", target=user_id)
+    except PermissionError:
+        return jsonify({"error": "step_up_required"}), 403
+
+    form = await request.form
+    async for db in get_db_session():
+        from sqlalchemy import update
+
+        from arborpress.models.user import MFADevice, MFADeviceType, User, UserSession, WebAuthnCredential
+
+        user = await db.get(User, user_id)
+        if user is None:
+            abort(404)
+        if form.get("confirm_username", "").strip() != user.username:
+            abort(400, "Type the target username to confirm authenticator recovery")
+        if (
+            not get_settings().auth.legacy_password_enabled
+            or not user.legacy_password_enabled
+            or not user.legacy_password_hash
+        ):
+            await write_audit_event(
+                event_type="auth_lockout_prevention", outcome="blocked",
+                actor_id=actor_id, target_id=str(user.id),
+                detail="authenticator_reset_requires_breakglass_password", db=db,
+            )
+            await db.commit()
+            return await _render_users_page(
+                breakglass_result={
+                    "level": "warning",
+                    "message": (
+                        f"Authenticatoren fuer {user.username} bleiben aktiv. "
+                        "Vor dem Reset muss ein Break-Glass-Passwort vorbereitet sein."
+                    ),
+                }
+            ), 409
+
+        credentials = (await db.execute(select(WebAuthnCredential).where(
+            WebAuthnCredential.user_id == str(user.id)
+        ))).scalars().all()
+        totp_devices = (await db.execute(select(MFADevice).where(
+            MFADevice.user_id == str(user.id),
+            MFADevice.device_type == MFADeviceType.TOTP,
+            MFADevice.is_active.is_(True),
+        ))).scalars().all()
+        for credential in credentials:
+            await write_audit_event(
+                event_type="webauthn_credential_removed", outcome="success",
+                actor_id=actor_id, target_id=str(user.id),
+                detail=f"admin_reset credential_id={credential.id}", db=db,
+            )
+            await db.delete(credential)
+        for device in totp_devices:
+            device.is_active = False
+            device.verification_status = "revoked"
+            db.add(device)
+            await write_audit_event(
+                event_type="totp_removed", outcome="success",
+                actor_id=actor_id, target_id=str(user.id),
+                detail=f"admin_reset device_id={device.id}", db=db,
+            )
+        await db.execute(
+            update(UserSession)
+            .where(UserSession.user_id == str(user.id), UserSession.is_valid.is_(True))
+            .values(is_valid=False)
+        )
+        await write_audit_event(
+            event_type="admin_credential_reset", outcome="success",
+            actor_id=actor_id, target_id=str(user.id),
+            detail=(
+                f"webauthn={len(credentials)};totp={len(totp_devices)};"
+                "password_recovery_only"
+            ), db=db,
+        )
+        await db.commit()
+        return await _render_users_page(
+            breakglass_result={
+                "level": "success",
+                "message": (
+                    f"Authenticatoren von {user.username} widerrufen. "
+                    "Nach dem Break-Glass-Login ist nur eine eingeschraenkte "
+                    "Recovery-Sitzung fuer neues Enrollment verfuegbar."
+                ),
             }
         )
 
@@ -633,7 +736,7 @@ async def plugin_enable(plugin_id: str):
     require_role("admin")
     user_id = session.get("user_id", "")
     try:
-        assert_stepup(session, user_id, "enable_plugin")
+        await assert_stepup(session, user_id, "enable_plugin", target=plugin_id)
     except PermissionError:
         return jsonify({"error": "step_up_required"}), 403
     audit.info("PLUGIN enabled | plugin=%s user=%s", plugin_id, user_id)
@@ -645,6 +748,10 @@ async def plugin_disable(plugin_id: str):
     _require_session()
     require_role("admin")
     user_id = session.get("user_id", "")
+    try:
+        await assert_stepup(session, user_id, "disable_plugin", target=plugin_id)
+    except PermissionError:
+        return jsonify({"error": "step_up_required"}), 403
     audit.info("PLUGIN disabled | plugin=%s user=%s", plugin_id, user_id)
     return jsonify({"status": "ok"}), 200
 
@@ -659,7 +766,7 @@ async def security():
     _require_session()
     require_role("admin")
     user_id = session.get("user_id", "")
-    stepup_active = is_stepup_active(session, user_id)
+    stepup_active = await is_stepup_active(session, user_id)
     cfg = get_settings()
     from arborpress.core.site_settings import get_security_settings
 
@@ -681,7 +788,7 @@ async def security_update():
     require_role("admin")
     user_id = session.get("user_id", "")
     try:
-        assert_stepup(session, user_id, "change_security_settings")
+        await assert_stepup(session, user_id, "change_security_settings", target="instance")
     except PermissionError:
         return jsonify({"error": "step_up_required"}), 403
 
@@ -700,6 +807,9 @@ async def security_update():
         "hibp_max_count": form.get("hibp_max_count"),
         "hibp_timeout":   form.get("hibp_timeout"),
         "hibp_fail_open": form.get("hibp_fail_open"),
+        "totp_credential_limit": form.get("totp_credential_limit"),
+        "hotp_credential_limit": form.get("hotp_credential_limit"),
+        "plugin_mfa_limit": form.get("plugin_mfa_limit"),
     }
     # Checkboxes that are unchecked do not appear in the form payload at all,
     # so an explicitly missing key means the operator turned the toggle off.
@@ -727,6 +837,12 @@ async def security_update():
     async for db in get_db_session():
         await save_section("security", cleaned, db, updated_by=user_id)
         sec = await get_security_settings(db)
+        await write_audit_event(
+            event_type="auth_policy_changed", outcome="success",
+            actor_id=user_id, target_id="instance",
+            detail="security_settings:" + ",".join(sorted(cleaned)), db=db,
+        )
+        await db.commit()
         break
 
     audit.info("SECURITY settings changed | user=%s keys=%s", user_id, ",".join(cleaned))
@@ -791,7 +907,9 @@ async def webauthn_settings_page():
     _require_session()
     require_role("admin")
     user_id = session.get("user_id", "")
-    stepup_active = is_stepup_active(session, user_id)
+    stepup_active = await is_stepup_active(
+        session, user_id, "change_webauthn_settings", "instance"
+    )
 
     async for db in get_db_session():
         ctx = await _webauthn_view_context(db, stepup_active=stepup_active)
@@ -806,7 +924,7 @@ async def webauthn_update():
     require_role("admin")
     user_id = session.get("user_id", "")
     try:
-        assert_stepup(session, user_id, "change_webauthn_settings")
+        await assert_stepup(session, user_id, "change_webauthn_settings", target="instance")
     except PermissionError:
         return jsonify({"error": "step_up_required"}), 403
 
@@ -835,15 +953,17 @@ async def webauthn_update():
         "algorithms":                selected_algs or None,
         "timeout_ms":                form.get("timeout_ms"),
         "challenge_ttl_seconds":     form.get("challenge_ttl_seconds"),
+        "webauthn_credential_limit": form.get("webauthn_credential_limit"),
         "conditional_ui_enabled":    form.get("conditional_ui_enabled"),
         "signal_api_enabled":        form.get("signal_api_enabled"),
         "require_2fa_after_passkey": form.get("require_2fa_after_passkey"),
+        "require_mfa_after_sso":     form.get("require_mfa_after_sso"),
         "counter_strict":            form.get("counter_strict"),
     }
     # Unchecked checkboxes ⇒ explicit False (form omits them).
     for bool_key in (
         "conditional_ui_enabled", "signal_api_enabled",
-        "require_2fa_after_passkey", "counter_strict",
+        "require_2fa_after_passkey", "require_mfa_after_sso", "counter_strict",
     ):
         if raw[bool_key] is None:
             raw[bool_key] = False
@@ -863,6 +983,12 @@ async def webauthn_update():
         cleaned["rp_id_locked"] = existing.get("rp_id_locked", True)
         cleaned["rp_id_last_known"] = existing.get("rp_id_last_known", "")
         await save_section("webauthn", cleaned, db, updated_by=user_id)
+        await write_audit_event(
+            event_type="auth_policy_changed", outcome="success",
+            actor_id=user_id, target_id="instance",
+            detail="webauthn_settings:" + ",".join(sorted(cleaned)), db=db,
+        )
+        await db.commit()
         ctx = await _webauthn_view_context(db, stepup_active=True, saved=True)
         break
 
@@ -881,7 +1007,7 @@ async def webauthn_unlock_rp_id():
     require_role("admin")
     user_id = session.get("user_id", "")
     try:
-        assert_stepup(session, user_id, "unlock_webauthn_rp_id")
+        await assert_stepup(session, user_id, "unlock_webauthn_rp_id", target="instance")
     except PermissionError:
         return jsonify({"error": "step_up_required"}), 403
 
@@ -912,6 +1038,12 @@ async def webauthn_unlock_rp_id():
         wa["rp_id_last_known"] = resolved
         wa["rp_id_locked"] = True
         await save_section("webauthn", wa, db, updated_by=user_id)
+        await write_audit_event(
+            event_type="rp_id_change_confirmed", outcome="success",
+            actor_id=user_id, target_id=resolved,
+            detail=f"old={old};new={resolved}", db=db,
+        )
+        await db.commit()
         ctx = await _webauthn_view_context(db, stepup_active=True, saved=True)
         break
 
@@ -928,7 +1060,7 @@ async def webauthn_relock_rp_id():
     require_role("admin")
     user_id = session.get("user_id", "")
     try:
-        assert_stepup(session, user_id, "lock_webauthn_rp_id")
+        await assert_stepup(session, user_id, "lock_webauthn_rp_id", target="instance")
     except PermissionError:
         return jsonify({"error": "step_up_required"}), 403
 
@@ -1053,7 +1185,7 @@ async def security_password_evaluate():
 @admin_bp.get("/stepup/status")
 async def stepup_status():
     user_id = session.get("user_id", "")
-    active = is_stepup_active(session, user_id) if user_id else False
+    active = await is_stepup_active(session, user_id) if user_id else False
     return jsonify({"active": active}), 200
 
 
@@ -1423,4 +1555,3 @@ async def session_revoke(session_id: str):
 
     audit.info("SESSION revoked | session=%s by user=%s", session_id, session.get("user_id", ""))
     return redirect(url_for("admin.sessions_list"))
-

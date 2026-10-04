@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}{{ _('Kontosicherheit') }}{% endblock %}
+{% set noindex = true %}
+{% block body_class %}auth-page{% endblock %}
+
+{% block content %}
+<div class="auth-box auth-box--wide">
+  <h1>{{ _('Kontosicherheit') }}</h1>
+  <p>{{ user.display_name }} ({{ user.username }})</p>
+  {% if recovery_only %}
+  <p class="flash--error">{{ _('Recovery-Sitzung: Nur Authenticator-Wiederherstellung ist verfügbar.') }}</p>
+  {% endif %}
+
+  <section>
+    <h2>{{ _('FIDO2-Sicherheitsschlüssel — EMPFOHLEN') }}</h2>
+    <button class="btn btn--primary stepup-redirect" data-action="add_webauthn_credential"
+            data-target="{{ user.id }}" data-next="{{ url_for('auth.register_page') }}">
+      {{ _('Sicherheitsschlüssel hinzufügen') }}
+    </button>
+    <h3>{{ _('Weitere Passkeys') }}</h3>
+    <p>{{ _('Synchronisierte Passkeys sind zulässig. Eine Attestation wird nicht als Hersteller- oder Modellnachweis dargestellt.') }}</p>
+    {% for credential in credentials %}
+    <article class="security-item">
+      <strong>{{ credential.label }}</strong>
+      <small>
+        {% if credential.authenticator_attachment == 'cross-platform' %}Reported cross-platform attachment
+        {% elif credential.authenticator_attachment == 'platform' %}Reported platform attachment
+        {% else %}Authenticator-Typ unbekannt{% endif %}
+        · {{ credential.verification_status }}
+        {% if credential.transports %}· {{ credential.transports }}{% elif credential.transport %}· {{ credential.transport }}{% endif %}
+      </small>
+      <small>Erstellt: {{ credential.created_at }} · Zuletzt verwendet: {{ credential.last_used_at or _('Noch nie') }}</small>
+      {% if not recovery_only %}
+      <button class="btn btn--small stepup-remove" data-action="remove_webauthn_credential"
+              data-target="{{ credential.id }}" data-url="{{ url_for('auth.webauthn_credential_remove', credential_uuid=credential.id) }}">
+        {{ _('Entfernen') }}
+      </button>
+      {% endif %}
+    </article>
+    {% else %}<p>{{ _('Noch kein WebAuthn-Credential registriert.') }}</p>{% endfor %}
+  </section>
+
+  <section>
+    <h2>{{ _('TOTP — FALLBACK') }}</h2>
+    {% if not recovery_only %}
+    <button class="btn" id="totp-add" data-action="add_totp_credential" data-target="{{ user.id }}">
+      {{ _('Authenticator hinzufügen') }}
+    </button>
+    {% endif %}
+    <div id="totp-enrollment" hidden>
+      <p>{{ _('Scanne diese URI und bestätige dann einen aktuellen Code:') }}</p>
+      <code id="totp-uri"></code>
+      <form id="totp-confirm-form">
+        <label for="totp-confirm-code">{{ _('Authenticator-Code') }}</label>
+        <input id="totp-confirm-code" inputmode="numeric" autocomplete="one-time-code" required>
+        <button class="btn" type="submit">{{ _('TOTP aktivieren') }}</button>
+      </form>
+    </div>
+    {% for device in devices if device.device_type.value == 'totp' %}
+    <article class="security-item">
+      <strong>{{ device.label }}</strong>
+      <small>{{ device.verification_status }} · {{ _('Erstellt') }}: {{ device.created_at }} · {{ _('Zuletzt verwendet') }}: {{ device.last_used_at or _('Noch nie') }}</small>
+      {% if not recovery_only %}
+      <button class="btn btn--small stepup-remove" data-action="remove_totp_credential"
+              data-target="{{ device.id }}" data-url="{{ url_for('auth.totp_remove', device_id=device.id) }}">
+        {{ _('Entfernen') }}
+      </button>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </section>
+
+  <section>
+    <h2>{{ _('Passwort / Recovery') }}</h2>
+    <p>{{ _('Break-glass-Passwörter allein erzeugen nur eine eingeschränkte Recovery-Sitzung.') }}</p>
+  </section>
+  <p><a href="{{ url_for('auth.login_page') }}">{{ _('Abmelden / zurück') }}</a></p>
+  <p id="security-error" class="flash--error" hidden></p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='js/auth-security.js') }}"></script>
+{% endblock %}

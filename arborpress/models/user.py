@@ -153,9 +153,20 @@ class WebAuthnCredential(Base):
     public_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     sign_count: Mapped[int] = mapped_column(Integer, default=0)
     # Metadata §2
+    # `transport` is retained for existing installations. New registrations
+    # also populate the complete JSON transport list below.
     transport: Mapped[str | None] = mapped_column(String(32), nullable=True)
     is_platform: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     uv_capable: Mapped[bool] = mapped_column(Boolean, default=True)
+    aaguid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    transports: Mapped[str | None] = mapped_column(Text, nullable=True)
+    authenticator_attachment: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    backup_eligible: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    backup_state: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Old credentials cannot be retroactively proven to have required UV.
+    verification_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="unknown", server_default="unknown"
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -187,6 +198,9 @@ class MFADevice(Base):
     # Encrypted secret (never bare in DB)
     secret_enc: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    verification_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="unknown", server_default="unknown"
+    )
     # Plugin provider ID (if device_type == PLUGIN)
     plugin_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
@@ -197,6 +211,44 @@ class MFADevice(Base):
 
     # Each label must be unique per user
     __table_args__ = (UniqueConstraint("user_id", "label", name="uq_user_mfa_label"),)
+
+
+class AuthPending(Base):
+    """Short-lived, one-shot server-side auth ceremony or enrollment state."""
+
+    __tablename__ = "auth_pending"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    purpose: Mapped[str] = mapped_column(String(48), nullable=False, index=True)
+    challenge: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    label: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    username: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
+class StepUpGrant(Base):
+    """Server-side, one-shot permission to perform one scoped operation."""
+
+    __tablename__ = "auth_stepup_grants"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    session_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(48), nullable=False, index=True)
+    target: Mapped[str] = mapped_column(String(512), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class BackupCode(Base):
@@ -442,6 +494,12 @@ class UserSession(Base):
     is_cli: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Kann durch Admin oder Nutzer widerrufen werden
     is_valid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    auth_method: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="unknown", server_default="unknown"
+    )
+    assurance_level: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="unknown", server_default="unknown"
+    )
 
     user: Mapped[User] = relationship(back_populates="sessions")
 
@@ -450,4 +508,3 @@ class UserSession(Base):
         return datetime.now(UTC) > self.expires_at.replace(
             tzinfo=UTC if self.expires_at.tzinfo is None else self.expires_at.tzinfo
         )
-

@@ -20,6 +20,8 @@ from arborpress.models.mail import MailQueue, MailStatus  # noqa: F401
 from arborpress.models.settings import SiteSetting  # noqa: F401
 from arborpress.models.user import (  # noqa: F401
     AccountType,
+    AuthPending,
+    StepUpGrant,
     ActorKeypair,
     BackupCode,
     Follower,

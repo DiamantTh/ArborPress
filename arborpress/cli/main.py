@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -259,6 +259,7 @@ def user_disable(
         from sqlalchemy import func, select
 
         from arborpress.core.db import get_db_session
+        from arborpress.core.audit import write_audit_event
         from arborpress.models.user import User
         async for db in get_db_session():
             result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
@@ -266,8 +267,27 @@ def user_disable(
             if not user:
                 typer.echo(__("User {username!r} not found.").format(username=username), err=True)
                 raise typer.Exit(1)
+            if user.role.value == "admin" and user.is_active:
+                from arborpress.auth.policy import is_last_active_admin
+
+                if await is_last_active_admin(db, user):
+                    await write_audit_event(
+                        event_type="auth_lockout_prevention",
+                        outcome="blocked",
+                        actor_id="cli",
+                        target_id=str(user.id),
+                        detail="last_active_admin_disable",
+                        db=db,
+                    )
+                    await db.commit()
+                    typer.echo("ERROR: Cannot disable the last active administrator.", err=True)
+                    raise typer.Exit(1)
             user.is_active = False
             db.add(user)
+            await write_audit_event(
+                event_type="user_disabled", outcome="success",
+                actor_id="cli", target_id=str(user.id), db=db,
+            )
             await db.commit()
             typer.echo(__("User {username!r} disabled.").format(username=username))
 
@@ -311,8 +331,7 @@ def user_roles(
     username: str = typer.Argument(..., help="Username"),
     role: str = typer.Argument(..., help="New role"),
 ) -> None:
-    """Changes a user's role – requires step-up (§2, §14)."""
-    from arborpress.auth.stepup import STEPUP_REQUIRED_OPERATIONS
+    """Changes a user's role from the trusted local CLI and audits the change."""
     from arborpress.models.user import UserRole
 
     try:
@@ -321,9 +340,7 @@ def user_roles(
         typer.echo(f"Invalid role: {role}. Allowed: {[r.value for r in UserRole]}", err=True)
         raise typer.Exit(1) from None
 
-    typer.echo(
-        f"NOTE: 'change_roles' is a step-up operation ({STEPUP_REQUIRED_OPERATIONS})."
-    )
+    typer.echo("Role changes are audited; the last active administrator is protected.")
 
     async def _set_role() -> None:
         from sqlalchemy import func, select
@@ -337,8 +354,37 @@ def user_roles(
                 typer.echo(__("User {username!r} not found.").format(username=username), err=True)
                 raise typer.Exit(1)
             old_role = user.role.value
+            if (
+                old_role == "admin"
+                and role_enum.value != "admin"
+                and user.is_active
+            ):
+                from arborpress.auth.policy import is_last_active_admin
+                from arborpress.core.audit import write_audit_event
+
+                if await is_last_active_admin(db, user):
+                    await write_audit_event(
+                        event_type="auth_lockout_prevention",
+                        outcome="blocked",
+                        actor_id="cli",
+                        target_id=str(user.id),
+                        detail="last_active_admin_demotion",
+                        db=db,
+                    )
+                    await db.commit()
+                    typer.echo(
+                        "ERROR: Cannot demote the last active administrator.", err=True
+                    )
+                    raise typer.Exit(1)
             user.role = role_enum
             db.add(user)
+            from arborpress.core.audit import write_audit_event
+
+            await write_audit_event(
+                event_type="role_changed", outcome="success",
+                actor_id="cli", target_id=str(user.id),
+                detail=f"old={old_role};new={role_enum.value}", db=db,
+            )
             await db.commit()
             typer.echo(__("Role: {old} → {new} for {username!r}").format(old=old_role, new=role_enum.value, username=username))
 
@@ -518,9 +564,20 @@ def user_password_set(
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
                 raise typer.Exit(1)
+            was_enabled = bool(user.legacy_password_enabled and user.legacy_password_hash)
             user.legacy_password_hash = hash_password(password)
             user.legacy_password_enabled = True
             db.add(user)
+            from arborpress.core.audit import write_audit_event
+            await write_audit_event(
+                event_type="password_changed" if was_enabled else "password_enabled",
+                outcome="success", actor_id="cli", target_id=str(user.id),
+                detail="cli_password_set", db=db,
+            )
+            await write_audit_event(
+                event_type="breakglass_password_set", outcome="success",
+                actor_id="cli", target_id=str(user.id), detail="cli_password_set", db=db,
+            )
             await db.commit()
             typer.echo(__("Password for {username!r} set and activated.").format(username=username))
             _print_password_assessment(assessment)
@@ -593,6 +650,7 @@ def user_password_disable(
     async def _disable_pw() -> None:
         from sqlalchemy import func, select
 
+        from arborpress.core.audit import write_audit_event
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
         async for db in get_db_session():
@@ -604,11 +662,18 @@ def user_password_disable(
             if not user.legacy_password_enabled:
                 typer.echo(f"Password for {username!r} is already disabled.")
                 return
-            # Check for at least 1 credential/MFA
-            await db.refresh(user, ["credentials", "mfa_devices"])
-            if not user.credentials and not user.mfa_devices:
+            from arborpress.auth.policy import assert_auth_path_remains
+            try:
+                await assert_auth_path_remains(db, user, exclude_password=True)
+            except ValueError:
+                await write_audit_event(
+                    event_type="auth_lockout_prevention", outcome="blocked",
+                    actor_id="cli", target_id=str(user.id),
+                    detail="last_auth_path_password_disable", db=db,
+                )
+                await db.commit()
                 typer.echo(
-                    "ERROR: No WebAuthn credential and no MFA device found.\n"
+                    "ERROR: No usable alternate authentication path found.\n"
                     "  Set up WebAuthn or TOTP first before disabling the password.",
                     err=True,
                 )
@@ -616,6 +681,10 @@ def user_password_disable(
             user.legacy_password_enabled = False
             user.legacy_password_hash = None
             db.add(user)
+            await write_audit_event(
+                event_type="password_disabled", outcome="success",
+                actor_id="cli", target_id=str(user.id), db=db,
+            )
             await db.commit()
             typer.echo(f"Password for {username!r} disabled and hash deleted.")
 
@@ -675,7 +744,7 @@ def auth_policy_status(
         f"{cfg.auth.legacy_password_min_length}-{cfg.auth.legacy_password_max_length} chars"
     )
     typer.echo(f"Legacy-PW zxcvbn:       >= {cfg.auth.legacy_password_min_score}/4")
-    typer.echo(f"Step-up TTL:            {cfg.auth.stepup_ttl}s")
+    typer.echo(f"Step-up TTL (effective): {min(300, max(0, cfg.auth.stepup_ttl))}s")
     typer.echo(f"Admin session TTL:      {cfg.auth.admin_session_ttl}s")
     typer.echo(f"Auth rate limit:        {cfg.auth.auth_rate_limit}")
 
@@ -693,9 +762,9 @@ def mfa_list(
     async def _list() -> None:
         from sqlalchemy import func, select
 
-        from arborpress.auth.mfa import MFA_MAX_DEVICES
+        from arborpress.auth.mfa import get_device_limit
         from arborpress.core.db import get_db_session
-        from arborpress.models.user import MFADevice, User
+        from arborpress.models.user import MFADevice, MFADeviceType, User
         async for db in get_db_session():
             result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
@@ -709,13 +778,17 @@ def mfa_list(
             if not devices:
                 typer.echo(f"No MFA devices for {username!r}.")
                 return
-            typer.echo(f"MFA devices ({len(devices)}/{MFA_MAX_DEVICES}):")
-            typer.echo(f"  {'Label':<30} {'Type':<8} {'Active':<6} {'Last used'}")
-            typer.echo("  " + "-" * 70)
+            limits = {
+                dtype.value: await get_device_limit(db, dtype)
+                for dtype in (MFADeviceType.TOTP, MFADeviceType.HOTP, MFADeviceType.PLUGIN)
+            }
+            typer.echo(f"MFA devices ({len(devices)} total; limits: {limits}):")
+            typer.echo(f"  {'Label':<30} {'Type':<8} {'Active':<6} {'Status':<12} {'Last used'}")
+            typer.echo("  " + "-" * 86)
             for d in devices:
                 typer.echo(
                     f"  {d.label:<30} {d.device_type.value:<8} "
-                    f"{'yes' if d.is_active else 'no':<6} "
+                    f"{'yes' if d.is_active else 'no':<6} {d.verification_status:<12} "
                     f"{str(d.last_used_at or 'Never')}"
                 )
 
@@ -729,7 +802,7 @@ def mfa_add(
     device_type: str = typer.Option("totp", "--type", "-t", help="Device type: totp|hotp"),
 ) -> None:
     """Adds a new TOTP/HOTP device and outputs the provisioning URI."""
-    from arborpress.auth.mfa import MFA_MAX_DEVICES, HOTPService, TOTPService
+    from arborpress.auth.mfa import HOTPService, TOTPService, encrypt_secret, get_device_limit
     from arborpress.models.user import MFADeviceType
 
     try:
@@ -750,13 +823,24 @@ def mfa_add(
                 typer.echo(f"User {username!r} not found.", err=True)
                 raise typer.Exit(1)
             # Check limit
-            count_result = await db.execute(
-                select(func.count()).select_from(MFADevice).where(MFADevice.user_id == str(user.id))
-            )
+            count_result = await db.execute(select(func.count()).select_from(MFADevice).where(
+                MFADevice.user_id == str(user.id),
+                MFADevice.device_type == dtype,
+                MFADevice.is_active.is_(True),
+            ))
             count = count_result.scalar_one()
-            if count >= MFA_MAX_DEVICES:
+            limit = await get_device_limit(db, dtype)
+            if count >= limit:
+                from arborpress.core.audit import write_audit_event
+
+                await write_audit_event(
+                    event_type="auth_lockout_prevention", outcome="blocked",
+                    actor_id="cli", target_id=str(user.id),
+                    detail=f"{dtype.value}_credential_limit", db=db,
+                )
+                await db.commit()
                 typer.echo(
-                    f"ERROR: Maximum of {MFA_MAX_DEVICES} MFA devices reached.", err=True
+                    f"ERROR: Maximum of {limit} {dtype.value} devices reached.", err=True
                 )
                 raise typer.Exit(1)
 
@@ -769,30 +853,39 @@ def mfa_add(
                 secret = svc.generate_secret()
                 uri = svc.provisioning_uri(secret, account_name=f"{username}:{label}")
 
-            cfg = get_settings()
-            # Simple encryption via Fernet (secret key from config)
-            import base64
-            import hashlib
-
-            from cryptography.fernet import Fernet
-            key = base64.urlsafe_b64encode(
-                hashlib.sha256(cfg.web.secret_key.get_secret_value().encode()).digest()
-            )
-            f = Fernet(key)
-            secret_enc = f.encrypt(secret)
+            if dtype == MFADeviceType.TOTP:
+                typer.echo("Scan this provisioning URI, then enter the current 8-digit code:")
+                typer.echo(f"  {uri}")
+                code = typer.prompt("TOTP confirmation code", hide_input=False).strip()
+                if not TOTPService().verify(secret, code, user_id=str(user.id)):
+                    typer.echo("Invalid TOTP code; no active device was stored.", err=True)
+                    raise typer.Exit(1)
+            secret_enc = encrypt_secret(secret)
 
             device = MFADevice(
                 user_id=str(user.id),
                 device_type=dtype,
                 label=label,
                 secret_enc=secret_enc,
+                verification_status="verified" if dtype == MFADeviceType.TOTP else "unknown",
+                last_used_at=(
+                    datetime.now(UTC).replace(tzinfo=None)
+                    if dtype == MFADeviceType.TOTP else None
+                ),
             )
             db.add(device)
+            from arborpress.core.audit import write_audit_event
+
+            await write_audit_event(
+                event_type=("totp_added" if dtype == MFADeviceType.TOTP else "mfa_device_added"),
+                outcome="success", actor_id="cli", target_id=str(user.id),
+                detail=f"type={dtype.value};label={label}", db=db,
+            )
             await db.commit()
 
             typer.echo(f"MFA device {label!r} ({dtype.value}) created.")
-            typer.echo(f"Provisioning-URI:\n  {uri}")
-            typer.echo("Scan the QR code with your authenticator app.")
+            if dtype != MFADeviceType.TOTP:
+                typer.echo(f"Provisioning-URI:\n  {uri}")
 
     asyncio.run(_add())
 
@@ -812,8 +905,9 @@ def mfa_remove(
     async def _remove() -> None:
         from sqlalchemy import func, select
 
+        from arborpress.core.audit import write_audit_event
         from arborpress.core.db import get_db_session
-        from arborpress.models.user import MFADevice, User
+        from arborpress.models.user import MFADevice, MFADeviceType, User
         async for db in get_db_session():
             result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
             user = result.scalar_one_or_none()
@@ -830,7 +924,25 @@ def mfa_remove(
             if not device:
                 typer.echo(f"Device {label!r} not found.", err=True)
                 raise typer.Exit(1)
+            if device.device_type == MFADeviceType.TOTP:
+                from arborpress.auth.policy import assert_auth_path_remains
+                try:
+                    await assert_auth_path_remains(db, user, exclude_mfa_id=str(device.id))
+                except ValueError:
+                    await write_audit_event(
+                        event_type="auth_lockout_prevention", outcome="blocked",
+                        actor_id="cli", target_id=str(user.id),
+                        detail="last_totp_removed", db=db,
+                    )
+                    await db.commit()
+                    typer.echo("ERROR: This is the last usable authentication path.", err=True)
+                    raise typer.Exit(1)
             await db.delete(device)
+            if device.device_type == MFADeviceType.TOTP:
+                await write_audit_event(
+                    event_type="totp_removed", outcome="success",
+                    actor_id="cli", target_id=str(user.id), detail=f"label={label}", db=db,
+                )
             await db.commit()
             typer.echo(f"MFA device {label!r} removed.")
 

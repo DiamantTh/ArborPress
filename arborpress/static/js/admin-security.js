@@ -1,7 +1,15 @@
 const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || "";
 
 function base64ToBytes(base64) {
-  return Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0));
+  const normalized = base64.replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(atob(normalized), (ch) => ch.charCodeAt(0));
+}
+
+function bytesToBase64url(value) {
+  const bytes = new Uint8Array(value);
+  let binary = "";
+  bytes.forEach((byte) => (binary += String.fromCharCode(byte)));
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 
 async function postJson(url, payload) {
@@ -49,27 +57,26 @@ function renderAssessment(target, data) {
 
 function setupStepup() {
   const button = document.getElementById("stepup-btn");
-  if (!button) {
-    return;
-  }
-  button.addEventListener("click", async () => {
+  button?.addEventListener("click", async () => {
     try {
-      const beginRes = await postJson("/auth/stepup/begin", {});
-      beginRes.publicKey.challenge = base64ToBytes(beginRes.publicKey.challenge);
-      beginRes.publicKey.allowCredentials?.forEach((cred) => {
+      const action = button.dataset.action || "change_security_settings";
+      const target = button.dataset.target || "instance";
+      const publicKey = await postJson("/auth/stepup/begin", { action, target });
+      publicKey.challenge = base64ToBytes(publicKey.challenge);
+      publicKey.allowCredentials?.forEach((cred) => {
         cred.id = base64ToBytes(cred.id);
       });
-      const assertion = await navigator.credentials.get({ publicKey: beginRes.publicKey });
+      const assertion = await navigator.credentials.get({ publicKey });
       if (!assertion) {
         return;
       }
       const payload = {
         id: assertion.id,
-        rawId: btoa(String.fromCharCode(...new Uint8Array(assertion.rawId))),
+        rawId: bytesToBase64url(assertion.rawId),
         response: {
-          authenticatorData: btoa(String.fromCharCode(...new Uint8Array(assertion.response.authenticatorData))),
-          clientDataJSON: btoa(String.fromCharCode(...new Uint8Array(assertion.response.clientDataJSON))),
-          signature: btoa(String.fromCharCode(...new Uint8Array(assertion.response.signature))),
+          authenticatorData: bytesToBase64url(assertion.response.authenticatorData),
+          clientDataJSON: bytesToBase64url(assertion.response.clientDataJSON),
+          signature: bytesToBase64url(assertion.response.signature),
         },
         type: assertion.type,
       };
@@ -78,6 +85,45 @@ function setupStepup() {
     } catch {
       alert("Step-up fehlgeschlagen.");
     }
+  });
+
+  document.querySelectorAll("form[data-stepup-action]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      if (form.dataset.stepupActive === "true") return;
+      if (form.dataset.stepupPassed === "true") {
+        delete form.dataset.stepupPassed;
+        return;
+      }
+      event.preventDefault();
+      try {
+        const submitter = event.submitter;
+        await authenticateForForm(form);
+        form.dataset.stepupPassed = "true";
+        form.requestSubmit(submitter);
+      } catch {
+        alert("Step-up fehlgeschlagen.");
+      }
+    });
+  });
+}
+
+async function authenticateForForm(form) {
+  const action = form.dataset.stepupAction;
+  const target = form.dataset.stepupTarget || "instance";
+  const publicKey = await postJson("/auth/stepup/begin", { action, target });
+  publicKey.challenge = base64ToBytes(publicKey.challenge);
+  publicKey.allowCredentials?.forEach((cred) => { cred.id = base64ToBytes(cred.id); });
+  const assertion = await navigator.credentials.get({ publicKey });
+  if (!assertion) throw new Error("No credential returned");
+  await postJson("/auth/stepup/complete", {
+    id: assertion.id,
+    rawId: bytesToBase64url(assertion.rawId),
+    type: assertion.type,
+    response: {
+      authenticatorData: bytesToBase64url(assertion.response.authenticatorData),
+      clientDataJSON: bytesToBase64url(assertion.response.clientDataJSON),
+      signature: bytesToBase64url(assertion.response.signature),
+    },
   });
 }
 

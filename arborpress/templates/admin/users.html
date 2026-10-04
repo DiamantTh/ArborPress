@@ -52,7 +52,7 @@
         <details>
           <summary>Break-Glass verwalten</summary>
 
-          <form method="post" action="{{ url_for('admin.user_breakglass_password_set', user_id=user.id) }}" class="admin-form">
+          <form method="post" action="{{ url_for('admin.user_breakglass_password_set', user_id=user.id) }}" class="admin-form" data-stepup-action="set_breakglass_password" data-stepup-target="{{ user.id }}">
             <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
             <input type="hidden" name="mode" value="manual">
             <label>
@@ -64,7 +64,7 @@
             </div>
           </form>
 
-          <form method="post" action="{{ url_for('admin.user_breakglass_password_set', user_id=user.id) }}" class="admin-form">
+          <form method="post" action="{{ url_for('admin.user_breakglass_password_set', user_id=user.id) }}" class="admin-form" data-stepup-action="set_breakglass_password" data-stepup-target="{{ user.id }}">
             <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
             <input type="hidden" name="mode" value="diceware">
             <label>
@@ -80,7 +80,7 @@
             </div>
           </form>
 
-          <form method="post" action="{{ url_for('admin.user_breakglass_password_set', user_id=user.id) }}" class="admin-form">
+          <form method="post" action="{{ url_for('admin.user_breakglass_password_set', user_id=user.id) }}" class="admin-form" data-stepup-action="set_breakglass_password" data-stepup-target="{{ user.id }}">
             <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
             <input type="hidden" name="mode" value="random">
             <label>
@@ -93,13 +93,29 @@
           </form>
 
           {% if user.legacy_password_enabled %}
-          <form method="post" action="{{ url_for('admin.user_breakglass_password_disable', user_id=user.id) }}" class="admin-form">
+          <form method="post" action="{{ url_for('admin.user_breakglass_password_disable', user_id=user.id) }}" class="admin-form" data-stepup-action="disable_password" data-stepup-target="{{ user.id }}">
             <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
             <div class="form-actions">
               <button type="submit" class="btn btn--warn btn--small">Break-Glass deaktivieren</button>
             </div>
           </form>
           {% endif %}
+
+          <hr>
+          <form method="post" action="{{ url_for('admin.user_authenticator_reset', user_id=user.id) }}"
+                class="admin-form" data-stepup-action="admin_credential_reset"
+                data-stepup-target="{{ user.id }}">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <p class="text-danger">
+              FIDO2-Credentials und aktive TOTP-Faktoren widerrufen; alle Sitzungen beenden.
+              Ein Break-Glass-Passwort muss vorher eingerichtet sein.
+            </p>
+            <label>
+              Zur Bestätigung Benutzernamen eingeben: <strong>{{ user.username }}</strong>
+              <input type="text" name="confirm_username" autocomplete="off" required>
+            </label>
+            <button type="submit" class="btn btn--warn btn--small">Authenticator-Recovery starten</button>
+          </form>
         </details>
       </td>
     </tr>
@@ -108,4 +124,8 @@
     {% endfor %}
   </tbody>
 </table>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='js/admin-security.js') }}"></script>
 {% endblock %}

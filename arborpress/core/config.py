@@ -148,7 +148,7 @@ class AuthSettings(BaseSettings):
     hibp_timeout: float = Field(default=3.0, ge=0.5, le=30.0)
     hibp_fail_open: bool = True
     hibp_max_count: int = Field(default=0, ge=0)
-    stepup_ttl: int = 900
+    stepup_ttl: int = 300
     admin_session_ttl: int = 3600
     auth_rate_limit: str = "10/minute"
     # §2 Account lockout – credential-stuffing protection

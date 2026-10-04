@@ -34,6 +34,7 @@ class AuditEvent(Base):
     actor_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     # Denormalized: readable even after user deletion
     actor_name: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    target_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
 
     # Network context
     ip: Mapped[str | None] = mapped_column(String(45), nullable=True)

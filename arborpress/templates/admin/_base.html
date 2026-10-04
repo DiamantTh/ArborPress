@@ -15,6 +15,7 @@
 <a href="{{ url_for('admin.pages_list') }}">{{ _('Seiten') }}</a>
 {% endif %}
 <a href="{{ url_for('admin.media_list') }}">{{ _('Medien') }}</a>
+<a href="{{ url_for('auth.account_security_page') }}">{{ _('Kontosicherheit') }}</a>
 {% if has_role('editor') %}
 <a href="{{ url_for('admin.comments_list') }}">{{ _('Kommentare') }}</a>
 {% endif %}

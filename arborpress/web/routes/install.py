@@ -15,13 +15,14 @@ Token protection:
 
 After installation:
   • config/.installed  is created → all further requests to /install → 404
-  • config/install.token is deleted
+  • config/install.token is deleted, after the initial WebAuthn credential is verified
 """
 
 from __future__ import annotations
 
 import logging
 import secrets
+from datetime import UTC, datetime, timedelta
 
 from quart import Blueprint, abort, redirect, render_template, request, session, url_for
 
@@ -66,7 +67,6 @@ async def install_page():
 async def install_submit():
     from arborpress.core.config import (
         install_token_path,
-        installed_marker_path,
         is_installed,
     )
 
@@ -121,25 +121,23 @@ async def install_submit():
         import arborpress.models  # noqa: F401 – register models
         from arborpress.core.db import create_all_tables, get_db_session
         from arborpress.core.site_settings import save_section
-        from arborpress.models.user import AccountType, User, UserRole
+        from arborpress.models.user import User
         from sqlalchemy import func, select
 
         # 1. Create DB schema
         await create_all_tables()
 
-        # 2. Create admin user (idempotent)
+        # 2. Reserve no account yet. The install token grants a short-lived
+        # enrollment ceremony; the identity and admin role are created only
+        # after the first WebAuthn assertion proves user verification.
         async for db in get_db_session():
             result = await db.execute(select(User).where(func.lower(User.username) == admin_user.lower()))
-            if result.scalar_one_or_none() is None:
-                user = User(
-                    username=admin_user,
-                    display_name=admin_dn or admin_user,
-                    email=admin_email,
-                    account_type=AccountType.PUBLIC,
-                    role=UserRole("admin"),
-                )
-                db.add(user)
-                await db.commit()
+            if result.scalar_one_or_none() is not None:
+                return await render_template(
+                    "install.html",
+                    errors=["The initial username is already in use."],
+                    form=form,
+                ), 409
 
         # 3. Set site title
         async for db in get_db_session():
@@ -150,14 +148,7 @@ async def install_submit():
                 updated_by="install",
             )
 
-        # 4. Write installation marker, delete token
-        marker = installed_marker_path()
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text("installed\n", encoding="utf-8")
-        if token_file.exists():
-            token_file.unlink()
-
-        log.info("Installation complete. Admin: %r, site: %r", admin_user, site_name)
+        log.info("Initial WebAuthn enrollment prepared. Admin: %r, site: %r", admin_user, site_name)
 
         # 5. DB-Capabilities detektieren und Scheduler starten (kein Neustart nötig)
         import asyncio as _asyncio
@@ -184,6 +175,13 @@ async def install_submit():
             form=form,
         ), 500
 
-    # Pre-fill username in session for the register form
-    session["install_prefill_user"] = admin_user
+    # Install-token trust is scoped to this browser, this identity, and 30 min.
+    session["install_enrollment"] = {
+        "username": admin_user,
+        "display_name": admin_dn or admin_user,
+        "email": admin_email or "",
+        "site_name": site_name,
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).timestamp(),
+        "nonce": secrets.token_urlsafe(24),
+    }
     return redirect(url_for("auth.register_page"))

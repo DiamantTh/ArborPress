@@ -14,8 +14,8 @@
   {# §2 WebAuthn – primärer Auth-Pfad #}
   <form id="login-form" class="auth-form">
     <div class="form-group">
-      <label for="user_name">{{ _('Benutzername') }}</label>
-      <input type="text" id="user_name" name="user_name" autocomplete="username"
+      <label for="user_name">{{ _('Benutzername oder E-Mail') }}</label>
+      <input type="text" id="user_name" name="identifier" autocomplete="username"
              autofocus required maxlength="64">
     </div>
     <button type="submit" class="btn btn--primary" id="login-btn">
@@ -55,9 +55,9 @@
   </details>
   {% endif %}
 
-  <p class="auth-box__alt">
+  {% if install_enrollment_available %}<p class="auth-box__alt">
     <a href="{{ url_for('auth.register_page') }}">{{ _('Ersten Schlüssel registrieren') }}</a>
-  </p>
+  </p>{% endif %}
 </div>
 {% endblock %}
 

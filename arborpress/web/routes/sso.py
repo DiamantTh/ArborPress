@@ -27,6 +27,7 @@ from quart import Blueprint, abort, redirect, request, session, url_for
 from sqlalchemy import func, select
 
 from arborpress.core.config import get_settings
+from arborpress.core.audit import write_audit_event
 from arborpress.core.db import get_db_session
 from arborpress.core.validators import is_valid_username
 from arborpress.logging.config import get_audit_logger
@@ -258,9 +259,7 @@ async def sso_callback(provider: str) -> tuple:
     display_name = str(claims.get(display_name_claim) or raw_username or desired_username).strip()[:128]
 
     async for db in get_db_session():
-        from datetime import UTC, datetime, timedelta
-
-        from arborpress.models.user import AccountType, User, UserRole, UserSession
+        from arborpress.models.user import AccountType, MFADevice, MFADeviceType, User, UserRole, WebAuthnCredential
 
         user = None
         if email and provider_cfg.get("auto_link_by_email", True):
@@ -307,30 +306,61 @@ async def sso_callback(provider: str) -> tuple:
             if display_name and not user.display_name:
                 user.display_name = display_name
 
-        session.clear()
-        session["user_id"] = str(user.id)
-        session["user_name"] = user.username
-        session["user_role"] = user.role.value
-        session["account_type"] = user.account_type.value
-        session["auth_method"] = f"sso:{provider}"
-
-        now = datetime.now(UTC)
-        ttl = timedelta(seconds=cfg.auth.admin_session_ttl)
-        proto = request.headers.get("X-Forwarded-Proto", "") or request.scheme
-        is_tls = str(proto).lower() in ("https", "on") or request.url.startswith("https")
-        raw_ua = request.headers.get("User-Agent", "")
-        db_sess = UserSession(
-            user_id=str(user.id),
-            expires_at=now + ttl,
-            last_seen_at=now,
-            client_ip=request.remote_addr,
-            user_agent=raw_ua[:512] if raw_ua else None,
-            is_tls=is_tls,
-            is_cli=False,
+        from arborpress.auth.sessions import create_user_session
+        from arborpress.auth.policy import requires_second_factor
+        from arborpress.core.site_settings import get_webauthn_settings
+        wa_settings = await get_webauthn_settings(db)
+        webauthn_count = (await db.execute(select(func.count()).select_from(
+            WebAuthnCredential
+        ).where(WebAuthnCredential.user_id == str(user.id)))).scalar_one() or 0
+        totp_count = (await db.execute(select(func.count()).select_from(
+            MFADevice
+        ).where(
+            MFADevice.user_id == str(user.id),
+            MFADevice.device_type == MFADeviceType.TOTP,
+            MFADevice.is_active.is_(True),
+            MFADevice.verification_status.in_(("verified", "unknown")),
+        ))).scalar_one() or 0
+        available_factors = set()
+        if webauthn_count:
+            available_factors.add("webauthn")
+        if totp_count:
+            available_factors.add("totp")
+        require_second_factor = requires_second_factor(
+            user, "sso", available_factors,
+            auth_settings=cfg.auth, webauthn_settings=wa_settings,
         )
-        db.add(db_sess)
+        if require_second_factor:
+            if not available_factors:
+                abort(403, "This account requires an enrolled MFA factor before SSO login")
+            from arborpress.auth.pending import create_pending
+            pending = await create_pending(
+                db, purpose="sso_mfa", user_id=str(user.id),
+                ttl_seconds=int(wa_settings.get("challenge_ttl_seconds", 300)),
+                context={
+                    "methods": [
+                        *(["webauthn"] if webauthn_count else []),
+                        *(["totp"] if totp_count else []),
+                    ],
+                    "auth_method": f"sso:{provider}",
+                    "provider": provider,
+                },
+            )
+            session.clear()
+            session["sso_mfa_pending_id"] = pending.id
+            await db.commit()
+            return redirect(url_for("auth.mfa_page"))
+
+        await create_user_session(
+            db, user, auth_method=f"sso:{provider}", assurance_level="sso"
+        )
+        await write_audit_event(
+            event_type="login_success", outcome="success",
+            actor_id=str(user.id), actor_name=user.username, target_id=str(user.id),
+            detail=f"method=sso:{provider} assurance=sso", ip=request.remote_addr,
+            user_agent=request.headers.get("User-Agent"), db=db,
+        )
         await db.commit()
-        session["session_id"] = db_sess.id
 
         audit.info(
             "SSO login successful | provider=%s user=%s role=%s",

@@ -5,22 +5,23 @@
 
 const regForm = document.getElementById("register-form");
 const regBtn  = document.getElementById("register-btn");
+const passkeyBtn = document.getElementById("passkey-register-btn");
 
 if (regForm) {
   regForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const userName    = regForm.querySelector("#user_name").value.trim();
-    const displayName = regForm.querySelector("#display_name").value.trim();
     const keyLabel    = regForm.querySelector("#key_label").value.trim() || "Sicherheitsschlüssel";
+    const enrollmentKind = e.submitter?.value || "security_key";
 
     regBtn.disabled = true;
-    regBtn.textContent = "Bitte Schlüssel berühren…";
+    if (passkeyBtn) passkeyBtn.disabled = true;
+    regBtn.textContent = "Bitte Authenticator bestätigen…";
 
     try {
       const beginRes = await fetch("/auth/register/begin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_name: userName, display_name: displayName }),
+        body: JSON.stringify({ enrollment_kind: enrollmentKind, label: keyLabel }),
       });
       if (!beginRes.ok) throw new Error(await beginRes.text());
       const options = await beginRes.json();
@@ -52,7 +53,8 @@ if (regForm) {
       _showError(err.message || String(err));
     } finally {
       regBtn.disabled = false;
-      regBtn.textContent = "Schlüssel registrieren";
+      if (passkeyBtn) passkeyBtn.disabled = false;
+      regBtn.textContent = "FIDO2-Sicherheitsschlüssel hinzufügen (empfohlen)";
     }
   });
 }
@@ -73,6 +75,7 @@ function _regCredToJSON(c) {
     id: c.id,
     rawId: _bufToB64u(c.rawId),
     type: c.type,
+    authenticatorAttachment: c.authenticatorAttachment || null,
     transports: r.getTransports ? r.getTransports() : [],
     response: {
       attestationObject: _bufToB64u(r.attestationObject),
