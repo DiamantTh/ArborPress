@@ -104,7 +104,7 @@ class TestAdminBreakglassUsers:
         assert target_user.legacy_password_hash != hash_password("correct horse battery staple")
 
     @pytest.mark.asyncio
-    async def test_admin_authenticator_reset_is_audited_and_revokes_sessions(
+    async def test_admin_recovery_authorization_preserves_credentials_and_revokes_sessions(
         self, client, test_engine, monkeypatch
     ):
         from arborpress.core.config import Settings
@@ -168,6 +168,9 @@ class TestAdminBreakglassUsers:
                 user_id=admin_user_id,
                 action="admin_credential_reset",
                 target=target_user_id,
+                auth_method="webauthn",
+                assurance_level="user_verified",
+                confirming_credential_id=str(uuid.uuid4()),
             )
             sess["_csrf_token"] = "test-token"  # noqa: S105 - test-only CSRF fixture
 
@@ -180,7 +183,12 @@ class TestAdminBreakglassUsers:
         async with factory() as db:
             from sqlalchemy import func, select
 
-            from arborpress.models.user import MFADevice, UserSession, WebAuthnCredential
+            from arborpress.models.user import (
+                AuthPending,
+                MFADevice,
+                UserSession,
+                WebAuthnCredential,
+            )
 
             credential_count = (await db.execute(
                 select(func.count()).select_from(WebAuthnCredential).where(
@@ -189,7 +197,15 @@ class TestAdminBreakglassUsers:
             )).scalar_one()
             revoked_totp = await db.get(MFADevice, str(totp.id))
             revoked_session = await db.get(UserSession, target_session_id)
-        assert credential_count == 0
-        assert revoked_totp is not None and not revoked_totp.is_active
-        assert revoked_totp.verification_status == "revoked"
+            recovery_authorization = (await db.execute(
+                select(AuthPending).where(
+                    AuthPending.user_id == target_user_id,
+                    AuthPending.purpose == "recovery_authorization",
+                    AuthPending.consumed_at.is_(None),
+                )
+            )).scalar_one_or_none()
+        assert credential_count == 1
+        assert revoked_totp is not None and revoked_totp.is_active
+        assert revoked_totp.verification_status == "verified"
         assert revoked_session is not None and not revoked_session.is_valid
+        assert recovery_authorization is not None

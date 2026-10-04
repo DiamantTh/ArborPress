@@ -101,7 +101,9 @@ document.querySelectorAll(".stepup-redirect").forEach((button) => {
 document.getElementById("totp-add")?.addEventListener("click", async (event) => {
   const button = event.currentTarget;
   try {
-    await authenticateFor(button.dataset.action, button.dataset.target);
+    if (button.dataset.recoveryOnly !== "true") {
+      await authenticateFor(button.dataset.action, button.dataset.target);
+    }
     const enrollment = await postJSON("/auth/totp/begin", { label: "Authenticator" });
     document.getElementById("totp-uri").textContent = enrollment.provisioning_uri;
     document.getElementById("totp-enrollment").hidden = false;
@@ -138,4 +140,32 @@ document.querySelectorAll(".stepup-remove").forEach((button) => {
       showError(error);
     }
   });
+});
+
+document.querySelectorAll(".recovery-remove").forEach((button) => {
+  button.addEventListener("click", async () => {
+    try {
+      const response = await fetch(button.dataset.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.description || data.error || "Removal failed");
+      }
+      window.location.reload();
+    } catch (error) {
+      showError(error);
+    }
+  });
+});
+
+document.getElementById("recovery-complete")?.addEventListener("click", async () => {
+  try {
+    await postJSON("/auth/recovery/complete");
+    window.location.href = "/auth/login?recovery=complete";
+  } catch (error) {
+    showError(error);
+  }
 });

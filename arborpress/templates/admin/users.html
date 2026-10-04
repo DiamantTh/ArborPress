@@ -107,14 +107,16 @@
                 data-stepup-target="{{ user.id }}">
             <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
             <p class="text-danger">
-              FIDO2-Credentials und aktive TOTP-Faktoren widerrufen; alle Sitzungen beenden.
-              Ein Break-Glass-Passwort muss vorher eingerichtet sein.
+              Recovery für 24 Stunden autorisieren und bestehende Sitzungen beenden.
+              Credentials bleiben bestehen, bis der Benutzer selbst ein neues Credential
+              registriert und den Ersatz bestätigt hat. Dafür ist ein aktives
+              Break-Glass-Passwort erforderlich.
             </p>
             <label>
               Zur Bestätigung Benutzernamen eingeben: <strong>{{ user.username }}</strong>
               <input type="text" name="confirm_username" autocomplete="off" required>
             </label>
-            <button type="submit" class="btn btn--warn btn--small">Authenticator-Recovery starten</button>
+            <button type="submit" class="btn btn--warn btn--small">Recovery autorisieren</button>
           </form>
         </details>
       </td>

@@ -40,6 +40,7 @@
   {% if config.auth.legacy_password_enabled %}
   <details class="break-glass">
     <summary>{{ _('Notfall-Passwort-Login') }}</summary>
+    <p>{{ _('Wenn weitere nutzbare Faktoren eingerichtet sind, werden sie weiterhin verlangt. Passwort allein startet nur nach einer befristeten Admin-Freigabe eine eingeschränkte Recovery.') }}</p>
     <form method="post" action="{{ url_for('auth.breakglass_login') }}" class="auth-form">
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
       <div class="form-group">
@@ -50,7 +51,7 @@
         <label>{{ _('Passwort') }}</label>
         <input type="password" name="password" autocomplete="current-password" required>
       </div>
-      <button type="submit" class="btn btn--warn">{{ _('Anmelden (Break-Glass)') }}</button>
+      <button type="submit" class="btn btn--warn">{{ _('Break-Glass prüfen') }}</button>
     </form>
   </details>
   {% endif %}

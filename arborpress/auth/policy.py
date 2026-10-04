@@ -67,6 +67,47 @@ async def usable_totp_device_ids(db: Any, user_id: str) -> set[str]:
     return {str(value) for value in rows.scalars().all()}
 
 
+async def recovery_has_new_auth_path(
+    db: Any,
+    user: User,
+    recovery_context: dict[str, Any],
+    *,
+    exclude_webauthn_id: str | None = None,
+    exclude_mfa_id: str | None = None,
+) -> bool:
+    """Require a usable factor added after recovery was authorized.
+
+    A WebAuthn credential is a complete passwordless path. A new TOTP is a
+    usable recovery replacement only when ArborPress can pair it with an
+    enabled password or a configured SSO policy that accepts MFA.
+    """
+    webauthn_ids = await usable_webauthn_credential_ids(db, str(user.id))
+    totp_ids = await usable_totp_device_ids(db, str(user.id))
+    baseline_webauthn = {
+        str(value) for value in recovery_context.get("baseline_webauthn_ids", [])
+    }
+    baseline_totp = {
+        str(value) for value in recovery_context.get("baseline_totp_ids", [])
+    }
+    if exclude_webauthn_id:
+        webauthn_ids.discard(str(exclude_webauthn_id))
+    if exclude_mfa_id:
+        totp_ids.discard(str(exclude_mfa_id))
+
+    if webauthn_ids - baseline_webauthn:
+        return True
+    if not (totp_ids - baseline_totp):
+        return False
+
+    paths = await usable_auth_paths(
+        db,
+        user,
+        exclude_webauthn_id=exclude_webauthn_id,
+        exclude_mfa_id=exclude_mfa_id,
+    )
+    return bool(paths & {"password+second_factor", "sso"})
+
+
 async def credential_removal_decision(
     db: Any,
     *,

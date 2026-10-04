@@ -45,7 +45,9 @@ if (regForm) {
       const result = await completeRes.json();
 
       if (completeRes.ok) {
-        window.location.href = "/auth/login?registered=1";
+        window.location.href = result.recovery_only
+          ? "/auth/security"
+          : "/auth/login?registered=1";
       } else {
         _showError(result.description || "Registrierung fehlgeschlagen");
       }

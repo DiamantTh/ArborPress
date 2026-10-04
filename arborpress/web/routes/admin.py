@@ -631,28 +631,40 @@ async def user_breakglass_password_disable(user_id: str):
 
 @admin_bp.post("/users/<user_id>/auth-reset")
 async def user_authenticator_reset(user_id: str):
-    """Revoke a user's lost authenticators for audited password recovery."""
+    """Authorize a target user's short, self-service credential recovery."""
     _require_session()
     require_role("admin")
     actor_id = str(session.get("user_id") or "")
     try:
-        await assert_stepup(session, actor_id, "admin_credential_reset", target=user_id)
+        await assert_stepup(
+            session,
+            actor_id,
+            "admin_credential_reset",
+            target=user_id,
+            required_evidence={"webauthn": "user_verified"},
+        )
     except PermissionError:
         return jsonify({"error": "step_up_required"}), 403
 
     form = await request.form
     async for db in get_db_session():
-        from sqlalchemy import update
+        from sqlalchemy import select, update
 
+        from arborpress.auth.pending import (
+            RECOVERY_AUTHORIZATION_PURPOSE,
+            create_pending,
+            utcnow_naive,
+        )
+        from arborpress.auth.policy import lock_user_for_credential_change
+        from arborpress.auth.sessions import RECOVERY_AUTHORIZATION_TTL_SECONDS
         from arborpress.models.user import (
-            MFADevice,
-            MFADeviceType,
-            User,
+            AuthPending,
             UserSession,
-            WebAuthnCredential,
         )
 
-        user = await db.get(User, user_id)
+        if actor_id == str(user_id):
+            abort(400, "Administrators cannot authorize recovery for their own account")
+        user = await lock_user_for_credential_change(db, user_id)
         if user is None:
             abort(404)
         if form.get("confirm_username", "").strip() != user.username:
@@ -672,47 +684,48 @@ async def user_authenticator_reset(user_id: str):
                 breakglass_result={
                     "level": "warning",
                     "message": (
-                        f"Authenticatoren fuer {user.username} bleiben aktiv. "
-                        "Vor dem Reset muss ein Break-Glass-Passwort vorbereitet sein."
+                        f"Recovery fuer {user.username} ist nicht freigegeben. "
+                        "Ein aktives Break-Glass-Passwort muss vorher eingerichtet sein."
                     ),
                 }
             ), 409
 
-        credentials = (await db.execute(select(WebAuthnCredential).where(
-            WebAuthnCredential.user_id == str(user.id)
-        ))).scalars().all()
-        totp_devices = (await db.execute(select(MFADevice).where(
-            MFADevice.user_id == str(user.id),
-            MFADevice.device_type == MFADeviceType.TOTP,
-            MFADevice.is_active.is_(True),
-        ))).scalars().all()
-        for credential in credentials:
+        now = utcnow_naive()
+        previous_authorizations = (await db.execute(
+            select(AuthPending).where(
+                AuthPending.user_id == str(user.id),
+                AuthPending.purpose == RECOVERY_AUTHORIZATION_PURPOSE,
+                AuthPending.consumed_at.is_(None),
+                AuthPending.expires_at > now,
+            ).with_for_update()
+        )).scalars().all()
+        for prior in previous_authorizations:
+            prior.consumed_at = now
             await write_audit_event(
-                event_type="webauthn_credential_removed", outcome="success",
-                actor_id=actor_id, target_id=str(credential.id),
-                detail=f"admin_reset user_id={user.id}", db=db,
+                event_type="recovery_authorization_superseded", outcome="success",
+                actor_id=actor_id, target_id=str(user.id),
+                detail="purpose=account_credential_recovery",
+                db=db,
             )
-            await db.delete(credential)
-        for device in totp_devices:
-            device.is_active = False
-            device.verification_status = "revoked"
-            db.add(device)
-            await write_audit_event(
-                event_type="totp_removed", outcome="success",
-                actor_id=actor_id, target_id=str(device.id),
-                detail=f"admin_reset user_id={user.id}", db=db,
-            )
+        await create_pending(
+            db,
+            purpose=RECOVERY_AUTHORIZATION_PURPOSE,
+            user_id=str(user.id),
+            ttl_seconds=RECOVERY_AUTHORIZATION_TTL_SECONDS,
+            context={"authorized_by": actor_id, "purpose": "account_credential_recovery"},
+        )
         await db.execute(
             update(UserSession)
             .where(UserSession.user_id == str(user.id), UserSession.is_valid.is_(True))
             .values(is_valid=False)
         )
         await write_audit_event(
-            event_type="admin_credential_reset", outcome="success",
+            event_type="recovery_authorized", outcome="success",
             actor_id=actor_id, target_id=str(user.id),
             detail=(
-                f"webauthn={len(credentials)};totp={len(totp_devices)};"
-                "password_recovery_only"
+                "purpose=account_credential_recovery;"
+                f"ttl_seconds={RECOVERY_AUTHORIZATION_TTL_SECONDS};"
+                "method=webauthn_uv"
             ), db=db,
         )
         await db.commit()
@@ -720,9 +733,10 @@ async def user_authenticator_reset(user_id: str):
             breakglass_result={
                 "level": "success",
                 "message": (
-                    f"Authenticatoren von {user.username} widerrufen. "
-                    "Nach dem Break-Glass-Login ist nur eine eingeschraenkte "
-                    "Recovery-Sitzung fuer neues Enrollment verfuegbar."
+                    f"Recovery fuer {user.username} ist fuer 24 Stunden autorisiert. "
+                    "Vorhandene Authenticatoren bleiben bis zum bestätigten Ersatz aktiv. "
+                    "Der Benutzer muss sich selbst mit dem Break-Glass-Passwort anmelden; "
+                    "dadurch entsteht nur eine 15-minütige Recovery-Sitzung."
                 ),
             }
         )

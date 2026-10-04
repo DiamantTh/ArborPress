@@ -8,19 +8,18 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from arborpress.auth.breakglass import hash_password, validate_password_policy
+from arborpress.auth.mfa import BackupCodeService, TOTPService
 from arborpress.auth.password_tools import (
     assess_password_strength,
     generate_diceware_passphrase,
     generate_random_password,
 )
-from arborpress.auth.mfa import TOTPService, BackupCodeService
 from arborpress.auth.stepup import (
-    grant_stepup,
-    assert_stepup,
-    revoke_stepup,
     STEPUP_REQUIRED_OPERATIONS,
+    assert_stepup,
+    grant_stepup,
+    revoke_stepup,
 )
-
 
 # ---------------------------------------------------------------------------
 # §2 Break-Glass Passwort-Policy
@@ -147,7 +146,7 @@ class TestBreakglassLogin:
         await _seed_breakglass_user(
             test_engine,
             username="admin1",
-            password="correct horse battery staple",
+            password="correct horse battery staple",  # noqa: S106 - test fixture
         )
 
         resp1 = await client.post(
@@ -221,7 +220,7 @@ class TestBackupCodeService:
     def test_plaintext_not_equal_hash(self):
         svc = BackupCodeService()
         plaintext, hashed = svc.generate_codes()
-        for p, h in zip(plaintext, hashed):
+        for p, h in zip(plaintext, hashed, strict=True):
             assert p != h
 
     def test_verify_correct_code(self):
@@ -382,4 +381,70 @@ class TestStepup:
         with pytest.raises(PermissionError, match="unregistered"):
             await assert_stepup(
                 self._make_session(), "u1", "sensitive_typo", "target"
+            )
+
+    @pytest.mark.asyncio
+    async def test_legacy_unknown_evidence_cannot_authorize_credential_removal(
+        self, db_session
+    ):
+        session = self._make_session()
+        user_id = await self._make_user(db_session)
+        await grant_stepup(
+            session,
+            user_id,
+            "remove_webauthn_credential",
+            "credential-1",
+            auth_method="unknown",
+            assurance_level="unknown",
+            db=db_session,
+        )
+        with pytest.raises(PermissionError):
+            await assert_stepup(
+                session,
+                user_id,
+                "remove_webauthn_credential",
+                "credential-1",
+                required_evidence={"webauthn": "user_verified"},
+                db=db_session,
+            )
+        await grant_stepup(
+            session,
+            user_id,
+            "remove_totp_credential",
+            "device-1",
+            auth_method="unknown",
+            assurance_level="unknown",
+            db=db_session,
+        )
+        with pytest.raises(PermissionError):
+            await assert_stepup(
+                session,
+                user_id,
+                "remove_totp_credential",
+                "device-1",
+                required_evidence={
+                    "webauthn": "user_verified",
+                    "totp": "otp_verified",
+                },
+                db=db_session,
+            )
+
+        await grant_stepup(
+            session,
+            user_id,
+            "remove_webauthn_credential",
+            "credential-2",
+            auth_method="webauthn",
+            assurance_level="unknown",
+            confirming_credential_id="credential-2",
+            db=db_session,
+        )
+        with pytest.raises(PermissionError):
+            await assert_stepup(
+                session,
+                user_id,
+                "remove_webauthn_credential",
+                "credential-2",
+                required_evidence={"webauthn": "user_verified"},
+                db=db_session,
             )

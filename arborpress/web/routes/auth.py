@@ -58,6 +58,7 @@ _JSON_API_PATHS = frozenset({
     "/auth/mfa/totp/complete",
     "/auth/totp/begin",
     "/auth/totp/complete",
+    "/auth/recovery/complete",
 })
 
 
@@ -126,6 +127,7 @@ _RATE_LIMITED_PATHS = frozenset({
     "/auth/totp/begin",
     "/auth/totp/complete",
     "/auth/mfa/webauthn/complete",
+    "/auth/recovery/complete",
 })
 
 _AUTHENTICATED_ENDPOINTS = frozenset({
@@ -141,6 +143,7 @@ _AUTHENTICATED_ENDPOINTS = frozenset({
     "auth.totp_remove",
     "auth.webauthn_credential_remove",
     "auth.account_security_page",
+    "auth.recovery_complete",
 })
 
 
@@ -178,6 +181,7 @@ async def _auth_session_guard() -> None:
     async for db in get_db_session():
         if await refresh_session_identity(db, session) is None:
             session.clear()
+            await db.commit()
             abort(401, "Session expired or revoked")
         await db.commit()
         break
@@ -281,10 +285,12 @@ async def register_begin():
             abort(403, "Fresh step-up for this account is required")
     async for db in get_db_session():
         from arborpress.auth.pending import create_pending
+        from arborpress.auth.sessions import get_active_recovery_state
         from arborpress.core.site_settings import get_webauthn_settings
         from arborpress.models.user import User, WebAuthnCredential
 
         user = None
+        recovery_state = None
         planned: dict[str, str] = {}
         existing: list[bytes] = []
         if session.get("user_id"):
@@ -293,7 +299,8 @@ async def register_begin():
             if user is None or not user.is_active:
                 abort(401)
             if recovery_only:
-                if session.get("auth_method") != "recovery":
+                recovery_state = await get_active_recovery_state(db, session)
+                if recovery_state is None:
                     abort(403)
             settings = await get_webauthn_settings(db)
             count = (await db.execute(select(func.count()).select_from(
@@ -370,6 +377,8 @@ async def register_begin():
             context={
                 "enrollment_kind": enrollment_kind,
                 "recovery_only": recovery_only,
+                "session_id": str(session.get("session_id") or "") if recovery_only else None,
+                "recovery_id": str(session.get("recovery_id") or "") if recovery_only else None,
                 "install_nonce": (session.get("install_enrollment") or {}).get("nonce"),
             },
         )
@@ -413,10 +422,20 @@ async def register_complete():
         purpose = "webauthn_enrollment" if user_id else "install_enrollment"
         if user_id and str(session.get("user_id") or "") != user_id:
             abort(403)
+        preview_context = json.loads(pending_preview.context or "{}")
+        if preview_context.get("recovery_only"):
+            from arborpress.auth.sessions import get_active_recovery_state
+
+            recovery_state = await get_active_recovery_state(db, session)
+            if (
+                recovery_state is None
+                or preview_context.get("session_id") != session.get("session_id")
+                or preview_context.get("recovery_id") != session.get("recovery_id")
+            ):
+                abort(403, "Recovery enrollment is bound to another session")
         if not user_id:
             from arborpress.core.config import is_installed
             install = session.get("install_enrollment") or {}
-            preview_context = json.loads(pending_preview.context or "{}")
             if (
                 is_installed()
                 or not install
@@ -443,18 +462,31 @@ async def register_complete():
                 actor_id=user_id, target_id=user_id,
                 detail="webauthn_verification_failed", db=db,
             )
+            if preview_context.get("recovery_only"):
+                await write_audit_event(
+                    event_type="recovery_enrollment_failed", outcome="failure",
+                    actor_id=str(user_id), target_id=str(user_id),
+                    detail="purpose=account_credential_recovery;method=webauthn",
+                    db=db,
+                )
             await db.commit()
             log.warning("WebAuthn registration verification failed: %s", exc)
             abort(400, "Registrierung fehlgeschlagen")
 
         if user_id:
-            user = (await db.execute(
-                select(User).where(User.id == user_id).with_for_update()
-            )).scalar_one_or_none()
+            from arborpress.auth.policy import lock_user_for_credential_change
+
+            user = await lock_user_for_credential_change(db, user_id)
         else:
             user = None
         if user_id and user is None:
             abort(404)
+        if preview_context.get("recovery_only"):
+            from arborpress.auth.sessions import get_active_recovery_state
+
+            if await get_active_recovery_state(db, session) is None:
+                await db.commit()
+                abort(403, "Recovery session expired during enrollment")
         if user is None:
             if not pending.username:
                 abort(400, "Initial identity missing")
@@ -538,8 +570,18 @@ async def register_complete():
             actor_id=str(user.id), actor_name=user.username,
             target_id=str(cred.id), detail=f"label={label}", db=db,
         )
-        await db.commit()
         initial_enrollment = purpose == "install_enrollment"
+        recovery_enrollment = bool(
+            json.loads(pending.context or "{}").get("recovery_only")
+        )
+        if recovery_enrollment:
+            await write_audit_event(
+                event_type="recovery_credential_added", outcome="success",
+                actor_id=str(user.id), target_id=str(cred.id),
+                detail="credential_type=webauthn;purpose=account_credential_recovery",
+                db=db,
+            )
+        await db.commit()
 
     if initial_enrollment:
         from arborpress.core.config import install_token_path, installed_marker_path
@@ -552,11 +594,14 @@ async def register_complete():
             token_path.unlink()
 
     from arborpress.core.events import emit
-    if not session.get("user_id") or session.get("recovery_only"):
+    if not session.get("user_id"):
         session.clear()
     await emit("auth.credential_registered", user_id=str(user.id), label=label)
 
-    return jsonify({"status": "ok", "label": label}), 201
+    return jsonify({
+        "status": "ok", "label": label,
+        "recovery_only": bool(session.get("recovery_only")),
+    }), 201
 
 
 # ---------------------------------------------------------------------------
@@ -1011,22 +1056,30 @@ async def login_mfa_totp_complete():
 @auth_bp.post("/totp/begin")
 async def totp_enrollment_begin():
     user_id = str(session.get("user_id") or "")
-    if not user_id or session.get("recovery_only"):
+    recovery_only = bool(session.get("recovery_only"))
+    if not user_id:
         abort(401)
     data = await request.get_json() or {}
     label = str(data.get("label") or "Authenticator").strip()[:128]
     if not label:
         abort(400, "label required")
-    try:
-        await assert_stepup(
-            session, user_id, "add_totp_credential", target=user_id
-        )
-    except PermissionError:
-        abort(403, "Fresh step-up required")
+    if not recovery_only:
+        try:
+            await assert_stepup(
+                session, user_id, "add_totp_credential", target=user_id
+            )
+        except PermissionError:
+            abort(403, "Fresh step-up required")
     async for db in get_db_session():
         from arborpress.auth.mfa import TOTPService, encrypt_secret, get_device_limit
         from arborpress.auth.pending import create_pending
+        from arborpress.auth.sessions import get_active_recovery_state
         from arborpress.models.user import MFADevice, MFADeviceType
+        recovery_state = (
+            await get_active_recovery_state(db, session) if recovery_only else None
+        )
+        if recovery_only and recovery_state is None:
+            abort(403, "Recovery session expired or invalid")
         count = (await db.execute(select(func.count()).select_from(MFADevice).where(
             MFADevice.user_id == user_id,
             MFADevice.device_type == MFADeviceType.TOTP,
@@ -1047,7 +1100,12 @@ async def totp_enrollment_begin():
         pending = await create_pending(
             db, purpose="totp_enrollment", user_id=user_id, label=label,
             ttl_seconds=int(settings.get("challenge_ttl_seconds", 300)),
-            context={"secret_enc": base64.b64encode(encrypt_secret(secret)).decode("ascii")},
+            context={
+                "secret_enc": base64.b64encode(encrypt_secret(secret)).decode("ascii"),
+                "recovery_only": recovery_only,
+                "session_id": str(session.get("session_id") or "") if recovery_only else None,
+                "recovery_id": str(session.get("recovery_id") or "") if recovery_only else None,
+            },
         )
         session["totp_enrollment_pending_id"] = pending.id
         await db.commit()
@@ -1072,14 +1130,25 @@ async def totp_enrollment_complete():
     async for db in get_db_session():
         from arborpress.auth.mfa import TOTPService, decrypt_secret, get_device_limit
         from arborpress.auth.pending import consume_pending
-        from arborpress.models.user import MFADevice, MFADeviceType, User
+        from arborpress.models.user import MFADevice, MFADeviceType
         pending = await consume_pending(
             db, pending_id=pending_id, purpose="totp_enrollment", user_id=user_id
         )
         if pending is None:
             abort(400, "Enrollment expired or already used")
-        await db.commit()
         context = json.loads(pending.context or "{}")
+        recovery_only = bool(context.get("recovery_only"))
+        if recovery_only:
+            from arborpress.auth.sessions import get_active_recovery_state
+
+            recovery_state = await get_active_recovery_state(db, session)
+            if (
+                recovery_state is None
+                or context.get("session_id") != session.get("session_id")
+                or context.get("recovery_id") != session.get("recovery_id")
+            ):
+                abort(403, "Recovery enrollment is bound to another session")
+        await db.commit()
         try:
             secret_enc = base64.b64decode(context["secret_enc"], validate=True)
             secret = decrypt_secret(secret_enc)
@@ -1091,13 +1160,26 @@ async def totp_enrollment_complete():
                 event_type="mfa_enrollment_failure", outcome="failure",
                 actor_id=user_id, target_id=user_id, detail="totp_code_invalid", db=db,
             )
+            if recovery_only:
+                await write_audit_event(
+                    event_type="recovery_enrollment_failed", outcome="failure",
+                    actor_id=user_id, target_id=user_id,
+                    detail="purpose=account_credential_recovery;method=totp",
+                    db=db,
+                )
             await db.commit()
             abort(400, "Invalid authenticator code")
-        user = (await db.execute(
-            select(User).where(User.id == user_id).with_for_update()
-        )).scalar_one_or_none()
+        from arborpress.auth.policy import lock_user_for_credential_change
+
+        user = await lock_user_for_credential_change(db, user_id)
         if user is None or not user.is_active:
             abort(401)
+        if recovery_only:
+            from arborpress.auth.sessions import get_active_recovery_state
+
+            if await get_active_recovery_state(db, session) is None:
+                await db.commit()
+                abort(403, "Recovery session expired during enrollment")
         count = (await db.execute(select(func.count()).select_from(MFADevice).where(
             MFADevice.user_id == user_id,
             MFADevice.device_type == MFADeviceType.TOTP,
@@ -1124,6 +1206,13 @@ async def totp_enrollment_complete():
             event_type="totp_added", outcome="success", actor_id=user_id,
             target_id=str(device.id), detail=f"label={device.label}", db=db,
         )
+        if recovery_only:
+            await write_audit_event(
+                event_type="recovery_credential_added", outcome="success",
+                actor_id=user_id, target_id=str(device.id),
+                detail="credential_type=totp;purpose=account_credential_recovery",
+                db=db,
+            )
         await db.commit()
         return jsonify({"status": "ok", "label": device.label}), 201
 
@@ -1131,26 +1220,36 @@ async def totp_enrollment_complete():
 @auth_bp.post("/totp/<device_id>/remove")
 async def totp_remove(device_id: str):
     user_id = str(session.get("user_id") or "")
-    if not user_id or session.get("recovery_only"):
+    recovery_only = bool(session.get("recovery_only"))
+    if not user_id:
         abort(401)
     async for db in get_db_session():
         from arborpress.auth.policy import (
             credential_removal_decision,
             lock_user_for_credential_change,
+            recovery_has_new_auth_path,
         )
+        from arborpress.auth.sessions import get_active_recovery_state
         from arborpress.models.user import MFADevice, MFADeviceType
         user = await lock_user_for_credential_change(db, user_id)
         if user is None or not user.is_active:
             abort(401)
-        try:
-            evidence = await assert_stepup(
-                session, user_id, "remove_totp_credential", target=device_id,
-                required_evidence={"webauthn": "user_verified", "totp": "otp_verified"},
-                db=db,
-            )
-        except PermissionError:
-            await db.commit()
-            abort(403, "Fresh FIDO2 or TOTP step-up required")
+        recovery_state = (
+            await get_active_recovery_state(db, session) if recovery_only else None
+        )
+        if recovery_only and recovery_state is None:
+            abort(403, "Recovery session expired or invalid")
+        evidence = None
+        if not recovery_only:
+            try:
+                evidence = await assert_stepup(
+                    session, user_id, "remove_totp_credential", target=device_id,
+                    required_evidence={"webauthn": "user_verified", "totp": "otp_verified"},
+                    db=db,
+                )
+            except PermissionError:
+                await db.commit()
+                abort(403, "Fresh FIDO2 or TOTP step-up required")
         device = (await db.execute(
             select(MFADevice).where(
                 MFADevice.id == device_id,
@@ -1161,11 +1260,32 @@ async def totp_remove(device_id: str):
         if device is None:
             await db.commit()
             abort(404)
-        decision = await credential_removal_decision(
-            db, user_id=user_id, credential_type="totp",
-            target_id=device_id, evidence=evidence,
-        )
-        if not decision.allowed:
+        if recovery_only:
+            _, recovery_context = recovery_state
+            baseline = {
+                str(value) for value in recovery_context.get("baseline_totp_ids", [])
+            }
+            if (
+                str(device.id) not in baseline
+                or not await recovery_has_new_auth_path(
+                    db, user, recovery_context, exclude_mfa_id=str(device.id)
+                )
+            ):
+                await write_audit_event(
+                    event_type="recovery_credential_removal_blocked", outcome="blocked",
+                    actor_id=user_id, target_id=device_id,
+                    detail="credential_type=totp;replacement_path_required",
+                    db=db,
+                )
+                await db.commit()
+                abort(409, "Erst einen neuen nutzbaren Authentifizierungspfad registrieren")
+            decision = None
+        else:
+            decision = await credential_removal_decision(
+                db, user_id=user_id, credential_type="totp",
+                target_id=device_id, evidence=evidence,
+            )
+        if decision is not None and not decision.allowed:
             event_type = (
                 "auth_lockout_prevention"
                 if decision.reason in {"last_totp_requires_webauthn"}
@@ -1187,16 +1307,33 @@ async def totp_remove(device_id: str):
                 "Mit dieser Best\u00e4tigung kann dieses TOTP-Credential nicht entfernt werden",
             )
         await db.delete(device)
+        auth_method = (
+            evidence.auth_method
+            if evidence is not None
+            else ("recovery" if recovery_only else "unknown")
+        )
+        assurance = (
+            evidence.assurance_level
+            if evidence is not None
+            else ("recovery" if recovery_only else "unknown")
+        )
         await write_audit_event(
             event_type="totp_removed", outcome="success", actor_id=user_id,
             actor_name=user.username, target_id=device_id,
             detail=(
-                f"auth_method={evidence.auth_method if evidence else 'unknown'};"
-                f"assurance={evidence.assurance_level if evidence else 'unknown'};"
-                f"confirming_credential_id={evidence.confirming_credential_id or ''};"
-                f"confirming_mfa_device_id={evidence.confirming_mfa_device_id or ''}"
+                f"auth_method={auth_method};"
+                f"assurance={assurance};"
+                f"confirming_credential_id={evidence.confirming_credential_id if evidence else ''};"
+                f"confirming_mfa_device_id={evidence.confirming_mfa_device_id if evidence else ''}"
             ), db=db,
         )
+        if recovery_only:
+            await write_audit_event(
+                event_type="recovery_credential_removed", outcome="success",
+                actor_id=user_id, target_id=device_id,
+                detail="credential_type=totp;purpose=account_credential_recovery",
+                db=db,
+            )
         await db.commit()
         return jsonify({"status": "removed"}), 200
 
@@ -1204,26 +1341,36 @@ async def totp_remove(device_id: str):
 @auth_bp.post("/credentials/<credential_uuid>/remove")
 async def webauthn_credential_remove(credential_uuid: str):
     user_id = str(session.get("user_id") or "")
-    if not user_id or session.get("recovery_only"):
+    recovery_only = bool(session.get("recovery_only"))
+    if not user_id:
         abort(401)
     async for db in get_db_session():
         from arborpress.auth.policy import (
             credential_removal_decision,
             lock_user_for_credential_change,
+            recovery_has_new_auth_path,
         )
+        from arborpress.auth.sessions import get_active_recovery_state
         from arborpress.models.user import WebAuthnCredential
         user = await lock_user_for_credential_change(db, user_id)
         if user is None or not user.is_active:
             abort(401)
-        try:
-            evidence = await assert_stepup(
-                session, user_id, "remove_webauthn_credential", target=credential_uuid,
-                required_evidence={"webauthn": "user_verified"},
-                db=db,
-            )
-        except PermissionError:
-            await db.commit()
-            abort(403, "Fresh FIDO2 step-up with user verification required")
+        recovery_state = (
+            await get_active_recovery_state(db, session) if recovery_only else None
+        )
+        if recovery_only and recovery_state is None:
+            abort(403, "Recovery session expired or invalid")
+        evidence = None
+        if not recovery_only:
+            try:
+                evidence = await assert_stepup(
+                    session, user_id, "remove_webauthn_credential", target=credential_uuid,
+                    required_evidence={"webauthn": "user_verified"},
+                    db=db,
+                )
+            except PermissionError:
+                await db.commit()
+                abort(403, "Fresh FIDO2 step-up with user verification required")
         credential = (await db.execute(
             select(WebAuthnCredential).where(
                 WebAuthnCredential.id == credential_uuid,
@@ -1233,11 +1380,33 @@ async def webauthn_credential_remove(credential_uuid: str):
         if credential is None:
             await db.commit()
             abort(404)
-        decision = await credential_removal_decision(
-            db, user_id=user_id, credential_type="webauthn",
-            target_id=credential_uuid, evidence=evidence,
-        )
-        if not decision.allowed:
+        if recovery_only:
+            _, recovery_context = recovery_state
+            baseline = {
+                str(value)
+                for value in recovery_context.get("baseline_webauthn_ids", [])
+            }
+            if (
+                str(credential.id) not in baseline
+                or not await recovery_has_new_auth_path(
+                    db, user, recovery_context, exclude_webauthn_id=str(credential.id)
+                )
+            ):
+                await write_audit_event(
+                    event_type="recovery_credential_removal_blocked", outcome="blocked",
+                    actor_id=user_id, target_id=credential_uuid,
+                    detail="credential_type=webauthn;replacement_path_required",
+                    db=db,
+                )
+                await db.commit()
+                abort(409, "Erst einen neuen nutzbaren Authentifizierungspfad registrieren")
+            decision = None
+        else:
+            decision = await credential_removal_decision(
+                db, user_id=user_id, credential_type="webauthn",
+                target_id=credential_uuid, evidence=evidence,
+            )
+        if decision is not None and not decision.allowed:
             event_type = (
                 "auth_lockout_prevention"
                 if decision.reason == "last_webauthn_credential"
@@ -1260,15 +1429,32 @@ async def webauthn_credential_remove(credential_uuid: str):
             )
         label = credential.label
         await db.delete(credential)
+        auth_method = (
+            evidence.auth_method
+            if evidence is not None
+            else ("recovery" if recovery_only else "unknown")
+        )
+        assurance = (
+            evidence.assurance_level
+            if evidence is not None
+            else ("recovery" if recovery_only else "unknown")
+        )
         await write_audit_event(
             event_type="webauthn_credential_removed", outcome="success",
             actor_id=user_id, actor_name=user.username, target_id=credential_uuid,
             detail=(
-                f"label={label};auth_method={evidence.auth_method if evidence else 'unknown'};"
-                f"assurance={evidence.assurance_level if evidence else 'unknown'};"
-                f"confirming_credential_id={evidence.confirming_credential_id or ''}"
+                f"label={label};auth_method={auth_method};"
+                f"assurance={assurance};"
+                f"confirming_credential_id={evidence.confirming_credential_id if evidence else ''}"
             ), db=db,
         )
+        if recovery_only:
+            await write_audit_event(
+                event_type="recovery_credential_removed", outcome="success",
+                actor_id=user_id, target_id=credential_uuid,
+                detail="credential_type=webauthn;purpose=account_credential_recovery",
+                db=db,
+            )
         await db.commit()
         return jsonify({"status": "removed"}), 200
 
@@ -1279,6 +1465,8 @@ async def account_security_page():
     if not user_id:
         return redirect(url_for("auth.login_page"))
     async for db in get_db_session():
+        from arborpress.auth.policy import recovery_has_new_auth_path
+        from arborpress.auth.sessions import get_active_recovery_state
         from arborpress.models.user import MFADevice, User, WebAuthnCredential
         user = await db.get(User, user_id)
         if user is None or not user.is_active:
@@ -1295,10 +1483,93 @@ async def account_security_page():
         devices = (await db.execute(select(MFADevice).where(
             MFADevice.user_id == user_id
         ))).scalars().all()
+        recovery_state = (
+            await get_active_recovery_state(db, session)
+            if session.get("recovery_only") else None
+        )
+        if session.get("recovery_only") and recovery_state is None:
+            await db.commit()
+            abort(403, "Recovery session expired or invalid")
+        has_recovery_path = False
+        recovery_baseline_webauthn_ids: set[str] = set()
+        recovery_baseline_totp_ids: set[str] = set()
+        if recovery_state is not None:
+            _, recovery_context = recovery_state
+            recovery_baseline_webauthn_ids = {
+                str(value)
+                for value in recovery_context.get("baseline_webauthn_ids", [])
+            }
+            recovery_baseline_totp_ids = {
+                str(value) for value in recovery_context.get("baseline_totp_ids", [])
+            }
+            has_recovery_path = await recovery_has_new_auth_path(
+                db, user, recovery_context
+            )
         return await render_template(
             "auth/security.html", user=user, credentials=credentials,
             devices=devices, recovery_only=bool(session.get("recovery_only")),
+            recovery_has_new_auth_path=has_recovery_path,
+            recovery_baseline_webauthn_ids=recovery_baseline_webauthn_ids,
+            recovery_baseline_totp_ids=recovery_baseline_totp_ids,
         )
+
+
+@auth_bp.post("/recovery/complete")
+async def recovery_complete():
+    user_id = str(session.get("user_id") or "")
+    if not user_id or not session.get("recovery_only"):
+        abort(403, "Recovery session required")
+    async for db in get_db_session():
+        from arborpress.auth.pending import consume_pending
+        from arborpress.auth.policy import (
+            lock_user_for_credential_change,
+            recovery_has_new_auth_path,
+        )
+        from arborpress.auth.sessions import get_active_recovery_state
+        from arborpress.models.user import UserSession
+
+        state = await get_active_recovery_state(db, session)
+        if state is None:
+            await db.commit()
+            abort(403, "Recovery session expired or invalid")
+        pending, context = state
+        user = await lock_user_for_credential_change(db, user_id)
+        if (
+            user is None
+            or not user.is_active
+            or not await recovery_has_new_auth_path(db, user, context)
+        ):
+            await write_audit_event(
+                event_type="recovery_completion_blocked", outcome="blocked",
+                actor_id=user_id, target_id=user_id,
+                detail="purpose=account_credential_recovery;replacement_path_missing",
+                db=db,
+            )
+            await db.commit()
+            abort(409, "Recovery requires a newly verified normal authentication path")
+        consumed = await consume_pending(
+            db,
+            pending_id=pending.id,
+            purpose="recovery_session",
+            user_id=user_id,
+        )
+        if consumed is None:
+            await db.commit()
+            abort(403, "Recovery session already consumed")
+        db_session = await db.get(UserSession, str(session.get("session_id")))
+        if db_session is None or db_session.user_id != user_id:
+            await db.commit()
+            abort(403)
+        db_session.is_valid = False
+        await write_audit_event(
+            event_type="recovery_completed", outcome="success",
+            actor_id=user_id, target_id=user_id,
+            detail="purpose=account_credential_recovery;next=normal_login",
+            db=db,
+        )
+        await db.commit()
+        session.clear()
+        return jsonify({"status": "recovery_completed", "login_required": True}), 200
 
 
 # ---------------------------------------------------------------------------
@@ -1327,10 +1598,29 @@ async def breakglass_login():
         abort(400, "Benutzername und Passwort erforderlich")
 
     from arborpress.auth.breakglass import needs_rehash, verify_password
-    from arborpress.models.user import User
+    from arborpress.auth.pending import (
+        RECOVERY_AUTHORIZATION_PURPOSE,
+        consume_pending,
+        create_pending,
+    )
+    from arborpress.auth.sessions import (
+        RECOVERY_PURPOSE,
+        RECOVERY_SESSION_PURPOSE,
+        RECOVERY_SESSION_TTL_SECONDS,
+        create_user_session,
+    )
+    from arborpress.models.user import (
+        AuthPending,
+        MFADevice,
+        MFADeviceType,
+        User,
+        WebAuthnCredential,
+    )
 
     async for db in get_db_session():
-        stmt = select(User).where(func.lower(User.username) == user_name.lower())
+        stmt = select(User).where(
+            func.lower(User.username) == user_name.lower()
+        ).with_for_update()
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
 
@@ -1348,6 +1638,38 @@ async def breakglass_login():
             except Exception as _e:  # noqa: BLE001
                 log.debug("Dummy-Verifikation (erwartet): %s", _e)
             abort(401, "Invalid credentials")
+
+        from arborpress.auth.policy import lock_user_for_credential_change
+
+        user = await lock_user_for_credential_change(db, str(user.id))
+        if user is None or not user.is_active:
+            abort(401, "Invalid credentials")
+
+        now = datetime.now(UTC).replace(tzinfo=None)
+        recovery_authorization = (await db.execute(
+            select(AuthPending).where(
+                AuthPending.user_id == str(user.id),
+                AuthPending.purpose == RECOVERY_AUTHORIZATION_PURPOSE,
+                AuthPending.consumed_at.is_(None),
+                AuthPending.expires_at > now,
+            ).order_by(AuthPending.created_at.desc())
+        )).scalars().first()
+        expired_authorizations = (await db.execute(
+            select(AuthPending).where(
+                AuthPending.user_id == str(user.id),
+                AuthPending.purpose == RECOVERY_AUTHORIZATION_PURPOSE,
+                AuthPending.consumed_at.is_(None),
+                AuthPending.expires_at <= now,
+            ).with_for_update()
+        )).scalars().all()
+        for expired_authorization in expired_authorizations:
+            expired_authorization.consumed_at = now
+            await write_audit_event(
+                event_type="recovery_expired", outcome="failure",
+                actor_id=str(user.id), target_id=str(user.id),
+                detail="purpose=account_credential_recovery;authorization_expired",
+                db=db,
+            )
 
         _now = datetime.now(UTC)
         _locked_until = user.locked_until
@@ -1389,6 +1711,13 @@ async def breakglass_login():
                 detail=_detail,
                 db=db,
             )
+            if recovery_authorization is not None:
+                await write_audit_event(
+                    event_type="recovery_proof_failed", outcome="failure",
+                    actor_id=str(user.id), target_id=str(user.id),
+                    detail="purpose=account_credential_recovery;method=breakglass",
+                    db=db,
+                )
             await db.commit()
             abort(401, "Invalid credentials")
 
@@ -1406,33 +1735,114 @@ async def breakglass_login():
                 sa_update(User).where(User.id == user.id)
                 .values(legacy_password_hash=hash_password(password))
             )
-            await db.commit()
-
-        from arborpress.auth.sessions import create_user_session
-        from arborpress.models.user import MFADevice, MFADeviceType, WebAuthnCredential
-
-        credential_count = (await db.execute(select(func.count()).select_from(
-            WebAuthnCredential
-        ).where(WebAuthnCredential.user_id == str(user.id)))).scalar_one() or 0
-        totp_count = (await db.execute(select(func.count()).select_from(
-            MFADevice
-        ).where(
-            MFADevice.user_id == str(user.id),
-            MFADevice.device_type == MFADeviceType.TOTP,
-            MFADevice.is_active.is_(True),
-            MFADevice.verification_status.in_(("verified", "unknown")),
-        ))).scalar_one() or 0
-
-        methods: set[str] = set()
-        if credential_count:
-            methods.add("webauthn")
-        if totp_count:
-            methods.add("totp")
-        from arborpress.auth.pending import create_pending
-        from arborpress.auth.policy import requires_second_factor
+        from arborpress.auth.policy import (
+            requires_second_factor,
+            usable_webauthn_credential_ids,
+        )
         from arborpress.core.site_settings import get_webauthn_settings
 
+        webauthn_ids = await usable_webauthn_credential_ids(db, str(user.id))
+        methods: set[str] = set()
+        if webauthn_ids:
+            methods.add("webauthn")
+        # Keep migrated active TOTP usable for login: a correct code upgrades
+        # its unknown verification status in the normal MFA completion route.
+        totp_login_count = (await db.execute(
+            select(func.count()).select_from(MFADevice).where(
+                MFADevice.user_id == str(user.id),
+                MFADevice.device_type == MFADeviceType.TOTP,
+                MFADevice.is_active.is_(True),
+                MFADevice.verification_status.in_(("verified", "unknown")),
+            )
+        )).scalar_one() or 0
+        if totp_login_count:
+            methods.add("totp")
         wa_settings = await get_webauthn_settings(db)
+
+        if recovery_authorization is not None:
+            authorization = await consume_pending(
+                db,
+                pending_id=recovery_authorization.id,
+                purpose=RECOVERY_AUTHORIZATION_PURPOSE,
+                user_id=str(user.id),
+            )
+            if authorization is None:
+                abort(403, "Recovery authorization expired or already used")
+            try:
+                authorization_context = json.loads(authorization.context or "{}")
+                authorized_by = str(authorization_context["authorized_by"])
+            except (ValueError, TypeError, KeyError):
+                await write_audit_event(
+                    event_type="recovery_started", outcome="blocked",
+                    actor_id=str(user.id), target_id=str(user.id),
+                    detail="purpose=account_credential_recovery;authorization_invalid",
+                    db=db,
+                )
+                await db.commit()
+                abort(403, "Recovery authorization is invalid")
+            baseline_webauthn = (await db.execute(
+                select(WebAuthnCredential.id).where(
+                    WebAuthnCredential.user_id == str(user.id)
+                )
+            )).scalars().all()
+            baseline_totp = (await db.execute(
+                select(MFADevice.id).where(
+                    MFADevice.user_id == str(user.id),
+                    MFADevice.device_type == MFADeviceType.TOTP,
+                )
+            )).scalars().all()
+            recovery_context = {
+                "session_id": "",
+                "recovery_purpose": RECOVERY_PURPOSE,
+                "authorized_by": authorized_by,
+                "baseline_webauthn_ids": [str(value) for value in baseline_webauthn],
+                "baseline_totp_ids": [str(value) for value in baseline_totp],
+                "auth_method": "breakglass",
+            }
+            await create_user_session(
+                db, user, auth_method="recovery", assurance_level="recovery",
+                recovery_only=True, ttl_seconds=RECOVERY_SESSION_TTL_SECONDS,
+            )
+            recovery_session_id = str(session.get("session_id") or "")
+            recovery_context["session_id"] = recovery_session_id
+            recovery_pending = await create_pending(
+                db,
+                purpose=RECOVERY_SESSION_PURPOSE,
+                user_id=str(user.id),
+                ttl_seconds=RECOVERY_SESSION_TTL_SECONDS,
+                context=recovery_context,
+            )
+            session["recovery_id"] = recovery_pending.id
+            await write_audit_event(
+                event_type="breakglass_password_accepted", outcome="success",
+                actor_id=str(user.id), target_id=str(user.id),
+                detail="recovery_authorized=true;method=breakglass",
+                db=db,
+            )
+            await write_audit_event(
+                event_type="recovery_proof_succeeded", outcome="success",
+                actor_id=str(user.id), target_id=str(user.id),
+                detail="purpose=account_credential_recovery;method=breakglass",
+                db=db,
+            )
+            await write_audit_event(
+                event_type="recovery_session_created", outcome="success",
+                actor_id=str(user.id), target_id=str(user.id),
+                detail=(
+                    "purpose=account_credential_recovery;ttl_seconds="
+                    f"{RECOVERY_SESSION_TTL_SECONDS};authorized_by={authorized_by}"
+                ),
+                db=db,
+            )
+            await write_audit_event(
+                event_type="recovery_started", outcome="success",
+                actor_id=str(user.id), target_id=str(user.id),
+                detail="purpose=account_credential_recovery;method=breakglass",
+                db=db,
+            )
+            await db.commit()
+            return redirect(url_for("auth.account_security_page"))
+
         if requires_second_factor(
             user, "password", methods,
             auth_settings=cfg.auth, webauthn_settings=wa_settings,
@@ -1452,25 +1862,16 @@ async def breakglass_login():
             await db.commit()
             return redirect(url_for("auth.mfa_page"))
 
-        # Password-only access is an explicit, restricted recovery session.
-        # Admin/content routes reject recovery_only; only credential recovery
-        # enrollment is available until the user logs in with WebAuthn.
-        await create_user_session(
-            db, user, auth_method="recovery", assurance_level="recovery",
-            recovery_only=True,
-        )
+        # Break-glass password is never a normal login. Without an explicit
+        # administrator authorization it cannot create any session.
         await write_audit_event(
-            event_type="recovery_breakglass_use", outcome="success",
-            actor_id=str(user.id), actor_name=user.username, target_id=str(user.id),
-            ip=request.remote_addr, user_agent=request.headers.get("User-Agent"),
-            detail="password_verified_no_second_factor", db=db,
+            event_type="recovery_breakglass_blocked", outcome="blocked",
+            actor_id=str(user.id), target_id=str(user.id),
+            detail="purpose=account_credential_recovery;authorization_missing",
+            db=db,
         )
         await db.commit()
-
-    from arborpress.core.events import emit
-    await emit("auth.login_success", user_id=str(user.id))
-
-    return redirect(url_for("auth.register_page"))
+        abort(403, "An administrator must authorize account recovery first")
 
 
 # ---------------------------------------------------------------------------
@@ -1482,15 +1883,35 @@ async def breakglass_login():
 async def logout():
     user_id = session.get("user_id")
     session_id = session.get("session_id")
+    recovery_only = bool(session.get("recovery_only"))
+    recovery_id = session.get("recovery_id")
     session.clear()
     if session_id:
-        from arborpress.models.user import UserSession
+        from arborpress.auth.pending import utcnow_naive
+        from arborpress.auth.sessions import RECOVERY_SESSION_PURPOSE
+        from arborpress.core.audit import write_audit_event as audit_recovery_event
+        from arborpress.models.user import AuthPending, UserSession
         async for db in get_db_session():
             await db.execute(
                 update(UserSession)
                 .where(UserSession.id == session_id)
                 .values(is_valid=False)
             )
+            if recovery_only and recovery_id:
+                pending = await db.get(AuthPending, str(recovery_id))
+                if (
+                    pending is not None
+                    and pending.user_id == str(user_id)
+                    and pending.purpose == RECOVERY_SESSION_PURPOSE
+                    and pending.consumed_at is None
+                ):
+                    pending.consumed_at = utcnow_naive()
+                await audit_recovery_event(
+                    event_type="recovery_aborted", outcome="success",
+                    actor_id=str(user_id), target_id=str(user_id),
+                    detail="purpose=account_credential_recovery;reason=logout",
+                    db=db,
+                )
             await db.commit()
     if user_id:
         from arborpress.core.events import emit

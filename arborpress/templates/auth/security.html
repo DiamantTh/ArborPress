@@ -8,15 +8,21 @@
   <h1>{{ _('Kontosicherheit') }}</h1>
   <p>{{ user.display_name }} ({{ user.username }})</p>
   {% if recovery_only %}
-  <p class="flash--error">{{ _('Recovery-Sitzung: Nur Authenticator-Wiederherstellung ist verfügbar.') }}</p>
+  <p class="flash--error">{{ _('Eingeschränkte Recovery-Sitzung. Sie läuft nach 15 Minuten ab und erlaubt nur die Wiederherstellung Ihrer Authenticatoren.') }}</p>
   {% endif %}
 
   <section>
     <h2>{{ _('FIDO2-Sicherheitsschlüssel — EMPFOHLEN') }}</h2>
+    {% if recovery_only %}
+    <a class="btn btn--primary" href="{{ url_for('auth.register_page') }}">
+      {{ _('Sicherheitsschlüssel hinzufügen') }}
+    </a>
+    {% else %}
     <button class="btn btn--primary stepup-redirect" data-action="add_webauthn_credential"
             data-target="{{ user.id }}" data-next="{{ url_for('auth.register_page') }}">
       {{ _('Sicherheitsschlüssel hinzufügen') }}
     </button>
+    {% endif %}
     <h3>{{ _('Weitere Passkeys') }}</h3>
     <p>{{ _('Synchronisierte Passkeys sind zulässig. Eine Attestation wird nicht als Hersteller- oder Modellnachweis dargestellt.') }}</p>
     {% for credential in credentials %}
@@ -30,11 +36,18 @@
         {% if credential.transports %}· {{ credential.transports }}{% elif credential.transport %}· {{ credential.transport }}{% endif %}
       </small>
       <small>Erstellt: {{ credential.created_at }} · Zuletzt verwendet: {{ credential.last_used_at or _('Noch nie') }}</small>
-      {% if not recovery_only %}
+      {% if (not recovery_only) or (credential.id|string in recovery_baseline_webauthn_ids) %}
+      {% if recovery_only %}
+      <button class="btn btn--small recovery-remove"
+              data-url="{{ url_for('auth.webauthn_credential_remove', credential_uuid=credential.id) }}">
+        {{ _('Altes Credential entfernen') }}
+      </button>
+      {% else %}
       <button class="btn btn--small stepup-remove" data-action="remove_webauthn_credential"
               data-target="{{ credential.id }}" data-url="{{ url_for('auth.webauthn_credential_remove', credential_uuid=credential.id) }}">
         {{ _('Entfernen') }}
       </button>
+      {% endif %}
       {% endif %}
     </article>
     {% else %}<p>{{ _('Noch kein WebAuthn-Credential registriert.') }}</p>{% endfor %}
@@ -42,11 +55,10 @@
 
   <section>
     <h2>{{ _('TOTP — FALLBACK') }}</h2>
-    {% if not recovery_only %}
-    <button class="btn" id="totp-add" data-action="add_totp_credential" data-target="{{ user.id }}">
+    <button class="btn" id="totp-add" data-action="add_totp_credential"
+            data-target="{{ user.id }}" data-recovery-only="{{ 'true' if recovery_only else 'false' }}">
       {{ _('Authenticator hinzufügen') }}
     </button>
-    {% endif %}
     <div id="totp-enrollment" hidden>
       <p>{{ _('Scanne diese URI und bestätige dann einen aktuellen Code:') }}</p>
       <code id="totp-uri"></code>
@@ -60,12 +72,19 @@
     <article class="security-item">
       <strong>{{ device.label }}</strong>
       <small>{{ device.verification_status }} · {{ _('Erstellt') }}: {{ device.created_at }} · {{ _('Zuletzt verwendet') }}: {{ device.last_used_at or _('Noch nie') }}</small>
-      {% if not recovery_only %}
+      {% if (not recovery_only) or (device.id|string in recovery_baseline_totp_ids) %}
+      {% if recovery_only %}
+      <button class="btn btn--small recovery-remove"
+              data-url="{{ url_for('auth.totp_remove', device_id=device.id) }}">
+        {{ _('Altes TOTP entfernen') }}
+      </button>
+      {% else %}
       <button class="btn btn--small stepup-remove" data-action="remove_totp_credential"
               data-target="{{ device.id }}" data-allow-totp="true"
               data-url="{{ url_for('auth.totp_remove', device_id=device.id) }}">
         {{ _('Entfernen') }}
       </button>
+      {% endif %}
       {% endif %}
     </article>
     {% endfor %}
@@ -73,9 +92,21 @@
 
   <section>
     <h2>{{ _('Passwort / Recovery') }}</h2>
-    <p>{{ _('Break-glass-Passwörter allein erzeugen nur eine eingeschränkte Recovery-Sitzung.') }}</p>
+    <p>{{ _('Break-glass-Passwörter allein erzeugen keine normale Anmeldung. Recovery muss vorher durch einen berechtigten Administrator autorisiert werden.') }}</p>
+    {% if recovery_only %}
+      {% if recovery_has_new_auth_path %}
+      <button class="btn btn--primary" id="recovery-complete">
+        {{ _('Recovery abschließen und zur Anmeldung wechseln') }}
+      </button>
+      {% else %}
+      <p>{{ _('Registrieren und bestätigen Sie zuerst einen neuen nutzbaren Authentifizierungspfad. Danach können Sie alte Credentials entfernen und Recovery abschließen.') }}</p>
+      {% endif %}
+    {% endif %}
   </section>
-  <p><a href="{{ url_for('auth.login_page') }}">{{ _('Abmelden / zurück') }}</a></p>
+  <form method="post" action="{{ url_for('auth.logout') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <button class="btn btn--small" type="submit">{{ _('Abmelden') }}</button>
+  </form>
   <p id="security-error" class="flash--error" hidden></p>
 </div>
 {% endblock %}

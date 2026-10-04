@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from arborpress.auth.policy import (
     credential_removal_decision,
     lock_user_for_credential_change,
+    recovery_has_new_auth_path,
     usable_totp_device_ids,
     usable_webauthn_credential_ids,
 )
@@ -151,6 +152,41 @@ async def test_webauthn_only_one_remaining_is_a_valid_account_path(db_session, m
     )
     assert not decision.allowed
     assert await usable_webauthn_credential_ids(db_session, user_id) == {key_id}
+
+
+@pytest.mark.asyncio
+async def test_recovery_completion_requires_a_new_usable_factor(db_session):
+    from arborpress.models.user import User
+
+    user_id = await _user(db_session, "recovery-factor")
+    old_key = await _webauthn(db_session, user_id)
+    old_totp = await _totp(db_session, user_id)
+    user = await db_session.get(User, user_id)
+    recovery_context = {
+        "baseline_webauthn_ids": [old_key],
+        "baseline_totp_ids": [old_totp],
+    }
+    assert not await recovery_has_new_auth_path(
+        db_session, user, recovery_context
+    )
+
+    # Pending or unconfirmed TOTP records do not count as a replacement.
+    await _totp(db_session, user_id, active=False, status="pending")
+    await _totp(db_session, user_id, active=True, status="unknown")
+    assert not await recovery_has_new_auth_path(
+        db_session, user, recovery_context
+    )
+
+    new_key = await _webauthn(db_session, user_id)
+    assert await recovery_has_new_auth_path(
+        db_session, user, recovery_context
+    )
+    assert not await recovery_has_new_auth_path(
+        db_session,
+        user,
+        recovery_context,
+        exclude_webauthn_id=new_key,
+    )
 
 
 @pytest.mark.asyncio

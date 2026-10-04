@@ -11,6 +11,8 @@ from sqlalchemy import delete, or_, select, update
 
 from arborpress.models.user import AuthPending
 
+RECOVERY_AUTHORIZATION_PURPOSE = "recovery_authorization"
+
 
 def utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)

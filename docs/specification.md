@@ -105,13 +105,25 @@ and are atomically consumed once. An unregistered operation fails closed.
 - Can be fully disabled by policy.
 - If enabled, must be clearly labeled: **"Legacy / Not Recommended"**.
 - When usable WebAuthn or verified TOTP factors exist, password authentication
-  requires one of them. Password-only recovery creates a restricted session
-  that can only enroll a new WebAuthn credential.
-- An administrator can explicitly revoke a user's WebAuthn credentials and
-  active TOTP factors for authenticator recovery. This requires admin role,
-  target-bound WebAuthn step-up, typed username confirmation, and a configured
-  break-glass password for the target. It revokes the target's sessions and is
-  audited; the next password login can only enroll a replacement credential.
+  requires one of them. Password-only never creates a normal session.
+- Recovery requires an explicit authorization by an administrator. The
+  administrator uses a target-bound WebAuthn UV step-up and confirms the
+  target username. Authorization expires after 24 hours and revokes the
+  target's active sessions; it does not delete credentials.
+- The target user redeems the authorization with their own configured
+  Break-Glass password. This creates a 15-minute recovery-only session bound
+  to that user, session, purpose, and one-shot server-side pending state.
+- Recovery sessions can open the user's Security page, enroll WebAuthn or
+  staged TOTP, remove credentials that existed when recovery began after a
+  new usable path has been verified, complete recovery, or log out. They
+  cannot access normal content, APIs, administration, roles, plugins, or
+  configuration.
+- Recovery completion requires a newly enrolled, verified normal path:
+  a usable WebAuthn credential, or a verified TOTP path accepted by the
+  configured password/SSO policy. Pending TOTP does not count. Completion
+  consumes recovery state, invalidates the restricted session, and requires a
+  normal login. This preserves replace-before-remove and keeps Break-Glass
+  from becoming an ordinary FIDO2 bypass.
 - Password policy (min/max length, zxcvbn min score, HIBP check) is
   stored in the DB-backed `security` site_settings section and
   editable under `/admin/security`. The `[auth]` block in
@@ -197,6 +209,10 @@ and are atomically consumed once. An unregistered operation fails closed.
 ### Auth state and sessions
 - Short-lived WebAuthn ceremonies and pending TOTP enrollments are stored
   server-side, bound to purpose/user, and consumed once.
+- Recovery authorization and the restricted recovery session reuse the
+  existing `AuthPending` and `UserSession` records. Legacy step-up grants with
+  unknown authentication method or assurance cannot authorize credential
+  removal.
 - All successful flows create the same `UserSession` record and store the auth
   method and assurance level (`webauthn_uv`, password plus WebAuthn/TOTP, SSO,
   or restricted recovery).

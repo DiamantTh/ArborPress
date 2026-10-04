@@ -215,6 +215,43 @@ def create_app() -> Quart:
             return None
         return _redir(_uf("install.install_page"))
 
+    @app.before_request
+    async def _recovery_session_gate():
+        """Limit recovery sessions to the account's own recovery surface."""
+        from quart import abort as _abort
+        from quart import request as _req
+        from quart import session as _session
+
+        if not _session.get("recovery_only"):
+            return None
+        if _req.path.startswith("/static/") or _req.path == "/favicon.ico":
+            return None
+        allowed_endpoints = {
+            "auth.register_page",
+            "auth.register_begin",
+            "auth.register_complete",
+            "auth.account_security_page",
+            "auth.totp_enrollment_begin",
+            "auth.totp_enrollment_complete",
+            "auth.totp_remove",
+            "auth.webauthn_credential_remove",
+            "auth.recovery_complete",
+            "auth.logout",
+        }
+        if _req.endpoint not in allowed_endpoints:
+            _abort(403, "Recovery-only session")
+
+        from arborpress.auth.sessions import refresh_session_identity
+        from arborpress.core.db import get_db_session
+
+        async for db in get_db_session():
+            if await refresh_session_identity(db, _session) is None:
+                _session.clear()
+                await db.commit()
+                _abort(401, "Recovery session expired or revoked")
+            await db.commit()
+            break
+
     # §1 / §6 Public routes
     app.register_blueprint(public_bp)
 
