@@ -43,21 +43,54 @@ function showError(error) {
   errorNode.textContent = error instanceof Error ? error.message : String(error);
 }
 
-async function authenticateFor(action, target) {
+async function authenticateWithTotp() {
+  const code = window.prompt("Gib den aktuellen Code eines aktiven TOTP-Authenticators ein:");
+  if (!code) throw new Error("TOTP-Bestätigung abgebrochen");
+  await postJSON("/auth/stepup/totp/complete", { code: code.trim() });
+}
+
+async function restartForTotp(action, target) {
   const options = await postJSON("/auth/stepup/begin", { action, target });
+  if (!options.totp_only && !options.totp_available) {
+    throw new Error("Für diese Aktion ist kein TOTP-Fallback verfügbar");
+  }
+  await authenticateWithTotp();
+}
+
+async function authenticateFor(action, target, { allowTotp = false } = {}) {
+  const options = await postJSON("/auth/stepup/begin", { action, target });
+  if (options.totp_only) {
+    if (!allowTotp) throw new Error("Für diese Aktion ist FIDO2-Step-up erforderlich");
+    await authenticateWithTotp();
+    return;
+  }
   options.challenge = b64uToBuffer(options.challenge);
   options.allowCredentials?.forEach((credential) => {
     credential.id = b64uToBuffer(credential.id);
   });
-  const assertion = await navigator.credentials.get({ publicKey: options });
+  let assertion;
+  try {
+    assertion = await navigator.credentials.get({ publicKey: options });
+  } catch (error) {
+    if (!allowTotp || !options.totp_available) throw error;
+    await restartForTotp(action, target);
+    return;
+  }
   if (!assertion) throw new Error("No authenticator response returned");
-  await postJSON("/auth/stepup/complete", credentialToJSON(assertion));
+  try {
+    await postJSON("/auth/stepup/complete", credentialToJSON(assertion));
+  } catch (error) {
+    if (!allowTotp || !options.totp_available) throw error;
+    await restartForTotp(action, target);
+  }
 }
 
 document.querySelectorAll(".stepup-redirect").forEach((button) => {
   button.addEventListener("click", async () => {
     try {
-      await authenticateFor(button.dataset.action, button.dataset.target);
+      await authenticateFor(button.dataset.action, button.dataset.target, {
+        allowTotp: button.dataset.allowTotp === "true",
+      });
       window.location.href = button.dataset.next;
     } catch (error) {
       showError(error);

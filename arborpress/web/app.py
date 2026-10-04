@@ -192,10 +192,22 @@ def create_app() -> Quart:
         from arborpress.core.config import is_installed
         if is_installed():
             return None
-        from quart import request as _req, redirect as _redir, url_for as _uf
+        from quart import redirect as _redir
+        from quart import request as _req
+        from quart import session as _session
+        from quart import url_for as _uf
         path = _req.path
+        install_enrollment_routes = {
+            "/auth/register",
+            "/auth/register/begin",
+            "/auth/register/complete",
+        }
         if (
             path == "/install"
+            or (
+                path in install_enrollment_routes
+                and _session.get("install_enrollment")
+            )
             or path.startswith("/static/")
             or path == "/health"
             or path == "/favicon.ico"

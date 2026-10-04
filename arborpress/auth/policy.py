@@ -2,11 +2,132 @@
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from dataclasses import dataclass
+from typing import Any, Literal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from arborpress.models.user import MFADevice, MFADeviceType, User, WebAuthnCredential
+
+log = logging.getLogger("arborpress.auth.policy")
+
+
+@dataclass(frozen=True)
+class CredentialRemovalDecision:
+    allowed: bool
+    reason: str | None
+    usable_count: int
+
+
+async def lock_user_for_credential_change(db: Any, user_id: str) -> User | None:
+    """Serialize credential removals for one user on all supported databases.
+
+    ``FOR UPDATE`` is ignored by SQLite. The no-op row update obtains a SQLite
+    write lock while also taking a row lock on PostgreSQL and MariaDB/MySQL.
+    Credential counts and deletion must stay in this same transaction.
+    """
+    user_id = str(user_id)
+    await db.execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(id=User.id, updated_at=User.updated_at)
+    )
+    return (await db.execute(
+        select(User).where(User.id == user_id).with_for_update()
+    )).scalar_one_or_none()
+
+
+async def usable_webauthn_credential_ids(db: Any, user_id: str) -> set[str]:
+    """Credentials that can be offered for an UV-required WebAuthn assertion.
+
+    Old credentials with unknown enrollment assurance are retained. UV is
+    checked on every assertion; a credential explicitly known not to support
+    UV is excluded from the available-factor count.
+    """
+    rows = await db.execute(
+        select(WebAuthnCredential.id).where(
+            WebAuthnCredential.user_id == str(user_id),
+            WebAuthnCredential.uv_capable.is_not(False),
+        )
+    )
+    return {str(value) for value in rows.scalars().all()}
+
+
+async def usable_totp_device_ids(db: Any, user_id: str) -> set[str]:
+    """Only confirmed, active TOTP devices count as available credentials."""
+    rows = await db.execute(
+        select(MFADevice.id).where(
+            MFADevice.user_id == str(user_id),
+            MFADevice.device_type == MFADeviceType.TOTP,
+            MFADevice.is_active.is_(True),
+            MFADevice.verification_status == "verified",
+        )
+    )
+    return {str(value) for value in rows.scalars().all()}
+
+
+async def credential_removal_decision(
+    db: Any,
+    *,
+    user_id: str,
+    credential_type: Literal["webauthn", "totp"],
+    target_id: str,
+    evidence: Any,
+) -> CredentialRemovalDecision:
+    """Apply the per-type self-service removal and confirming-factor policy."""
+    webauthn_ids = await usable_webauthn_credential_ids(db, user_id)
+    totp_ids = await usable_totp_device_ids(db, user_id)
+    auth_method = getattr(evidence, "auth_method", None)
+    assurance = getattr(evidence, "assurance_level", None)
+
+    if credential_type == "webauthn":
+        confirming_id = getattr(evidence, "confirming_credential_id", None)
+        if (
+            auth_method != "webauthn"
+            or assurance != "user_verified"
+            or confirming_id not in webauthn_ids
+        ):
+            return CredentialRemovalDecision(
+                False, "webauthn_uv_stepup_required", len(webauthn_ids)
+            )
+        if target_id in webauthn_ids and len(webauthn_ids) == 1:
+            return CredentialRemovalDecision(False, "last_webauthn_credential", 1)
+        if (
+            target_id in webauthn_ids
+            and len(webauthn_ids) == 2
+            and confirming_id == target_id
+        ):
+            return CredentialRemovalDecision(False, "different_webauthn_required", 2)
+        return CredentialRemovalDecision(True, None, len(webauthn_ids))
+
+    if (
+        auth_method == "webauthn"
+        and assurance == "user_verified"
+        and getattr(evidence, "confirming_credential_id", None) in webauthn_ids
+    ):
+        confirmed_by_webauthn = True
+        confirmed_by_totp = False
+    elif (
+        auth_method == "totp"
+        and assurance == "otp_verified"
+        and getattr(evidence, "confirming_mfa_device_id", None) in totp_ids
+    ):
+        confirmed_by_webauthn = False
+        confirmed_by_totp = True
+    else:
+        return CredentialRemovalDecision(False, "totp_or_webauthn_stepup_required", len(totp_ids))
+
+    if target_id in totp_ids:
+        if len(totp_ids) == 1 and not confirmed_by_webauthn:
+            return CredentialRemovalDecision(False, "last_totp_requires_webauthn", 1)
+        if (
+            len(totp_ids) == 2
+            and confirmed_by_totp
+            and getattr(evidence, "confirming_mfa_device_id", None) == target_id
+        ):
+            return CredentialRemovalDecision(False, "different_totp_required", 2)
+    return CredentialRemovalDecision(True, None, len(totp_ids))
 
 
 def requires_second_factor(
@@ -41,7 +162,8 @@ async def usable_auth_paths(
 ) -> set[str]:
     """Return normal, currently usable ways to authenticate this account."""
     credential_stmt = select(func.count()).select_from(WebAuthnCredential).where(
-        WebAuthnCredential.user_id == str(user.id)
+        WebAuthnCredential.user_id == str(user.id),
+        WebAuthnCredential.uv_capable.is_not(False),
     )
     if exclude_webauthn_id:
         credential_stmt = credential_stmt.where(WebAuthnCredential.id != exclude_webauthn_id)
@@ -95,7 +217,7 @@ async def usable_auth_paths(
                 if not sso_requires_mfa or available_factors:
                     paths.add("sso")
         except Exception:  # pragma: no cover - SSO is optional
-            pass
+            log.debug("Could not evaluate the optional SSO authentication path", exc_info=True)
     return paths
 
 
@@ -114,7 +236,9 @@ async def assert_auth_path_remains(
         exclude_password=exclude_password,
     )
     if not paths:
-        raise ValueError("Dieser Vorgang würde den letzten nutzbaren Authentifizierungspfad entfernen.")
+        raise ValueError(
+            "Dieser Vorgang würde den letzten nutzbaren Authentifizierungspfad entfernen."
+        )
     return paths
 
 

@@ -93,7 +93,7 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
     return _session_factory
 
 
-async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
+async def get_db_session() -> AsyncGenerator[AsyncSession]:
     """Dependency-injection helper for routes / CLI."""
     factory = get_session_factory()
     async with factory() as session:
@@ -129,6 +129,18 @@ async def create_all_tables() -> None:
         )
         await _add_column_if_missing(
             conn, "user_sessions", "assurance_level", "VARCHAR(32) NOT NULL DEFAULT 'unknown'"
+        )
+        await _add_column_if_missing(
+            conn, "auth_stepup_grants", "auth_method", "VARCHAR(32) NOT NULL DEFAULT 'unknown'"
+        )
+        await _add_column_if_missing(
+            conn, "auth_stepup_grants", "assurance_level", "VARCHAR(32) NOT NULL DEFAULT 'unknown'"
+        )
+        await _add_column_if_missing(
+            conn, "auth_stepup_grants", "confirming_credential_id", "VARCHAR(36)"
+        )
+        await _add_column_if_missing(
+            conn, "auth_stepup_grants", "confirming_mfa_device_id", "VARCHAR(36)"
         )
         await _add_column_if_missing(
             conn, "mfa_devices", "verification_status", "VARCHAR(32) NOT NULL DEFAULT 'unknown'"
@@ -195,6 +207,7 @@ async def _add_column_if_missing(
 async def _backfill_legacy_transports(conn) -> None:
     """Copy the old single `transport` value into the new JSON list field."""
     import json
+
     import sqlalchemy as sa
 
     result = await conn.execute(sa.text(

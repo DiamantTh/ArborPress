@@ -246,6 +246,14 @@ class StepUpGrant(Base):
     session_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     action: Mapped[str] = mapped_column(String(48), nullable=False, index=True)
     target: Mapped[str] = mapped_column(String(512), nullable=False)
+    auth_method: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="unknown", server_default="unknown"
+    )
+    assurance_level: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="unknown", server_default="unknown"
+    )
+    confirming_credential_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    confirming_mfa_device_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

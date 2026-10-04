@@ -137,6 +137,7 @@ async def test_username_first_begin_only_returns_that_users_credentials(
     user_a, user_b = f"wa-{uuid.uuid4().hex[:12]}", f"wb-{uuid.uuid4().hex[:12]}"
     cred_a, cred_b = b"credential-a-" + uuid.uuid4().bytes, b"credential-b-" + uuid.uuid4().bytes
     factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
     async with factory() as db:
         a = User(username=user_a, display_name=user_a)
         b = User(username=user_b, display_name=user_b)
@@ -157,8 +158,11 @@ async def test_username_first_begin_only_returns_that_users_credentials(
 
     monkeypatch.setattr("arborpress.web.routes.auth._get_webauthn_async", service)
     response = await client.post(
-        "/auth/login/begin", json={"identifier": user_a}, content_type="application/json",
-        headers={"Origin": "http://localhost:8066"},
+        "/auth/login/begin", json={"identifier": user_a},
+        headers={
+            "Content-Type": "application/json",
+            "Origin": "http://localhost:8066",
+        },
     )
     assert response.status_code == 200
     payload = await response.get_json()
@@ -176,8 +180,10 @@ async def test_login_completion_cannot_use_another_users_credential(
     from arborpress.models.user import User, WebAuthnCredential
 
     name_a, name_b = f"ctx-a-{uuid.uuid4().hex[:12]}", f"ctx-b-{uuid.uuid4().hex[:12]}"
-    cred_a, cred_b = b"ctx-credential-a-" + uuid.uuid4().bytes, b"ctx-credential-b-" + uuid.uuid4().bytes
+    cred_a = b"ctx-credential-a-" + uuid.uuid4().bytes
+    cred_b = b"ctx-credential-b-" + uuid.uuid4().bytes
     factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
     async with factory() as db:
         a = User(username=name_a, display_name=name_a)
         b = User(username=name_b, display_name=name_b)
@@ -198,21 +204,28 @@ async def test_login_completion_cannot_use_another_users_credential(
 
     monkeypatch.setattr("arborpress.web.routes.auth._get_webauthn_async", service)
     begin = await client.post(
-        "/auth/login/begin", json={"identifier": name_a}, content_type="application/json",
-        headers={"Origin": "http://localhost:8066"},
+        "/auth/login/begin", json={"identifier": name_a},
+        headers={
+            "Content-Type": "application/json",
+            "Origin": "http://localhost:8066",
+        },
     )
     assert begin.status_code == 200
     response = await client.post(
         "/auth/login/complete",
         json={"id": _b64u(cred_b), "rawId": _b64u(cred_b)},
-        content_type="application/json",
-        headers={"Origin": "http://localhost:8066"},
+        headers={
+            "Content-Type": "application/json",
+            "Origin": "http://localhost:8066",
+        },
     )
     assert response.status_code == 401
 
 
 @pytest.mark.asyncio
 async def test_public_register_begin_does_not_open_username_enrollment(client, monkeypatch):
+    monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
+
     async def service():
         return WebAuthnService("localhost", "ArborPress", "http://localhost")
 
@@ -220,9 +233,28 @@ async def test_public_register_begin_does_not_open_username_enrollment(client, m
     response = await client.post(
         "/auth/register/begin",
         json={"user_name": "existing-user"},
-        content_type="application/json",
+        headers={"Content-Type": "application/json"},
     )
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_install_gate_only_allows_enrollment_routes_with_install_trust(
+    client, monkeypatch
+):
+    monkeypatch.setattr("arborpress.core.config.is_installed", lambda: False)
+    headers = {
+        "Content-Type": "application/json",
+        "Origin": "http://localhost:8066",
+    }
+    page = await client.get("/auth/register")
+    begin = await client.post(
+        "/auth/register/begin", json={"user_name": "known-user"}, headers=headers
+    )
+    assert page.status_code == 302
+    assert begin.status_code == 302
+    assert "/install" in page.location
+    assert "/install" in begin.location
 
 
 @pytest.mark.asyncio
@@ -232,10 +264,8 @@ async def test_pending_state_is_one_shot_and_expiry_checked(db_session):
     pending = await create_pending(
         db_session, purpose="test", user_id=None, ttl_seconds=300, challenge=b"challenge"
     )
-    await db_session.commit()
     consumed = await consume_pending(db_session, pending_id=pending.id, purpose="test")
     assert consumed is not None
-    await db_session.commit()
     replay = await consume_pending(db_session, pending_id=pending.id, purpose="test")
     assert replay is None
 
@@ -243,7 +273,6 @@ async def test_pending_state_is_one_shot_and_expiry_checked(db_session):
         db_session, purpose="expired", user_id=None, ttl_seconds=300, challenge=b"challenge"
     )
     expired.expires_at = utcnow_naive()
-    await db_session.commit()
     assert await consume_pending(
         db_session, pending_id=expired.id, purpose="expired"
     ) is None
@@ -292,7 +321,7 @@ async def test_lockout_policy_counts_only_usable_paths(db_session, monkeypatch):
     assert await usable_auth_paths(db_session, user) == {"totp"}
 
     user.legacy_password_enabled = True
-    user.legacy_password_hash = "test-hash"
+    user.legacy_password_hash = "test-hash"  # noqa: S105 - dummy value for policy test
     assert await usable_auth_paths(db_session, user) == {"totp", "password+second_factor"}
     await db_session.delete(legacy_totp)
     assert await usable_auth_paths(db_session, user) == {"password_recovery"}
@@ -302,12 +331,24 @@ async def test_lockout_policy_counts_only_usable_paths(db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_last_active_admin_is_protected(db_session):
+    from sqlalchemy import select
+
     from arborpress.auth.policy import is_last_active_admin
     from arborpress.models.user import User, UserRole
 
     name = f"admin-{uuid.uuid4().hex[:12]}"
     admin = User(username=name, display_name=name, role=UserRole.ADMIN)
     db_session.add(admin)
+    await db_session.flush()
+    # The session-scoped test database may contain committed admins from route
+    # tests. Demote them within this rollback-only transaction to isolate the
+    # last-admin policy assertion.
+    prior_admins = (await db_session.execute(select(User).where(
+        User.role == UserRole.ADMIN,
+        User.id != str(admin.id),
+    ))).scalars().all()
+    for prior_admin in prior_admins:
+        prior_admin.role = UserRole.VIEWER
     await db_session.flush()
     assert await is_last_active_admin(db_session, admin)
 

@@ -23,8 +23,8 @@ from arborpress.auth.password_tools import (
 )
 from arborpress.auth.roles import require_role
 from arborpress.auth.stepup import assert_stepup, is_stepup_active
-from arborpress.core.config import get_settings
 from arborpress.core.audit import write_audit_event
+from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
 from arborpress.core.markdown import (
     editorjs_to_html,
@@ -548,7 +548,10 @@ async def user_breakglass_password_set(user_id: str):
         await write_audit_event(
             event_type="password_changed" if password_was_enabled else "password_enabled",
             outcome="success",
-            actor_id=actor_id, target_id=str(user.id), detail="admin_set_breakglass_password", db=db,
+            actor_id=actor_id,
+            target_id=str(user.id),
+            detail="admin_set_breakglass_password",
+            db=db,
         )
         await write_audit_event(
             event_type="breakglass_password_set", outcome="success",
@@ -593,7 +596,10 @@ async def user_breakglass_password_disable(user_id: str):
         except ValueError:
             await write_audit_event(
                 event_type="auth_lockout_prevention", outcome="blocked",
-                actor_id=actor_id, target_id=str(user.id), detail="last_auth_path_password_disable", db=db,
+                actor_id=actor_id,
+                target_id=str(user.id),
+                detail="last_auth_path_password_disable",
+                db=db,
             )
             await db.commit()
             return await _render_users_page(
@@ -638,7 +644,13 @@ async def user_authenticator_reset(user_id: str):
     async for db in get_db_session():
         from sqlalchemy import update
 
-        from arborpress.models.user import MFADevice, MFADeviceType, User, UserSession, WebAuthnCredential
+        from arborpress.models.user import (
+            MFADevice,
+            MFADeviceType,
+            User,
+            UserSession,
+            WebAuthnCredential,
+        )
 
         user = await db.get(User, user_id)
         if user is None:
@@ -677,8 +689,8 @@ async def user_authenticator_reset(user_id: str):
         for credential in credentials:
             await write_audit_event(
                 event_type="webauthn_credential_removed", outcome="success",
-                actor_id=actor_id, target_id=str(user.id),
-                detail=f"admin_reset credential_id={credential.id}", db=db,
+                actor_id=actor_id, target_id=str(credential.id),
+                detail=f"admin_reset user_id={user.id}", db=db,
             )
             await db.delete(credential)
         for device in totp_devices:
@@ -687,8 +699,8 @@ async def user_authenticator_reset(user_id: str):
             db.add(device)
             await write_audit_event(
                 event_type="totp_removed", outcome="success",
-                actor_id=actor_id, target_id=str(user.id),
-                detail=f"admin_reset device_id={device.id}", db=db,
+                actor_id=actor_id, target_id=str(device.id),
+                detail=f"admin_reset user_id={user.id}", db=db,
             )
         await db.execute(
             update(UserSession)
@@ -1341,7 +1353,10 @@ async def captcha_settings_save():
 # Website-Einstellungen (DB-basiert via SiteSettings)
 # ---------------------------------------------------------------------------
 
-_SETTINGS_SECTIONS = ("general", "mail", "comments", "comment_filter", "federation", "search", "theme", "demo")
+_SETTINGS_SECTIONS = (
+    "general", "mail", "comments", "comment_filter", "federation",
+    "search", "theme", "demo",
+)
 
 
 @admin_bp.get("/settings")

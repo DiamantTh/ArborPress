@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -58,7 +58,9 @@ async def _seed_target_user(test_engine, *, username: str = "targetuser") -> str
 
 class TestAdminBreakglassUsers:
     @pytest.mark.asyncio
-    async def test_admin_can_set_breakglass_password_from_users_page(self, client, test_engine, monkeypatch):
+    async def test_admin_can_set_breakglass_password_from_users_page(
+        self, client, test_engine, monkeypatch
+    ):
         monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
 
         admin_user_id, session_id = await _seed_admin_user(test_engine)
@@ -76,7 +78,7 @@ class TestAdminBreakglassUsers:
                 action="set_breakglass_password",
                 target=target_user_id,
             )
-            sess["_csrf_token"] = "test-token"
+            sess["_csrf_token"] = "test-token"  # noqa: S105 - test-only CSRF fixture
 
         response = await client.post(
             f"/admin/users/{target_user_id}/breakglass-password",
@@ -110,6 +112,7 @@ class TestAdminBreakglassUsers:
         cfg = Settings()
         cfg.auth.legacy_password_enabled = True
         monkeypatch.setattr("arborpress.web.routes.admin.get_settings", lambda: cfg)
+        monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
         admin_name = f"reset-admin-{uuid.uuid4().hex[:8]}"
         target_name = f"reset-target-{uuid.uuid4().hex[:8]}"
         admin_user_id, session_id = await _seed_admin_user(test_engine, username=admin_name)
@@ -117,7 +120,13 @@ class TestAdminBreakglassUsers:
 
         factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
         async with factory() as db:
-            from arborpress.models.user import MFADevice, MFADeviceType, User, UserSession, WebAuthnCredential
+            from arborpress.models.user import (
+                MFADevice,
+                MFADeviceType,
+                User,
+                UserSession,
+                WebAuthnCredential,
+            )
 
             target = await db.get(User, target_user_id)
             target.legacy_password_enabled = True
@@ -160,7 +169,7 @@ class TestAdminBreakglassUsers:
                 action="admin_credential_reset",
                 target=target_user_id,
             )
-            sess["_csrf_token"] = "test-token"
+            sess["_csrf_token"] = "test-token"  # noqa: S105 - test-only CSRF fixture
 
         response = await client.post(
             f"/admin/users/{target_user_id}/auth-reset",
@@ -170,6 +179,7 @@ class TestAdminBreakglassUsers:
 
         async with factory() as db:
             from sqlalchemy import func, select
+
             from arborpress.models.user import MFADevice, UserSession, WebAuthnCredential
 
             credential_count = (await db.execute(

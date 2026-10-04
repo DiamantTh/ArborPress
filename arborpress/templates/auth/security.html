@@ -62,7 +62,8 @@
       <small>{{ device.verification_status }} · {{ _('Erstellt') }}: {{ device.created_at }} · {{ _('Zuletzt verwendet') }}: {{ device.last_used_at or _('Noch nie') }}</small>
       {% if not recovery_only %}
       <button class="btn btn--small stepup-remove" data-action="remove_totp_credential"
-              data-target="{{ device.id }}" data-url="{{ url_for('auth.totp_remove', device_id=device.id) }}">
+              data-target="{{ device.id }}" data-allow-totp="true"
+              data-url="{{ url_for('auth.totp_remove', device_id=device.id) }}">
         {{ _('Entfernen') }}
       </button>
       {% endif %}

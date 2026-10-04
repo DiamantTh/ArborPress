@@ -173,6 +173,27 @@ and are atomically consumed once. An unregistered operation fails closed.
   valid current code proves possession and upgrades the status; until then they
   do not count as a recovery path for lockout checks.
 
+### Credential removal and confirmation
+- FIDO2 credentials and TOTP devices of the same user are equal alternatives;
+  none is marked primary or backup. A credential's target and the fresh
+  action/target/session-bound step-up determine the permitted operation.
+- Removing a FIDO2 credential requires a one-shot WebAuthn step-up with
+  successful user verification. With two usable FIDO2 credentials, the other
+  one must confirm removal. The final usable FIDO2 credential is reserved for
+  the existing authorized administrator recovery flow.
+- TOTP removal accepts a fresh UV-verified WebAuthn step-up or a fresh TOTP
+  step-up. With two usable TOTP devices, the other TOTP device must confirm;
+  removing the final usable TOTP device requires WebAuthn. An account with a
+  usable FIDO2 credential may remove its final TOTP device.
+- Only persistent, active, confirmed TOTP devices count for removal policy.
+  Pending enrollments and inactive or unconfirmed devices do not count.
+  Credential counts and removal share a per-user database lock so concurrent
+  removal requests cannot bypass the remaining-factor rules.
+- Step-up grants record the authenticating method, assurance, and confirming
+  credential/device identifier. Failed, blocked, successful, and consumed
+  grants and credential removals use the shared ArborPress audit helper; audit
+  details contain no authentication secrets.
+
 ### Auth state and sessions
 - Short-lived WebAuthn ceremonies and pending TOTP enrollments are stored
   server-side, bound to purpose/user, and consumed once.

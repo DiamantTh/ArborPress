@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-import re
 import secrets
 from urllib.parse import urlencode
-from pathlib import Path
 
 import pytest
-from quart import Quart
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 import arborpress.core.config as config_mod
 import arborpress.core.db as db_mod
-from arborpress.core.config import Settings
 from arborpress.core import site_settings
+from arborpress.core.config import Settings
 
 
 @pytest.fixture(autouse=True)
@@ -25,7 +22,7 @@ def _reset_cache():
 
 
 @pytest.fixture()
-def install_app(tmp_path, test_engine):
+async def install_app(tmp_path, test_engine):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     (config_dir / "config.toml").write_text(
@@ -43,6 +40,23 @@ base_url = "http://localhost:8066"
     old_engine = db_mod._engine
     old_factory = db_mod._session_factory
 
+    # Other route tests commit records into the shared test engine. Temporarily
+    # remove their admin role so this test exercises an empty installation.
+    from sqlalchemy import select
+
+    from arborpress.models.user import User, UserRole
+
+    factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    async with factory() as db:
+        existing_admins = (await db.execute(select(User).where(
+            User.role == UserRole.ADMIN,
+            User.is_active.is_(True),
+        ))).scalars().all()
+        prior_admin_ids = [str(user.id) for user in existing_admins]
+        for user in existing_admins:
+            user.role = UserRole.VIEWER
+        await db.commit()
+
     config_mod._settings = settings
     db_mod._engine = test_engine
     db_mod._session_factory = None
@@ -53,6 +67,24 @@ base_url = "http://localhost:8066"
     app.config["TESTING"] = True
 
     yield app, config_dir
+
+    async with factory() as db:
+        for user_id in prior_admin_ids:
+            user = await db.get(User, user_id)
+            if user is not None:
+                user.role = UserRole.ADMIN
+                user.is_active = True
+        # The newly installed administrator belongs to the temporary fixture,
+        # so it must not affect tests sharing the engine.
+        new_admins = (await db.execute(select(User).where(
+            User.role == UserRole.ADMIN,
+            User.is_active.is_(True),
+        ))).scalars().all()
+        for user in new_admins:
+            if str(user.id) not in prior_admin_ids:
+                user.role = UserRole.VIEWER
+                user.is_active = False
+        await db.commit()
 
     config_mod._settings = old_settings
     db_mod._engine = old_engine
@@ -75,7 +107,7 @@ class TestWebInstall:
             assert response.status_code == 200
             token = token_path.read_text(encoding="utf-8").strip()
             initial_username = f"install-{secrets.token_hex(4)}"
-            initial_email = f"{initial_username}@example.test"
+            initial_email = f"{initial_username}@example.com"
             body = urlencode(
                 {
                     "token": token,
@@ -102,17 +134,17 @@ class TestWebInstall:
             begin_response = await client.post(
                 "/auth/register/begin",
                 json={"enrollment_kind": "security_key", "label": "Initial key"},
-                content_type="application/json",
-                headers={"Origin": "http://localhost:8066"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": "http://localhost:8066",
+                },
             )
             assert begin_response.status_code == 200
             assert not marker_path.exists()
             assert token_path.exists()
 
             from types import SimpleNamespace
-            from webauthn.helpers.structs import RegistrationCredential
-
-            def _fake_parse(cls, raw):
+            def _fake_parse(raw):
                 return object()
 
             def _fake_verify(self, credential, expected_challenge):
@@ -128,15 +160,23 @@ class TestWebInstall:
                 )
 
             monkeypatch.setattr("arborpress.web.routes.auth._get_webauthn_async", _fake_wa)
-            monkeypatch.setattr(RegistrationCredential, "parse_raw", classmethod(_fake_parse))
+            monkeypatch.setattr(
+                "webauthn.helpers.parse_registration_credential_json", _fake_parse
+            )
             monkeypatch.setattr(
                 "arborpress.auth.webauthn.WebAuthnService.verify_registration", _fake_verify
             )
             complete = await client.post(
                 "/auth/register/complete",
-                json={"id": "initial-credential-id", "rawId": "aW5pdGlhbC1jcmVkZW50aWFsLWlk", "label": "Initial key"},
-                content_type="application/json",
-                headers={"Origin": "http://localhost:8066"},
+                json={
+                    "id": "initial-credential-id",
+                    "rawId": "aW5pdGlhbC1jcmVkZW50aWFsLWlk",
+                    "label": "Initial key",
+                },
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": "http://localhost:8066",
+                },
             )
             assert complete.status_code == 201
 
@@ -146,9 +186,10 @@ class TestWebInstall:
 
         factory = async_sessionmaker(bind=db_mod._engine, expire_on_commit=False)
         async with factory() as db:
+            from sqlalchemy import func, select
+
             from arborpress.core.site_settings import get_section
             from arborpress.models.user import User, WebAuthnCredential
-            from sqlalchemy import func, select
             general = await get_section("general", db)
             user = (await db.execute(select(User).where(
                 User.username == initial_username

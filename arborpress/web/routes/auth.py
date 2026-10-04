@@ -18,7 +18,6 @@ import base64
 import json
 import logging
 import secrets
-import uuid
 from base64 import urlsafe_b64encode
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
@@ -53,6 +52,7 @@ _JSON_API_PATHS = frozenset({
     "/auth/login/complete",
     "/auth/stepup/begin",
     "/auth/stepup/complete",
+    "/auth/stepup/totp/complete",
     "/auth/mfa/webauthn/begin",
     "/auth/mfa/webauthn/complete",
     "/auth/mfa/totp/complete",
@@ -120,6 +120,7 @@ _RATE_LIMITED_PATHS = frozenset({
     "/auth/register/complete",
     "/auth/stepup/begin",
     "/auth/stepup/complete",
+    "/auth/stepup/totp/complete",
     "/auth/mfa/webauthn/begin",
     "/auth/mfa/totp/complete",
     "/auth/totp/begin",
@@ -133,6 +134,7 @@ _AUTHENTICATED_ENDPOINTS = frozenset({
     "auth.register_complete",
     "auth.stepup_begin",
     "auth.stepup_complete",
+    "auth.stepup_totp_complete",
     "auth.stepup_revoke",
     "auth.totp_enrollment_begin",
     "auth.totp_enrollment_complete",
@@ -385,7 +387,7 @@ async def register_begin():
 @auth_bp.post("/register/complete")
 async def register_complete():
     """Persist a credential or initial identity only after UV verification."""
-    from webauthn.helpers.structs import RegistrationCredential
+    from webauthn.helpers import parse_registration_credential_json
 
     raw = await request.get_json()
     pending_id = session.pop("register_pending_id", None)
@@ -396,7 +398,13 @@ async def register_complete():
     async for db in get_db_session():
         from arborpress.auth.pending import consume_pending
         from arborpress.core.site_settings import get_webauthn_settings
-        from arborpress.models.user import AccountType, AuthPending, User, UserRole, WebAuthnCredential
+        from arborpress.models.user import (
+            AccountType,
+            AuthPending,
+            User,
+            UserRole,
+            WebAuthnCredential,
+        )
 
         pending_preview = await db.get(AuthPending, pending_id)
         if pending_preview is None:
@@ -423,7 +431,7 @@ async def register_complete():
             abort(400, "Enrollment abgelaufen oder bereits verwendet")
         await db.commit()
         try:
-            credential = RegistrationCredential.parse_raw(json.dumps(raw))
+            credential = parse_registration_credential_json(raw)
             verification = wa.verify_registration(
                 credential, expected_challenge=pending.challenge
             )
@@ -524,10 +532,11 @@ async def register_complete():
             verification_status="verified_uv",
         )
         db.add(cred)
+        await db.flush()
         await write_audit_event(
             event_type="webauthn_credential_added", outcome="success",
             actor_id=str(user.id), actor_name=user.username,
-            target_id=str(user.id), detail=f"label={label}", db=db,
+            target_id=str(cred.id), detail=f"label={label}", db=db,
         )
         await db.commit()
         initial_enrollment = purpose == "install_enrollment"
@@ -597,7 +606,7 @@ async def login_begin():
 @auth_bp.post("/login/complete")
 async def login_complete():
     """Verify the assertion against the exact account from login begin."""
-    from webauthn.helpers.structs import AuthenticationCredential
+    from webauthn.helpers import parse_authentication_credential_json
 
     raw = await request.get_json()
     pending_id = session.pop("login_pending_id", None)
@@ -608,8 +617,7 @@ async def login_complete():
         from arborpress.auth.pending import consume_pending
         from arborpress.auth.sessions import create_user_session
         from arborpress.auth.webauthn import decode_credential_id
-        from arborpress.models.user import User, WebAuthnCredential
-        from arborpress.models.user import AuthPending
+        from arborpress.models.user import AuthPending, User, WebAuthnCredential
 
         preview = await db.get(AuthPending, pending_id)
         if preview is None or preview.user_id is None:
@@ -681,7 +689,7 @@ async def login_complete():
                 abort(423, "Konto temporär gesperrt – bitte später erneut versuchen")
 
         try:
-            credential = AuthenticationCredential.parse_raw(json.dumps(raw))
+            credential = parse_authentication_credential_json(raw)
             verification = wa.verify_authentication(
                 credential=credential,
                 expected_challenge=pending.challenge,
@@ -692,7 +700,10 @@ async def login_complete():
             # §2 Fehlversuchs-Counter erhöhen, ggf. Konto sperren
             _cfg = get_settings()
             user.failed_login_count = (user.failed_login_count or 0) + 1
-            if _cfg.auth.lockout_threshold > 0 and user.failed_login_count >= _cfg.auth.lockout_threshold:
+            if (
+                _cfg.auth.lockout_threshold > 0
+                and user.failed_login_count >= _cfg.auth.lockout_threshold
+            ):
                 _lock_at = datetime.now(UTC).replace(tzinfo=None)
                 user.locked_until = _lock_at + timedelta(seconds=_cfg.auth.lockout_duration)
                 _detail = f"attempt={user.failed_login_count} account_locked"
@@ -831,7 +842,7 @@ async def login_mfa_webauthn_begin():
 
 @auth_bp.post("/mfa/webauthn/complete")
 async def login_mfa_webauthn_complete():
-    from webauthn.helpers.structs import AuthenticationCredential
+    from webauthn.helpers import parse_authentication_credential_json
 
     raw = await request.get_json() or {}
     pending_id = session.pop("login_mfa_pending_id", None)
@@ -866,7 +877,7 @@ async def login_mfa_webauthn_complete():
         if db_cred is None:
             abort(401)
         try:
-            credential = AuthenticationCredential.parse_raw(json.dumps(raw))
+            credential = parse_authentication_credential_json(raw)
             verification = wa.verify_authentication(
                 credential, pending.challenge, db_cred.public_key, db_cred.sign_count
             )
@@ -949,6 +960,7 @@ async def login_mfa_totp_complete():
                     matched = device
                     break
             except Exception:
+                log.debug("Could not verify a TOTP device for user %s", user_id, exc_info=True)
                 continue
         if matched is None:
             await write_audit_event(
@@ -1060,7 +1072,6 @@ async def totp_enrollment_complete():
     async for db in get_db_session():
         from arborpress.auth.mfa import TOTPService, decrypt_secret, get_device_limit
         from arborpress.auth.pending import consume_pending
-        from arborpress.core.site_settings import get_webauthn_settings
         from arborpress.models.user import MFADevice, MFADeviceType, User
         pending = await consume_pending(
             db, pending_id=pending_id, purpose="totp_enrollment", user_id=user_id
@@ -1108,9 +1119,10 @@ async def totp_enrollment_complete():
             last_used_at=datetime.now(UTC).replace(tzinfo=None),
         )
         db.add(device)
+        await db.flush()
         await write_audit_event(
             event_type="totp_added", outcome="success", actor_id=user_id,
-            target_id=user_id, detail=f"label={device.label}", db=db,
+            target_id=str(device.id), detail=f"label={device.label}", db=db,
         )
         await db.commit()
         return jsonify({"status": "ok", "label": device.label}), 201
@@ -1121,36 +1133,69 @@ async def totp_remove(device_id: str):
     user_id = str(session.get("user_id") or "")
     if not user_id or session.get("recovery_only"):
         abort(401)
-    try:
-        await assert_stepup(
-            session, user_id, "remove_totp_credential", target=device_id
-        )
-    except PermissionError:
-        abort(403, "Fresh step-up required")
     async for db in get_db_session():
-        from arborpress.auth.policy import assert_auth_path_remains
-        from arborpress.models.user import MFADevice, MFADeviceType, User
-        device = (await db.execute(select(MFADevice).where(
-            MFADevice.id == device_id,
-            MFADevice.user_id == user_id,
-            MFADevice.device_type == MFADeviceType.TOTP,
-        ))).scalar_one_or_none()
-        if device is None:
-            abort(404)
-        user = await db.get(User, user_id)
+        from arborpress.auth.policy import (
+            credential_removal_decision,
+            lock_user_for_credential_change,
+        )
+        from arborpress.models.user import MFADevice, MFADeviceType
+        user = await lock_user_for_credential_change(db, user_id)
+        if user is None or not user.is_active:
+            abort(401)
         try:
-            await assert_auth_path_remains(db, user, exclude_mfa_id=device_id)
-        except ValueError:
+            evidence = await assert_stepup(
+                session, user_id, "remove_totp_credential", target=device_id,
+                required_evidence={"webauthn": "user_verified", "totp": "otp_verified"},
+                db=db,
+            )
+        except PermissionError:
+            await db.commit()
+            abort(403, "Fresh FIDO2 or TOTP step-up required")
+        device = (await db.execute(
+            select(MFADevice).where(
+                MFADevice.id == device_id,
+                MFADevice.user_id == user_id,
+                MFADevice.device_type == MFADeviceType.TOTP,
+            ).with_for_update()
+        )).scalar_one_or_none()
+        if device is None:
+            await db.commit()
+            abort(404)
+        decision = await credential_removal_decision(
+            db, user_id=user_id, credential_type="totp",
+            target_id=device_id, evidence=evidence,
+        )
+        if not decision.allowed:
+            event_type = (
+                "auth_lockout_prevention"
+                if decision.reason in {"last_totp_requires_webauthn"}
+                else "credential_removal_blocked"
+            )
             await write_audit_event(
-                event_type="auth_lockout_prevention", outcome="blocked",
-                actor_id=user_id, target_id=user_id, detail="last_totp_removed", db=db,
+                event_type=event_type, outcome="blocked",
+                actor_id=user_id, actor_name=user.username,
+                target_id=device_id,
+                detail=(
+                    f"credential_type=totp;reason={decision.reason};"
+                    f"auth_method={evidence.auth_method if evidence else 'unknown'};"
+                    f"usable_totp={decision.usable_count}"
+                ), db=db,
             )
             await db.commit()
-            abort(409, "Der letzte nutzbare Authentifizierungspfad kann nicht entfernt werden")
+            abort(
+                409,
+                "Mit dieser Best\u00e4tigung kann dieses TOTP-Credential nicht entfernt werden",
+            )
         await db.delete(device)
         await write_audit_event(
             event_type="totp_removed", outcome="success", actor_id=user_id,
-            target_id=user_id, detail=f"device_id={device_id}", db=db,
+            actor_name=user.username, target_id=device_id,
+            detail=(
+                f"auth_method={evidence.auth_method if evidence else 'unknown'};"
+                f"assurance={evidence.assurance_level if evidence else 'unknown'};"
+                f"confirming_credential_id={evidence.confirming_credential_id or ''};"
+                f"confirming_mfa_device_id={evidence.confirming_mfa_device_id or ''}"
+            ), db=db,
         )
         await db.commit()
         return jsonify({"status": "removed"}), 200
@@ -1161,40 +1206,68 @@ async def webauthn_credential_remove(credential_uuid: str):
     user_id = str(session.get("user_id") or "")
     if not user_id or session.get("recovery_only"):
         abort(401)
-    try:
-        await assert_stepup(
-            session, user_id, "remove_webauthn_credential", target=credential_uuid
-        )
-    except PermissionError:
-        abort(403, "Fresh step-up required")
     async for db in get_db_session():
-        from arborpress.auth.policy import assert_auth_path_remains
-        from arborpress.models.user import User, WebAuthnCredential
-        credential = (await db.execute(select(WebAuthnCredential).where(
-            WebAuthnCredential.id == credential_uuid,
-            WebAuthnCredential.user_id == user_id,
-        ))).scalar_one_or_none()
-        if credential is None:
-            abort(404)
-        user = await db.get(User, user_id)
+        from arborpress.auth.policy import (
+            credential_removal_decision,
+            lock_user_for_credential_change,
+        )
+        from arborpress.models.user import WebAuthnCredential
+        user = await lock_user_for_credential_change(db, user_id)
+        if user is None or not user.is_active:
+            abort(401)
         try:
-            await assert_auth_path_remains(
-                db, user, exclude_webauthn_id=credential_uuid
+            evidence = await assert_stepup(
+                session, user_id, "remove_webauthn_credential", target=credential_uuid,
+                required_evidence={"webauthn": "user_verified"},
+                db=db,
             )
-        except ValueError:
+        except PermissionError:
+            await db.commit()
+            abort(403, "Fresh FIDO2 step-up with user verification required")
+        credential = (await db.execute(
+            select(WebAuthnCredential).where(
+                WebAuthnCredential.id == credential_uuid,
+                WebAuthnCredential.user_id == user_id,
+            ).with_for_update()
+        )).scalar_one_or_none()
+        if credential is None:
+            await db.commit()
+            abort(404)
+        decision = await credential_removal_decision(
+            db, user_id=user_id, credential_type="webauthn",
+            target_id=credential_uuid, evidence=evidence,
+        )
+        if not decision.allowed:
+            event_type = (
+                "auth_lockout_prevention"
+                if decision.reason == "last_webauthn_credential"
+                else "credential_removal_blocked"
+            )
             await write_audit_event(
-                event_type="auth_lockout_prevention", outcome="blocked",
-                actor_id=user_id, target_id=user_id,
-                detail="last_webauthn_credential_removed", db=db,
+                event_type=event_type, outcome="blocked",
+                actor_id=user_id, actor_name=user.username,
+                target_id=credential_uuid,
+                detail=(
+                    f"credential_type=webauthn;reason={decision.reason};"
+                    f"auth_method={evidence.auth_method if evidence else 'unknown'};"
+                    f"usable_webauthn={decision.usable_count}"
+                ), db=db,
             )
             await db.commit()
-            abort(409, "Der letzte nutzbare Authentifizierungspfad kann nicht entfernt werden")
+            abort(
+                409,
+                "Mit dieser Best\u00e4tigung kann dieses FIDO2-Credential nicht entfernt werden",
+            )
         label = credential.label
         await db.delete(credential)
         await write_audit_event(
             event_type="webauthn_credential_removed", outcome="success",
-            actor_id=user_id, actor_name=user.username, target_id=user_id,
-            detail=f"label={label}", db=db,
+            actor_id=user_id, actor_name=user.username, target_id=credential_uuid,
+            detail=(
+                f"label={label};auth_method={evidence.auth_method if evidence else 'unknown'};"
+                f"assurance={evidence.assurance_level if evidence else 'unknown'};"
+                f"confirming_credential_id={evidence.confirming_credential_id or ''}"
+            ), db=db,
         )
         await db.commit()
         return jsonify({"status": "removed"}), 200
@@ -1296,7 +1369,10 @@ async def breakglass_login():
 
         if not verify_password(user.legacy_password_hash, password, admin_id=str(user.id)):
             user.failed_login_count = (user.failed_login_count or 0) + 1
-            if cfg.auth.lockout_threshold > 0 and user.failed_login_count >= cfg.auth.lockout_threshold:
+            if (
+                cfg.auth.lockout_threshold > 0
+                and user.failed_login_count >= cfg.auth.lockout_threshold
+            ):
                 _lock_at = datetime.now(UTC).replace(tzinfo=None)
                 user.locked_until = _lock_at + timedelta(seconds=cfg.auth.lockout_duration)
                 _detail = f"breakglass attempt={user.failed_login_count} account_locked"
@@ -1333,7 +1409,7 @@ async def breakglass_login():
             await db.commit()
 
         from arborpress.auth.sessions import create_user_session
-        from arborpress.models.user import AuthPending, MFADevice, MFADeviceType, WebAuthnCredential
+        from arborpress.models.user import MFADevice, MFADeviceType, WebAuthnCredential
 
         credential_count = (await db.execute(select(func.count()).select_from(
             WebAuthnCredential
@@ -1352,8 +1428,8 @@ async def breakglass_login():
             methods.add("webauthn")
         if totp_count:
             methods.add("totp")
-        from arborpress.auth.policy import requires_second_factor
         from arborpress.auth.pending import create_pending
+        from arborpress.auth.policy import requires_second_factor
         from arborpress.core.site_settings import get_webauthn_settings
 
         wa_settings = await get_webauthn_settings(db)
@@ -1429,7 +1505,7 @@ async def logout():
 
 @auth_bp.post("/stepup/begin")
 async def stepup_begin():
-    """Start an action- and target-bound UV-required WebAuthn ceremony."""
+    """Start a short action-, target-, user-, and session-bound step-up."""
     user_id = session.get("user_id")
     if not user_id:
         abort(401, "Nicht eingeloggt")
@@ -1442,37 +1518,60 @@ async def stepup_begin():
     target = str(data.get("target") or "instance")
     if session.get("recovery_only"):
         abort(403, "Recovery-only sessions cannot grant step-up")
-    wa = await _get_webauthn_async()
+    from webauthn.helpers import options_to_json
+
     async for db in get_db_session():
         from arborpress.auth.pending import create_pending
+        from arborpress.auth.policy import usable_totp_device_ids
         from arborpress.core.site_settings import get_webauthn_settings
         from arborpress.models.user import WebAuthnCredential
         cred_stmt = select(WebAuthnCredential.credential_id).where(
-            WebAuthnCredential.user_id == user_id
+            WebAuthnCredential.user_id == user_id,
+            WebAuthnCredential.uv_capable.is_not(False),
         )
         result = await db.execute(cred_stmt)
         allowed = [row[0] for row in result.fetchall()]
-        if not allowed:
-            abort(403, "No WebAuthn credential is available for step-up")
-        opts = wa.generate_authentication_options(allowed_credentials=allowed)
+        totp_ids = await usable_totp_device_ids(db, str(user_id))
+        totp_can_step_up = action == "remove_totp_credential" and bool(totp_ids)
+        if not allowed and not totp_can_step_up:
+            abort(403, "No permitted credential is available for step-up")
         settings = await get_webauthn_settings(db)
-        pending = await create_pending(
-            db, purpose="stepup", user_id=str(user_id), challenge=opts.challenge,
-            ttl_seconds=int(settings.get("challenge_ttl_seconds", 300)),
-            context={"action": action, "target": target},
-        )
+        context = {
+            "action": action,
+            "target": target,
+            "session_id": str(session.get("session_id") or ""),
+            "allowed_methods": ["webauthn", "totp"] if totp_can_step_up else ["webauthn"],
+        }
+        if allowed:
+            wa = await _get_webauthn_async()
+            opts = wa.generate_authentication_options(allowed_credentials=allowed)
+            pending = await create_pending(
+                db, purpose="stepup", user_id=str(user_id), challenge=opts.challenge,
+                ttl_seconds=int(settings.get("challenge_ttl_seconds", 300)),
+                context=context,
+            )
+            payload = json.loads(options_to_json(opts))
+            payload["totp_available"] = totp_can_step_up
+        else:
+            pending = await create_pending(
+                db, purpose="stepup", user_id=str(user_id), challenge=None,
+                ttl_seconds=int(settings.get("challenge_ttl_seconds", 300)),
+                context=context,
+            )
+            payload = {"totp_only": True}
         session["stepup_pending_id"] = pending.id
         await db.commit()
-    from webauthn.helpers import options_to_json
-    return jsonify(json.loads(options_to_json(opts))), 200
+    return jsonify(payload), 200
 
 
 @auth_bp.post("/stepup/complete")
 async def stepup_complete():
-    """Completes step-up and grants elevated privileges (§2)."""
-    from webauthn.helpers.structs import AuthenticationCredential
+    """Complete a UV-required WebAuthn step-up without changing authorization."""
+    from webauthn.helpers import parse_authentication_credential_json
 
     raw = await request.get_json()
+    if not isinstance(raw, dict):
+        abort(400, "WebAuthn assertion required")
     pending_id = session.pop("stepup_pending_id", None)
     user_id = session.get("user_id")
 
@@ -1488,6 +1587,17 @@ async def stepup_complete():
         preview = await db.get(AuthPending, pending_id)
         if preview is None:
             abort(401)
+        context = json.loads(preview.context or "{}")
+        if context.get("session_id") != str(session.get("session_id") or ""):
+            await write_audit_event(
+                event_type="sensitive_stepup_failed", outcome="failure",
+                actor_id=str(user_id), target_id=str(user_id),
+                detail="stepup_pending_session_mismatch", db=db,
+            )
+            await db.commit()
+            abort(401)
+        if "webauthn" not in context.get("allowed_methods", ["webauthn"]):
+            abort(403)
         pending = await consume_pending(
             db, pending_id=pending_id, purpose="stepup", user_id=str(user_id)
         )
@@ -1503,6 +1613,7 @@ async def stepup_complete():
         stmt = select(WebAuthnCredential).where(
             WebAuthnCredential.credential_id == credential_id,
             WebAuthnCredential.user_id == user_id,
+            WebAuthnCredential.uv_capable.is_not(False),
         )
         result = await db.execute(stmt)
         db_cred = result.scalar_one_or_none()
@@ -1510,14 +1621,14 @@ async def stepup_complete():
             abort(401)
 
         try:
-            credential = AuthenticationCredential.parse_raw(json.dumps(raw))
+            credential = parse_authentication_credential_json(raw)
             verification = wa.verify_authentication(
                 credential=credential,
                 expected_challenge=pending.challenge,
                 credential_public_key=db_cred.public_key,
                 current_sign_count=db_cred.sign_count,
             )
-            if not getattr(verification, "user_verified", True):
+            if getattr(verification, "user_verified", None) is not True:
                 raise ValueError("user verification required")
         except Exception as exc:
             await write_audit_event(
@@ -1533,15 +1644,16 @@ async def stepup_complete():
             else max(db_cred.sign_count, verification.new_sign_count)
         )
         db_cred.last_used_at = datetime.now(UTC).replace(tzinfo=None)
-        import json as _json
-        context = _json.loads(pending.context or "{}")
+        context = json.loads(pending.context or "{}")
         action = str(context.get("action") or "")
         target = str(context.get("target") or "instance")
         if action not in STEPUP_POLICIES:
             await db.commit()
             abort(403, "Unregistered step-up action")
         await grant_stepup(
-            session, user_id=str(user_id), action=action, target=target, db=db
+            session, user_id=str(user_id), action=action, target=target,
+            auth_method="webauthn", assurance_level="user_verified",
+            confirming_credential_id=str(db_cred.id), db=db,
         )
         await db.commit()
 
@@ -1549,6 +1661,103 @@ async def stepup_complete():
     await emit("auth.stepup_granted", user_id=user_id)
 
     return jsonify({"status": "stepup_granted"}), 200
+
+
+@auth_bp.post("/stepup/totp/complete")
+async def stepup_totp_complete():
+    """Complete TOTP step-up for TOTP credential removal using shared grants."""
+    user_id = str(session.get("user_id") or "")
+    pending_id = session.get("stepup_pending_id")
+    data = await request.get_json() or {}
+    code = str(data.get("code") or "").strip()
+    if not user_id or not pending_id or not code:
+        abort(400, "An active step-up and TOTP code are required")
+
+    async for db in get_db_session():
+        from arborpress.auth.mfa import TOTPService, decrypt_secret
+        from arborpress.auth.pending import consume_pending
+        from arborpress.models.user import AuthPending, MFADevice, MFADeviceType
+        preview = await db.get(AuthPending, pending_id)
+        if preview is None or preview.user_id != user_id or preview.purpose != "stepup":
+            abort(401)
+        context = json.loads(preview.context or "{}")
+        if (
+            context.get("session_id") != str(session.get("session_id") or "")
+            or context.get("action") != "remove_totp_credential"
+            or "totp" not in context.get("allowed_methods", [])
+        ):
+            await write_audit_event(
+                event_type="sensitive_stepup_failed", outcome="failure",
+                actor_id=user_id, target_id=user_id,
+                detail="totp_stepup_scope_or_session_mismatch", db=db,
+            )
+            await db.commit()
+            session.pop("stepup_pending_id", None)
+            abort(403)
+        pending = await consume_pending(
+            db, pending_id=pending_id, purpose="stepup", user_id=user_id
+        )
+        if pending is None:
+            session.pop("stepup_pending_id", None)
+            abort(401, "Step-up challenge expired or already used")
+        # Consume before verifying: an invalid OTP cannot be retried against
+        # the same pending action/target context.
+        await db.commit()
+        devices = (await db.execute(
+            select(MFADevice).where(
+                MFADevice.user_id == user_id,
+                MFADevice.device_type == MFADeviceType.TOTP,
+                MFADevice.is_active.is_(True),
+                MFADevice.verification_status.in_(('verified', 'unknown')),
+            ).with_for_update()
+        )).scalars().all()
+        service = TOTPService()
+        matches = []
+        for device in devices:
+            try:
+                secret = decrypt_secret(device.secret_enc)
+                if service.verify(secret, code, user_id=user_id):
+                    matches.append(device)
+            except Exception:
+                log.debug(
+                    "Could not verify a step-up TOTP device for user %s",
+                    user_id,
+                    exc_info=True,
+                )
+                continue
+        if len(matches) != 1:
+            await write_audit_event(
+                event_type="sensitive_stepup_failed", outcome="failure",
+                actor_id=user_id, target_id=str(context.get("target") or user_id),
+                detail="totp_stepup_code_invalid_or_ambiguous", db=db,
+            )
+            await db.commit()
+            session.pop("stepup_pending_id", None)
+            abort(401, "TOTP step-up failed")
+        matched = matches[0]
+        if matched.verification_status == "unknown":
+            matched.verification_status = "verified"
+            await write_audit_event(
+                event_type="totp_legacy_confirmed", outcome="success",
+                actor_id=user_id, target_id=str(matched.id),
+                detail="confirmed_during_stepup", db=db,
+            )
+        matched.last_used_at = datetime.now(UTC).replace(tzinfo=None)
+        target = str(context.get("target") or "")
+        action = str(context.get("action") or "")
+        if action not in STEPUP_POLICIES:
+            session.pop("stepup_pending_id", None)
+            abort(403)
+        await grant_stepup(
+            session, user_id=user_id, action=action, target=target,
+            auth_method="totp", assurance_level="otp_verified",
+            confirming_mfa_device_id=str(matched.id), db=db,
+        )
+        await db.commit()
+        session.pop("stepup_pending_id", None)
+    from arborpress.core.events import emit
+    await emit("auth.stepup_granted", user_id=user_id)
+    return jsonify({"status": "stepup_granted", "auth_method": "totp"}), 200
 
 
 @auth_bp.post("/stepup/revoke")

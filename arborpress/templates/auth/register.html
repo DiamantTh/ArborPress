@@ -9,7 +9,7 @@
 
   <p class="auth-box__hint">
     {% if initial_enrollment %}
-      {{ _('Richte den ersten FIDO2-Sicherheitsschlüssel für %(user)s ein.', user=prefill_username) }}
+      {{ _('Richte den ersten FIDO2-Sicherheitsschlüssel für %(user)s ein.') % {'user': prefill_username} }}
     {% else %}
       {{ _('Füge einen Authenticator zu deinem angemeldeten Konto hinzu. Eine frische WebAuthn-Bestätigung ist erforderlich.') }}
     {% endif %}
