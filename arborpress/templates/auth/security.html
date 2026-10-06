@@ -8,7 +8,7 @@
   <h1>{{ _('Kontosicherheit') }}</h1>
   <p>{{ user.display_name }} ({{ user.username }})</p>
   {% if recovery_only %}
-  <p class="flash--error">{{ _('Eingeschränkte Recovery-Sitzung. Sie läuft nach 15 Minuten ab und erlaubt nur die Wiederherstellung Ihrer Authenticatoren.') }}</p>
+  <p class="flash--error">{{ _('Eingeschränkte Recovery-Sitzung. Sie läuft nach 15 Minuten ab. Registrieren Sie mindestens einen neuen FIDO2-Key/Passkey; beim Abschluss werden alle zuvor vorhandenen FIDO2- und TOTP-Credentials widerrufen.') }}</p>
   {% endif %}
 
   <section>
@@ -36,18 +36,15 @@
         {% if credential.transports %}· {{ credential.transports }}{% elif credential.transport %}· {{ credential.transport }}{% endif %}
       </small>
       <small>Erstellt: {{ credential.created_at }} · Zuletzt verwendet: {{ credential.last_used_at or _('Noch nie') }}</small>
-      {% if (not recovery_only) or (credential.id|string in recovery_baseline_webauthn_ids) %}
-      {% if recovery_only %}
-      <button class="btn btn--small recovery-remove"
-              data-url="{{ url_for('auth.webauthn_credential_remove', credential_uuid=credential.id) }}">
-        {{ _('Altes Credential entfernen') }}
-      </button>
+      {% if recovery_only and credential.id|string in recovery_baseline_webauthn_ids %}
+      <small>{{ _('Wird beim erfolgreichen Recovery-Abschluss widerrufen') }}</small>
+      {% elif recovery_only %}
+      <small>{{ _('Noch nicht für normale Anmeldungen freigegeben') }}</small>
       {% else %}
       <button class="btn btn--small stepup-remove" data-action="remove_webauthn_credential"
               data-target="{{ credential.id }}" data-url="{{ url_for('auth.webauthn_credential_remove', credential_uuid=credential.id) }}">
         {{ _('Entfernen') }}
       </button>
-      {% endif %}
       {% endif %}
     </article>
     {% else %}<p>{{ _('Noch kein WebAuthn-Credential registriert.') }}</p>{% endfor %}
@@ -72,12 +69,10 @@
     <article class="security-item">
       <strong>{{ device.label }}</strong>
       <small>{{ device.verification_status }} · {{ _('Erstellt') }}: {{ device.created_at }} · {{ _('Zuletzt verwendet') }}: {{ device.last_used_at or _('Noch nie') }}</small>
-      {% if (not recovery_only) or (device.id|string in recovery_baseline_totp_ids) %}
-      {% if recovery_only %}
-      <button class="btn btn--small recovery-remove"
-              data-url="{{ url_for('auth.totp_remove', device_id=device.id) }}">
-        {{ _('Altes TOTP entfernen') }}
-      </button>
+      {% if recovery_only and device.id|string in recovery_baseline_totp_ids %}
+      <small>{{ _('Wird beim erfolgreichen Recovery-Abschluss widerrufen') }}</small>
+      {% elif recovery_only %}
+      <small>{{ _('Noch nicht für normale Anmeldungen freigegeben') }}</small>
       {% else %}
       <button class="btn btn--small stepup-remove" data-action="remove_totp_credential"
               data-target="{{ device.id }}" data-allow-totp="true"
@@ -85,22 +80,22 @@
         {{ _('Entfernen') }}
       </button>
       {% endif %}
-      {% endif %}
     </article>
     {% endfor %}
   </section>
 
   <section>
     <h2>{{ _('Passwort / Recovery') }}</h2>
-    <p>{{ _('Break-glass-Passwörter allein erzeugen keine normale Anmeldung. Recovery muss vorher durch einen berechtigten Administrator autorisiert werden.') }}</p>
     {% if recovery_only %}
       {% if recovery_has_new_auth_path %}
       <button class="btn btn--primary" id="recovery-complete">
         {{ _('Recovery abschließen und zur Anmeldung wechseln') }}
       </button>
       {% else %}
-      <p>{{ _('Registrieren und bestätigen Sie zuerst einen neuen nutzbaren Authentifizierungspfad. Danach können Sie alte Credentials entfernen und Recovery abschließen.') }}</p>
+      <p>{{ _('Registrieren und verifizieren Sie zuerst mindestens einen neuen FIDO2-Key oder Passkey. Neues TOTP allein reicht nicht. Alte Credentials werden beim erfolgreichen Abschluss gemeinsam widerrufen.') }}</p>
       {% endif %}
+    {% else %}
+    <p>{{ _('Das optionale Passwort folgt der normalen ArborPress-MFA-Policy. Account-Recovery wird separat über ein einmaliges Ticket freigegeben.') }}</p>
     {% endif %}
   </section>
   <form method="post" action="{{ url_for('auth.logout') }}">

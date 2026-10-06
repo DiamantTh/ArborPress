@@ -14,6 +14,13 @@
   </div>
   <div>Bitte jetzt sicher speichern; es wird nur in dieser Antwort angezeigt.</div>
   {% endif %}
+  {% if breakglass_result.recovery_ticket %}
+  <div class="admin-recovery-ticket">
+    <p><strong>Recovery-Ticket (wird nur einmal angezeigt):</strong></p>
+    <code>{{ breakglass_result.recovery_ticket }}</code>
+    <p>24 Stunden gültig. Übermitteln Sie es dem Zielbenutzer über den vorgesehenen sicheren Weg.</p>
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -108,9 +115,10 @@
             <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
             <p class="text-danger">
               Recovery für 24 Stunden autorisieren und bestehende Sitzungen beenden.
-              Credentials bleiben bestehen, bis der Benutzer selbst ein neues Credential
-              registriert und den Ersatz bestätigt hat. Dafür ist ein aktives
-              Break-Glass-Passwort erforderlich.
+              Das Recovery-Ticket wird danach einmal angezeigt. Der Benutzer weist sich
+              damit selbst aus, registriert mindestens einen neuen FIDO2-Key/Passkey und
+              schließt Recovery ab. Dabei werden alle vor Recovery vorhandenen FIDO2- und
+              TOTP-Credentials widerrufen. Ein Passwort ist dafür nicht erforderlich.
             </p>
             <label>
               Zur Bestätigung Benutzernamen eingeben: <strong>{{ user.username }}</strong>

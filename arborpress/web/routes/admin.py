@@ -10,7 +10,11 @@ Requirements:
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import logging
+import secrets
 
 from quart import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import func, select
@@ -656,10 +660,19 @@ async def user_authenticator_reset(user_id: str):
             utcnow_naive,
         )
         from arborpress.auth.policy import lock_user_for_credential_change
-        from arborpress.auth.sessions import RECOVERY_AUTHORIZATION_TTL_SECONDS
+        from arborpress.auth.sessions import (
+            RECOVERY_AUTHORIZATION_TTL_SECONDS,
+            RECOVERY_PURPOSE,
+            RECOVERY_SESSION_PURPOSE,
+            invalidate_normal_auth_pendings,
+            invalidate_recovery_session,
+        )
         from arborpress.models.user import (
             AuthPending,
+            MFADevice,
+            MFADeviceType,
             UserSession,
+            WebAuthnCredential,
         )
 
         if actor_id == str(user_id):
@@ -669,27 +682,6 @@ async def user_authenticator_reset(user_id: str):
             abort(404)
         if form.get("confirm_username", "").strip() != user.username:
             abort(400, "Type the target username to confirm authenticator recovery")
-        if (
-            not get_settings().auth.legacy_password_enabled
-            or not user.legacy_password_enabled
-            or not user.legacy_password_hash
-        ):
-            await write_audit_event(
-                event_type="auth_lockout_prevention", outcome="blocked",
-                actor_id=actor_id, target_id=str(user.id),
-                detail="authenticator_reset_requires_breakglass_password", db=db,
-            )
-            await db.commit()
-            return await _render_users_page(
-                breakglass_result={
-                    "level": "warning",
-                    "message": (
-                        f"Recovery fuer {user.username} ist nicht freigegeben. "
-                        "Ein aktives Break-Glass-Passwort muss vorher eingerichtet sein."
-                    ),
-                }
-            ), 409
-
         now = utcnow_naive()
         previous_authorizations = (await db.execute(
             select(AuthPending).where(
@@ -697,9 +689,16 @@ async def user_authenticator_reset(user_id: str):
                 AuthPending.purpose == RECOVERY_AUTHORIZATION_PURPOSE,
                 AuthPending.consumed_at.is_(None),
                 AuthPending.expires_at > now,
-            ).with_for_update()
+        ).with_for_update()
         )).scalars().all()
         for prior in previous_authorizations:
+            try:
+                prior_context = json.loads(prior.context or "{}")
+            except (TypeError, ValueError):
+                prior_context = {}
+            if isinstance(prior_context, dict):
+                prior_context["superseded"] = True
+                prior.context = json.dumps(prior_context, separators=(",", ":"))
             prior.consumed_at = now
             await write_audit_event(
                 event_type="recovery_authorization_superseded", outcome="success",
@@ -707,12 +706,69 @@ async def user_authenticator_reset(user_id: str):
                 detail="purpose=account_credential_recovery",
                 db=db,
             )
-        await create_pending(
+
+        # A newly authorized replacement supersedes a ticket already redeemed
+        # into a restricted recovery session, including its staged factors.
+        active_recovery_sessions = (await db.execute(
+            select(AuthPending).where(
+                AuthPending.user_id == str(user.id),
+                AuthPending.purpose == RECOVERY_SESSION_PURPOSE,
+                AuthPending.consumed_at.is_(None),
+                AuthPending.expires_at > now,
+            ).with_for_update()
+        )).scalars().all()
+        for recovery_pending in active_recovery_sessions:
+            try:
+                recovery_context = json.loads(recovery_pending.context or "{}")
+            except (TypeError, ValueError):
+                recovery_context = {}
+            if not isinstance(recovery_context, dict):
+                recovery_context = {}
+            await invalidate_recovery_session(
+                db,
+                pending=recovery_pending,
+                context=recovery_context,
+                reason="superseded",
+            )
+            await write_audit_event(
+                event_type="recovery_aborted", outcome="success",
+                actor_id=actor_id, target_id=str(user.id),
+                detail="purpose=account_credential_recovery;reason=superseded",
+                db=db,
+            )
+
+        await invalidate_normal_auth_pendings(
+            db,
+            user_id=str(user.id),
+            actor_id=actor_id,
+            reason="authorization_issued",
+        )
+
+        baseline_webauthn = (await db.execute(
+            select(WebAuthnCredential.id).where(
+                WebAuthnCredential.user_id == str(user.id)
+            )
+        )).scalars().all()
+        baseline_totp = (await db.execute(
+            select(MFADevice.id).where(
+                MFADevice.user_id == str(user.id),
+                MFADevice.device_type == MFADeviceType.TOTP,
+            )
+        )).scalars().all()
+        ticket_secret = secrets.token_bytes(32)
+        ticket_secret_text = base64.urlsafe_b64encode(ticket_secret).rstrip(b"=").decode("ascii")
+        authorization = await create_pending(
             db,
             purpose=RECOVERY_AUTHORIZATION_PURPOSE,
             user_id=str(user.id),
             ttl_seconds=RECOVERY_AUTHORIZATION_TTL_SECONDS,
-            context={"authorized_by": actor_id, "purpose": "account_credential_recovery"},
+            challenge=hashlib.sha256(ticket_secret).digest(),
+            context={
+                "authorized_by": actor_id,
+                "purpose": RECOVERY_PURPOSE,
+                "baseline_webauthn_ids": [str(value) for value in baseline_webauthn],
+                "baseline_totp_ids": [str(value) for value in baseline_totp],
+            },
         )
         await db.execute(
             update(UserSession)
@@ -728,16 +784,25 @@ async def user_authenticator_reset(user_id: str):
                 "method=webauthn_uv"
             ), db=db,
         )
+        await write_audit_event(
+            event_type="recovery_ticket_issued", outcome="success",
+            actor_id=actor_id, target_id=str(user.id),
+            detail=(
+                f"purpose={RECOVERY_PURPOSE};"
+                f"authorization_id={authorization.id};ttl_seconds="
+                f"{RECOVERY_AUTHORIZATION_TTL_SECONDS}"
+            ), db=db,
+        )
         await db.commit()
         return await _render_users_page(
             breakglass_result={
                 "level": "success",
                 "message": (
                     f"Recovery fuer {user.username} ist fuer 24 Stunden autorisiert. "
-                    "Vorhandene Authenticatoren bleiben bis zum bestätigten Ersatz aktiv. "
-                    "Der Benutzer muss sich selbst mit dem Break-Glass-Passwort anmelden; "
-                    "dadurch entsteht nur eine 15-minütige Recovery-Sitzung."
+                    "Alle bestehenden Ziel-Sitzungen wurden beendet. Das Ticket wird "
+                    "nur jetzt angezeigt und muss dem Benutzer sicher übermittelt werden."
                 ),
+                "recovery_ticket": f"{authorization.id}.{ticket_secret_text}",
             }
         )
 

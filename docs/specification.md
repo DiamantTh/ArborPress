@@ -108,22 +108,27 @@ and are atomically consumed once. An unregistered operation fails closed.
   requires one of them. Password-only never creates a normal session.
 - Recovery requires an explicit authorization by an administrator. The
   administrator uses a target-bound WebAuthn UV step-up and confirms the
-  target username. Authorization expires after 24 hours and revokes the
-  target's active sessions; it does not delete credentials.
-- The target user redeems the authorization with their own configured
-  Break-Glass password. This creates a 15-minute recovery-only session bound
-  to that user, session, purpose, and one-shot server-side pending state.
-- Recovery sessions can open the user's Security page, enroll WebAuthn or
-  staged TOTP, remove credentials that existed when recovery began after a
-  new usable path has been verified, complete recovery, or log out. They
-  cannot access normal content, APIs, administration, roles, plugins, or
-  configuration.
-- Recovery completion requires a newly enrolled, verified normal path:
-  a usable WebAuthn credential, or a verified TOTP path accepted by the
-  configured password/SSO policy. Pending TOTP does not count. Completion
-  consumes recovery state, invalidates the restricted session, and requires a
-  normal login. This preserves replace-before-remove and keeps Break-Glass
-  from becoming an ordinary FIDO2 bypass.
+  target username. Authorization expires after 24 hours, revokes the target's
+  active sessions, and shows a random one-time ticket once. Only a hash of its
+  secret is stored in the existing `AuthPending` row. Recovery authorization
+  does not require or inspect the target's password state.
+- The target redeems the ticket without a password. This creates a 15-minute
+  recovery-only DB session bound to the target user, current session, purpose,
+  and one-shot pending state. While an authorization or valid recovery session
+  is active, the central session issuer blocks normal WebAuthn, password/MFA,
+  and SSO sessions.
+- A recovery session can open the account Security page, enroll WebAuthn and
+  staged TOTP, complete recovery, or log out. It cannot access normal content,
+  APIs, administration, roles, plugins, or configuration. Factors enrolled
+  during recovery remain unavailable to normal login until completion.
+- Recovery completion requires at least one new, fully verified FIDO2/WebAuthn
+  credential created during that recovery. TOTP alone, a password, and SSO do
+  not satisfy the requirement. Completion atomically removes all WebAuthn and
+  TOTP credentials captured in the pre-recovery baseline, promotes newly
+  enrolled factors, consumes recovery state, invalidates the restricted
+  session, and requires a normal login. Aborting, logging out, or expiring
+  recovery removes only staged recovery factors and leaves baseline credentials
+  intact.
 - Password policy (min/max length, zxcvbn min score, HIBP check) is
   stored in the DB-backed `security` site_settings section and
   editable under `/admin/security`. The `[auth]` block in

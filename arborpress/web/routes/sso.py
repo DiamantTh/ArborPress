@@ -312,7 +312,11 @@ async def sso_callback(provider: str) -> tuple:
         wa_settings = await get_webauthn_settings(db)
         webauthn_count = (await db.execute(select(func.count()).select_from(
             WebAuthnCredential
-        ).where(WebAuthnCredential.user_id == str(user.id)))).scalar_one() or 0
+        ).where(
+            WebAuthnCredential.user_id == str(user.id),
+            WebAuthnCredential.uv_capable.is_not(False),
+            WebAuthnCredential.verification_status != "recovery_pending",
+        ))).scalar_one() or 0
         totp_count = (await db.execute(select(func.count()).select_from(
             MFADevice
         ).where(

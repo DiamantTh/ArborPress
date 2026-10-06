@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -104,13 +107,12 @@ class TestAdminBreakglassUsers:
         assert target_user.legacy_password_hash != hash_password("correct horse battery staple")
 
     @pytest.mark.asyncio
-    async def test_admin_recovery_authorization_preserves_credentials_and_revokes_sessions(
+    async def test_admin_recovery_authorization_works_for_passwordless_accounts(
         self, client, test_engine, monkeypatch
     ):
         from arborpress.core.config import Settings
 
         cfg = Settings()
-        cfg.auth.legacy_password_enabled = True
         monkeypatch.setattr("arborpress.web.routes.admin.get_settings", lambda: cfg)
         monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
         admin_name = f"reset-admin-{uuid.uuid4().hex[:8]}"
@@ -129,8 +131,6 @@ class TestAdminBreakglassUsers:
             )
 
             target = await db.get(User, target_user_id)
-            target.legacy_password_enabled = True
-            target.legacy_password_hash = hash_password("correct horse battery staple")
             credential = WebAuthnCredential(
                 user_id=target_user_id,
                 label="Lost key",
@@ -179,6 +179,13 @@ class TestAdminBreakglassUsers:
             form={"_csrf": "test-token", "confirm_username": target_name},
         )
         assert response.status_code == 200
+        html = await response.get_data(as_text=True)
+        ticket_match = re.search(
+            r"<code>([0-9a-f-]+\.[A-Za-z0-9_-]{43})</code>", html
+        )
+        assert ticket_match is not None
+        _, secret_text = ticket_match.group(1).split(".", 1)
+        ticket_secret = base64.urlsafe_b64decode(secret_text + "=")
 
         async with factory() as db:
             from sqlalchemy import func, select
@@ -204,8 +211,14 @@ class TestAdminBreakglassUsers:
                     AuthPending.consumed_at.is_(None),
                 )
             )).scalar_one_or_none()
+            target = await db.get(User, target_user_id)
         assert credential_count == 1
         assert revoked_totp is not None and revoked_totp.is_active
         assert revoked_totp.verification_status == "verified"
         assert revoked_session is not None and not revoked_session.is_valid
         assert recovery_authorization is not None
+        assert recovery_authorization.challenge == hashlib.sha256(ticket_secret).digest()
+        assert secret_text not in (recovery_authorization.context or "")
+        assert target is not None
+        assert target.legacy_password_enabled is False
+        assert target.legacy_password_hash is None

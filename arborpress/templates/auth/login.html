@@ -40,7 +40,7 @@
   {% if config.auth.legacy_password_enabled %}
   <details class="break-glass">
     <summary>{{ _('Notfall-Passwort-Login') }}</summary>
-    <p>{{ _('Wenn weitere nutzbare Faktoren eingerichtet sind, werden sie weiterhin verlangt. Passwort allein startet nur nach einer befristeten Admin-Freigabe eine eingeschränkte Recovery.') }}</p>
+    <p>{{ _('Das Passwort folgt der normalen Anmeldungspolitik und ersetzt keine erforderliche MFA.') }}</p>
     <form method="post" action="{{ url_for('auth.breakglass_login') }}" class="auth-form">
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
       <div class="form-group">
@@ -55,6 +55,10 @@
     </form>
   </details>
   {% endif %}
+
+  <p class="auth-box__alt">
+    <a href="{{ url_for('auth.recovery_ticket_page') }}">{{ _('Recovery-Ticket einlösen') }}</a>
+  </p>
 
   {% if install_enrollment_available %}<p class="auth-box__alt">
     <a href="{{ url_for('auth.register_page') }}">{{ _('Ersten Schlüssel registrieren') }}</a>

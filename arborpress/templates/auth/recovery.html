@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ _('Account-Recovery') }}{% endblock %}
+{% set noindex = true %}
+{% block body_class %}auth-page{% endblock %}
+
+{% block content %}
+<div class="auth-box">
+  <h1>{{ _('Account-Recovery') }}</h1>
+  <p>{{ _('Geben Sie das einmalige Recovery-Ticket ein, das Ihnen ein berechtigter Administrator übermittelt hat. Ein Passwort ist nicht erforderlich.') }}</p>
+  <p>{{ _('Nach der Einlösung erhalten Sie eine auf 15 Minuten begrenzte Security-Sitzung. Sie müssen mindestens einen neuen FIDO2-Sicherheitsschlüssel oder Passkey registrieren. Beim erfolgreichen Abschluss werden alle zuvor vorhandenen FIDO2- und TOTP-Credentials widerrufen; danach ist eine normale Anmeldung erforderlich.') }}</p>
+  {% if ticket_error %}<p class="flash--error" role="alert">{{ ticket_error }}</p>{% endif %}
+  <form method="post" action="{{ url_for('auth.recovery_ticket_redeem') }}" class="auth-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <div class="form-group">
+      <label for="recovery-ticket">{{ _('Recovery-Ticket') }}</label>
+      <input id="recovery-ticket" type="text" name="ticket" autocomplete="off"
+             autocapitalize="none" spellcheck="false" maxlength="128" required>
+    </div>
+    <button type="submit" class="btn btn--primary">{{ _('Recovery starten') }}</button>
+  </form>
+</div>
+{% endblock %}

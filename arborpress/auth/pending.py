@@ -7,7 +7,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import and_, delete, or_, select, update
 
 from arborpress.models.user import AuthPending
 
@@ -37,10 +37,17 @@ async def create_pending(
 ) -> AuthPending:
     now = utcnow_naive()
     # Keep abandoned public login attempts and completed ceremonies from
-    # accumulating indefinitely. All retained pending rows are live.
+    # accumulating indefinitely. A consumed recovery authorization is retained
+    # only through its original TTL as a replay/supersession tombstone.
     await db.execute(
         delete(AuthPending).where(
-            or_(AuthPending.expires_at <= now, AuthPending.consumed_at.is_not(None))
+            or_(
+                AuthPending.expires_at <= now,
+                and_(
+                    AuthPending.consumed_at.is_not(None),
+                    AuthPending.purpose != RECOVERY_AUTHORIZATION_PURPOSE,
+                ),
+            )
         )
     )
     pending = AuthPending(

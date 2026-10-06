@@ -30,7 +30,13 @@ async def _user(db, prefix: str = "remove") -> str:
     return str(user.id)
 
 
-async def _webauthn(db, user_id: str, *, uv_capable: bool | None = True) -> str:
+async def _webauthn(
+    db,
+    user_id: str,
+    *,
+    uv_capable: bool | None = True,
+    status: str = "unknown",
+) -> str:
     from arborpress.models.user import WebAuthnCredential
 
     row = WebAuthnCredential(
@@ -39,7 +45,7 @@ async def _webauthn(db, user_id: str, *, uv_capable: bool | None = True) -> str:
         credential_id=uuid.uuid4().bytes,
         public_key=b"public-key",
         uv_capable=uv_capable,
-        verification_status="unknown",
+        verification_status=status,
     )
     db.add(row)
     await db.flush()
@@ -165,6 +171,7 @@ async def test_recovery_completion_requires_a_new_usable_factor(db_session):
     recovery_context = {
         "baseline_webauthn_ids": [old_key],
         "baseline_totp_ids": [old_totp],
+        "recovery_webauthn_ids": [],
     }
     assert not await recovery_has_new_auth_path(
         db_session, user, recovery_context
@@ -177,10 +184,14 @@ async def test_recovery_completion_requires_a_new_usable_factor(db_session):
         db_session, user, recovery_context
     )
 
-    new_key = await _webauthn(db_session, user_id)
+    new_key = await _webauthn(
+        db_session, user_id, status="recovery_pending", uv_capable=True
+    )
+    recovery_context["recovery_webauthn_ids"].append(new_key)
     assert await recovery_has_new_auth_path(
         db_session, user, recovery_context
     )
+    assert await usable_webauthn_credential_ids(db_session, user_id) == {old_key}
     assert not await recovery_has_new_auth_path(
         db_session,
         user,

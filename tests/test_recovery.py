@@ -101,7 +101,7 @@ class TestRecovery:
             context=json.dumps({
                 "session_id": session_id,
                 "recovery_purpose": RECOVERY_PURPOSE,
-                "auth_method": "breakglass",
+                "auth_method": "recovery_ticket",
                 "authorized_by": "admin-1",
             }),
             created_at=now,
@@ -145,14 +145,42 @@ class TestRecovery:
             role="viewer",
         )
         from arborpress.auth.sessions import RECOVERY_PURPOSE, RECOVERY_SESSION_PURPOSE
-        from arborpress.models.user import AuthPending, UserSession
+        from arborpress.models.user import (
+            AuthPending,
+            MFADevice,
+            MFADeviceType,
+            UserSession,
+            WebAuthnCredential,
+        )
 
         factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
         now = datetime.now(UTC).replace(tzinfo=None)
         session_id = str(uuid.uuid4())
         pending_id = str(uuid.uuid4())
         async with factory() as db:
+            staged_key_id = str(uuid.uuid4())
+            staged_totp_id = str(uuid.uuid4())
+            staged_key = WebAuthnCredential(
+                id=staged_key_id,
+                user_id=user_id,
+                label="Unfinished recovery key",
+                credential_id=uuid.uuid4().bytes,
+                public_key=b"staged-public-key",
+                uv_capable=True,
+                verification_status="recovery_pending",
+            )
+            staged_totp = MFADevice(
+                id=staged_totp_id,
+                user_id=user_id,
+                device_type=MFADeviceType.TOTP,
+                label="Unfinished recovery TOTP",
+                secret_enc=b"staged-encrypted-secret",
+                is_active=True,
+                verification_status="recovery_pending",
+            )
             db.add_all([
+                staged_key,
+                staged_totp,
                 UserSession(
                     id=session_id,
                     user_id=user_id,
@@ -171,8 +199,10 @@ class TestRecovery:
                     context=json.dumps({
                         "session_id": session_id,
                         "recovery_purpose": RECOVERY_PURPOSE,
-                        "auth_method": "breakglass",
+                        "auth_method": "recovery_ticket",
                         "authorized_by": "admin-1",
+                        "recovery_webauthn_ids": [staged_key_id],
+                        "recovery_totp_ids": [staged_totp_id],
                     }),
                     created_at=now,
                     expires_at=now + timedelta(minutes=15),
@@ -203,8 +233,12 @@ class TestRecovery:
         async with factory() as db:
             pending = await db.get(AuthPending, pending_id)
             db_session_row = await db.get(UserSession, session_id)
+            removed_key = await db.get(WebAuthnCredential, staged_key_id)
+            removed_totp = await db.get(MFADevice, staged_totp_id)
         assert pending is not None and pending.consumed_at is not None
         assert db_session_row is not None and not db_session_row.is_valid
+        assert removed_key is None
+        assert removed_totp is None
 
     @pytest.mark.asyncio
     async def test_breakglass_alone_without_admin_authorization_creates_no_session(
@@ -241,36 +275,86 @@ class TestRecovery:
         assert rows == []
 
     @pytest.mark.asyncio
-    async def test_admin_authorized_breakglass_is_limited_and_replace_before_remove(
-        self, client, test_engine, monkeypatch
+    async def test_admin_ticket_recovery_replaces_pre_recovery_credentials(
+        self, client, app, test_engine, monkeypatch
     ):
+        import base64
+        import hashlib
+        import re
+        from types import SimpleNamespace
+
         cfg = _recovery_settings(monkeypatch)
+        from arborpress.auth.mfa import get_device_limit as original_totp_limit
+        from arborpress.core.site_settings import get_webauthn_settings as original_wa_settings
+        from arborpress.models.user import MFADeviceType
+
+        async def capped_wa_settings(db):
+            settings = await original_wa_settings(db)
+            settings["webauthn_credential_limit"] = 2
+            return settings
+
+        async def capped_totp_limit(db, device_type):
+            if device_type == MFADeviceType.TOTP:
+                return 2
+            return await original_totp_limit(db, device_type)
+
+        monkeypatch.setattr(
+            "arborpress.core.site_settings.get_webauthn_settings", capped_wa_settings
+        )
+        monkeypatch.setattr("arborpress.auth.mfa.get_device_limit", capped_totp_limit)
         admin_name = f"recovery-admin-{uuid.uuid4().hex[:8]}"
         target_name = f"recovery-target-{uuid.uuid4().hex[:8]}"
         admin_id, admin_session_id = await _seed_user(
             test_engine, username=admin_name, role="admin"
         )
         target_id, _ = await _seed_user(
-            test_engine,
-            username=target_name,
-            role="editor",
-            password=RECOVERY_TEST_SECRET,
+            test_engine, username=target_name, role="editor", password=None
         )
         factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
         async with factory() as db:
-            from arborpress.models.user import MFADevice, MFADeviceType
-
-            old_totp = MFADevice(
-                user_id=target_id,
-                device_type=MFADeviceType.TOTP,
-                label="Old authenticator",
-                secret_enc=b"existing-encrypted-secret",
-                is_active=True,
-                verification_status="verified",
+            from arborpress.models.user import (
+                MFADevice,
+                MFADeviceType,
+                UserSession,
+                WebAuthnCredential,
             )
-            db.add(old_totp)
+
+            old_keys = [
+                WebAuthnCredential(
+                    user_id=target_id,
+                    label=f"Old key {index}",
+                    credential_id=f"old-recovery-key-{index}-{uuid.uuid4().hex}".encode(),
+                    public_key=b"old-public-key",
+                    uv_capable=True,
+                    verification_status="verified_uv",
+                )
+                for index in range(2)
+            ]
+            old_totps = [
+                MFADevice(
+                    user_id=target_id,
+                    device_type=MFADeviceType.TOTP,
+                    label=f"Old authenticator {index}",
+                    secret_enc=b"existing-encrypted-secret",
+                    is_active=True,
+                    verification_status="verified",
+                )
+                for index in range(2)
+            ]
+            target_session = UserSession(
+                user_id=target_id,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                last_seen_at=datetime.now(UTC),
+                is_valid=True,
+                is_tls=False,
+                is_cli=False,
+            )
+            db.add_all([*old_keys, *old_totps, target_session])
             await db.commit()
-            old_totp_id = str(old_totp.id)
+            old_key_ids = {str(key.id) for key in old_keys}
+            old_key_raw_ids = {key.credential_id for key in old_keys}
+            old_totp_ids = {str(device.id) for device in old_totps}
+            target_session_id = target_session.id
 
         async with client.session_transaction() as browser_session:
             browser_session["user_id"] = admin_id
@@ -294,20 +378,101 @@ class TestRecovery:
             form={"_csrf": "test-token", "confirm_username": target_name},
         )
         assert authorized.status_code == 200
+        html = await authorized.get_data(as_text=True)
+        ticket_match = re.search(r"<code>([0-9a-f-]+\.[A-Za-z0-9_-]{43})</code>", html)
+        assert ticket_match is not None
+        ticket = ticket_match.group(1)
+        locator, secret_text = ticket.split(".", 1)
+        secret = base64.urlsafe_b64decode(secret_text + "=")
+        assert len(secret) == 32
+        assert "Break-Glass-Passwort" not in html
+
+        async with factory() as db:
+            from arborpress.models.audit import AuditEvent
+            from arborpress.models.user import AuthPending, User, UserSession
+
+            authorization = await db.get(AuthPending, locator)
+            target_session_row = await db.get(UserSession, target_session_id)
+            target_user = await db.get(User, target_id)
+            audit_events = (await db.execute(
+                select(AuditEvent).where(AuditEvent.target_id == target_id)
+            )).scalars().all()
+        assert authorization is not None
+        assert authorization.challenge == hashlib.sha256(secret).digest()
+        assert secret_text not in (authorization.context or "")
+        auth_context = json.loads(authorization.context or "{}")
+        assert set(auth_context["baseline_webauthn_ids"]) == old_key_ids
+        assert set(auth_context["baseline_totp_ids"]) == old_totp_ids
+        assert target_session_row is not None and not target_session_row.is_valid
+        assert target_user is not None
+        assert target_user.legacy_password_enabled is False
+        assert target_user.legacy_password_hash is None
+        assert "recovery_ticket_issued" in {event.event_type for event in audit_events}
+        assert secret_text not in " ".join(event.detail or "" for event in audit_events)
+
+        wrong_secret = secret_text[:-1] + ("A" if secret_text[-1] != "A" else "B")
+        rejected_ticket = await client.post(
+            "/auth/recovery/redeem",
+            form={"_csrf": "test-token", "ticket": f"{locator}.{wrong_secret}"},
+        )
+        assert rejected_ticket.status_code == 400
+
+        from arborpress.auth.webauthn import WebAuthnService
+
+        wa = WebAuthnService("localhost", "ArborPress", cfg.web.base_url.rstrip("/"))
+        wa.verify_authentication = lambda *_args, **_kwargs: SimpleNamespace(
+            new_sign_count=1
+        )
+
+        async def service():
+            return wa
+
+        monkeypatch.setattr("arborpress.web.routes.auth._get_webauthn_async", service)
+        monkeypatch.setattr(
+            "webauthn.helpers.parse_authentication_credential_json",
+            lambda _raw: object(),
+        )
+
+        async def normal_login_is_blocked(normal_client):
+            begin = await normal_client.post(
+                "/auth/login/begin",
+                json={"identifier": target_name},
+                headers={"Origin": cfg.web.base_url.rstrip("/")},
+            )
+            assert begin.status_code == 200
+            raw_id = next(iter(old_key_raw_ids))
+            encoded = base64.urlsafe_b64encode(raw_id).rstrip(b"=").decode()
+            assertion = {
+                "id": encoded,
+                "rawId": encoded,
+                "type": "public-key",
+                "response": {
+                    "authenticatorData": base64.urlsafe_b64encode(
+                        b"auth-data"
+                    ).decode().rstrip("="),
+                    "clientDataJSON": base64.urlsafe_b64encode(b"client-data").decode().rstrip("="),
+                    "signature": base64.urlsafe_b64encode(b"signature").decode().rstrip("="),
+                    "userHandle": None,
+                },
+            }
+            return await normal_client.post(
+                "/auth/login/complete",
+                json=assertion,
+                headers={"Origin": cfg.web.base_url.rstrip("/")},
+            )
+
+        async with app.test_client() as normal_client:
+            assert (await normal_login_is_blocked(normal_client)).status_code == 423
 
         async with client.session_transaction() as browser_session:
             browser_session.clear()
             browser_session["_csrf_token"] = "test-token"  # noqa: S105
-        login = await client.post(
-            "/auth/breakglass",
-            form={
-                "user_name": target_name,
-                "password": RECOVERY_TEST_SECRET,
-            },
+        redeemed = await client.post(
+            "/auth/recovery/redeem",
+            form={"_csrf": "test-token", "ticket": ticket},
         )
-        assert login.status_code == 302
-        assert login.headers["Location"].endswith("/auth/security")
-
+        assert redeemed.status_code == 302
+        assert redeemed.headers["Location"].endswith("/auth/security")
         async with client.session_transaction() as browser_session:
             recovery_cookie = dict(browser_session)
             assert browser_session["user_id"] == target_id
@@ -318,111 +483,180 @@ class TestRecovery:
 
         security = await client.get("/auth/security")
         assert security.status_code == 200
-        privileged = await client.get("/admin/users")
-        assert privileged.status_code == 403
-        body = await client.get("/")
-        assert body.status_code == 403
+        assert (await client.get("/admin/users")).status_code == 403
+        assert (await client.get("/")).status_code == 403
+        async with app.test_client() as normal_client:
+            assert (await normal_login_is_blocked(normal_client)).status_code == 423
 
         origin = cfg.web.base_url.rstrip("/")
-        incomplete = await client.post(
-            "/auth/recovery/complete",
-            json={},
-            headers={"Origin": origin},
-        )
+        headers = {"Origin": origin}
+        incomplete = await client.post("/auth/recovery/complete", json={}, headers=headers)
         assert incomplete.status_code == 409
 
         from urllib.parse import parse_qs, urlparse
 
         from arborpress.auth.mfa import TOTPService
 
-        pending_enrollment = await client.post(
-            "/auth/totp/begin",
-            json={"label": "Replacement authenticator"},
-            headers={"Origin": origin},
+        pending_totp = await client.post(
+            "/auth/totp/begin", json={"label": "Recovery authenticator"}, headers=headers
         )
-        assert pending_enrollment.status_code == 200
-        pending_uri = (await pending_enrollment.get_json())["provisioning_uri"]
+        assert pending_totp.status_code == 200
+        pending_uri = (await pending_totp.get_json())["provisioning_uri"]
         pending_secret = parse_qs(urlparse(pending_uri).query)["secret"][0].encode()
-        assert pending_secret
-        incomplete_pending_totp = await client.post(
-            "/auth/recovery/complete",
-            json={},
-            headers={"Origin": origin},
+        incomplete = await client.post("/auth/recovery/complete", json={}, headers=headers)
+        assert incomplete.status_code == 409
+        wrong = await client.post(
+            "/auth/totp/complete", json={"code": "00000000"}, headers=headers
         )
-        assert incomplete_pending_totp.status_code == 409
-        wrong_code = await client.post(
-            "/auth/totp/complete",
-            json={"code": "00000000"},
-            headers={"Origin": origin},
-        )
-        assert wrong_code.status_code == 400
+        assert wrong.status_code == 400
 
-        verified_enrollment = await client.post(
-            "/auth/totp/begin",
-            json={"label": "Replacement authenticator"},
-            headers={"Origin": origin},
+        totp_begin = await client.post(
+            "/auth/totp/begin", json={"label": "Recovery authenticator"}, headers=headers
         )
-        assert verified_enrollment.status_code == 200
-        verified_uri = (await verified_enrollment.get_json())["provisioning_uri"]
-        verified_secret = parse_qs(urlparse(verified_uri).query)["secret"][0].encode()
-        code = TOTPService().current_token(verified_secret)
-        activated = await client.post(
-            "/auth/totp/complete",
-            json={"code": code},
-            headers={"Origin": origin},
+        totp_uri = (await totp_begin.get_json())["provisioning_uri"]
+        new_totp_secret = parse_qs(urlparse(totp_uri).query)["secret"][0].encode()
+        new_totp_code = TOTPService().current_token(new_totp_secret)
+        totp_complete = await client.post(
+            "/auth/totp/complete", json={"code": new_totp_code}, headers=headers
         )
-        assert activated.status_code == 201
-
-        removed_old = await client.post(
-            f"/auth/totp/{old_totp_id}/remove",
-            json={},
-            headers={"Origin": origin},
-        )
-        assert removed_old.status_code == 200
+        assert totp_complete.status_code == 201
         async with factory() as db:
-            from arborpress.models.user import MFADevice
+            from arborpress.models.user import MFADevice, MFADeviceType
 
-            assert await db.get(MFADevice, old_totp_id) is None
+            staged_totp = (await db.execute(select(MFADevice).where(
+                MFADevice.user_id == target_id,
+                MFADevice.device_type == MFADeviceType.TOTP,
+                MFADevice.label == "Recovery authenticator",
+            ))).scalar_one()
+            assert staged_totp.verification_status == "recovery_pending"
+        assert (await client.post(
+            "/auth/recovery/complete", json={}, headers=headers
+        )).status_code == 409
 
-        completed = await client.post(
-            "/auth/recovery/complete",
-            json={},
-            headers={"Origin": origin},
+        new_key_raw_id = b"new-recovery-fido-" + uuid.uuid4().bytes
+        wa.verify_registration = lambda *_args, **_kwargs: SimpleNamespace(
+            user_verified=True,
+            credential_id=new_key_raw_id,
+            credential_public_key=b"new-recovery-public-key",
+            sign_count=0,
+            aaguid="test-aaguid",
+            credential_device_type=None,
+            credential_backed_up=False,
         )
+
+        async def service():
+            return wa
+
+        monkeypatch.setattr("arborpress.web.routes.auth._get_webauthn_async", service)
+        monkeypatch.setattr(
+            "webauthn.helpers.parse_registration_credential_json", lambda _raw: object()
+        )
+        register_begin = await client.post(
+            "/auth/register/begin",
+            json={"enrollment_kind": "security_key", "label": "New FIDO2"},
+            headers=headers,
+        )
+        assert register_begin.status_code == 200
+        new_key_b64 = base64.urlsafe_b64encode(new_key_raw_id).rstrip(b"=").decode()
+        register_complete = await client.post(
+            "/auth/register/complete",
+            json={"id": new_key_b64, "rawId": new_key_b64, "label": "New FIDO2"},
+            headers=headers,
+        )
+        assert register_complete.status_code == 201
+
+        # Recovery-staged factors are not offered for a normal WebAuthn login.
+        async with app.test_client() as normal_client:
+            begin_login = await normal_client.post(
+                "/auth/login/begin",
+                json={"identifier": target_name},
+                headers={"Origin": origin},
+            )
+            assert begin_login.status_code == 200
+            offered = await begin_login.get_json()
+            offered_ids = {item["id"] for item in offered["allowCredentials"]}
+            assert new_key_b64 not in offered_ids
+            assert old_key_raw_ids == {
+                base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+                for value in offered_ids
+            }
+
+        completed = await client.post("/auth/recovery/complete", json={}, headers=headers)
         assert completed.status_code == 200
         assert (await completed.get_json())["login_required"] is True
-
         async with factory() as db:
             from sqlalchemy import or_
 
+            from arborpress.auth.policy import usable_webauthn_credential_ids
             from arborpress.models.audit import AuditEvent
+            from arborpress.models.user import (
+                AuthPending,
+                MFADevice,
+                User,
+                UserSession,
+                WebAuthnCredential,
+            )
 
+            remaining_keys = (await db.execute(select(WebAuthnCredential).where(
+                WebAuthnCredential.user_id == target_id
+            ))).scalars().all()
+            remaining_totp = (await db.execute(select(MFADevice).where(
+                MFADevice.user_id == target_id,
+                MFADevice.device_type == MFADeviceType.TOTP,
+            ))).scalars().all()
+            target_user = await db.get(User, target_id)
+            recovery_state = await db.get(AuthPending, recovery_cookie["recovery_id"])
             events = (await db.execute(
                 select(AuditEvent).where(or_(
                     AuditEvent.actor_id == target_id,
                     AuditEvent.target_id == target_id,
                 ))
             )).scalars().all()
-        event_types = {event.event_type for event in events}
+            usable_keys = await usable_webauthn_credential_ids(db, target_id)
+        assert len(remaining_keys) == 1
+        assert str(remaining_keys[0].id) in usable_keys
+        assert remaining_keys[0].verification_status == "verified_uv"
+        assert remaining_keys[0].credential_id == new_key_raw_id
+        assert len(remaining_totp) == 1
+        assert remaining_totp[0].verification_status == "verified"
+        assert remaining_totp[0].is_active is True
+        assert target_user is not None
+        assert target_user.legacy_password_enabled is False
+        assert target_user.legacy_password_hash is None
+        assert recovery_state is not None and recovery_state.consumed_at is not None
         assert {
-            "recovery_authorized",
-            "recovery_started",
-            "recovery_proof_succeeded",
+            "recovery_ticket_redeemed",
             "recovery_session_created",
             "recovery_credential_added",
             "recovery_credential_removed",
             "recovery_completed",
-        }.issubset(event_types)
+        }.issubset({event.event_type for event in events})
         audit_details = " ".join(event.detail or "" for event in events)
-        assert RECOVERY_TEST_SECRET not in audit_details
-        assert verified_secret.decode() not in audit_details
-        assert code not in audit_details
+        assert ticket not in audit_details
+        assert secret_text not in audit_details
+        assert new_totp_secret.decode() not in audit_details
+        assert new_totp_code not in audit_details
+        assert pending_secret.decode() not in audit_details
+
+        async with client.session_transaction() as browser_session:
+            browser_session.clear()
+            browser_session["_csrf_token"] = "test-token"  # noqa: S105
+        replay = await client.post(
+            "/auth/recovery/redeem",
+            form={"_csrf": "test-token", "ticket": ticket},
+        )
+        assert replay.status_code == 409
+        async with factory() as db:
+            replay_events = (await db.execute(select(AuditEvent).where(
+                AuditEvent.target_id == target_id,
+                AuditEvent.event_type == "recovery_ticket_replay",
+            ))).scalars().all()
+        assert replay_events
 
         async with client.session_transaction() as browser_session:
             browser_session.clear()
             browser_session.update(recovery_cookie)
-        replay = await client.get("/auth/security")
-        assert replay.status_code == 401
+        assert (await client.get("/auth/security")).status_code == 401
 
     @pytest.mark.asyncio
     async def test_breakglass_with_normal_factor_still_requires_mfa(

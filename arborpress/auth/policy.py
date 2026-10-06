@@ -49,6 +49,7 @@ async def usable_webauthn_credential_ids(db: Any, user_id: str) -> set[str]:
         select(WebAuthnCredential.id).where(
             WebAuthnCredential.user_id == str(user_id),
             WebAuthnCredential.uv_capable.is_not(False),
+            WebAuthnCredential.verification_status != "recovery_pending",
         )
     )
     return {str(value) for value in rows.scalars().all()}
@@ -75,37 +76,27 @@ async def recovery_has_new_auth_path(
     exclude_webauthn_id: str | None = None,
     exclude_mfa_id: str | None = None,
 ) -> bool:
-    """Require a usable factor added after recovery was authorized.
+    """Require a verified WebAuthn credential staged by this recovery only."""
+    from arborpress.models.user import WebAuthnCredential
 
-    A WebAuthn credential is a complete passwordless path. A new TOTP is a
-    usable recovery replacement only when ArborPress can pair it with an
-    enabled password or a configured SSO policy that accepts MFA.
-    """
-    webauthn_ids = await usable_webauthn_credential_ids(db, str(user.id))
-    totp_ids = await usable_totp_device_ids(db, str(user.id))
-    baseline_webauthn = {
+    baseline = {
         str(value) for value in recovery_context.get("baseline_webauthn_ids", [])
     }
-    baseline_totp = {
-        str(value) for value in recovery_context.get("baseline_totp_ids", [])
+    recovery_ids = {
+        str(value) for value in recovery_context.get("recovery_webauthn_ids", [])
     }
     if exclude_webauthn_id:
-        webauthn_ids.discard(str(exclude_webauthn_id))
-    if exclude_mfa_id:
-        totp_ids.discard(str(exclude_mfa_id))
-
-    if webauthn_ids - baseline_webauthn:
-        return True
-    if not (totp_ids - baseline_totp):
+        recovery_ids.discard(str(exclude_webauthn_id))
+    if not recovery_ids or recovery_ids.intersection(baseline):
         return False
-
-    paths = await usable_auth_paths(
-        db,
-        user,
-        exclude_webauthn_id=exclude_webauthn_id,
-        exclude_mfa_id=exclude_mfa_id,
-    )
-    return bool(paths & {"password+second_factor", "sso"})
+    return (await db.execute(
+        select(WebAuthnCredential.id).where(
+            WebAuthnCredential.id.in_(recovery_ids),
+            WebAuthnCredential.user_id == str(user.id),
+            WebAuthnCredential.uv_capable.is_(True),
+            WebAuthnCredential.verification_status == "recovery_pending",
+        ).limit(1)
+    )).scalar_one_or_none() is not None
 
 
 async def credential_removal_decision(
@@ -205,6 +196,7 @@ async def usable_auth_paths(
     credential_stmt = select(func.count()).select_from(WebAuthnCredential).where(
         WebAuthnCredential.user_id == str(user.id),
         WebAuthnCredential.uv_capable.is_not(False),
+        WebAuthnCredential.verification_status != "recovery_pending",
     )
     if exclude_webauthn_id:
         credential_stmt = credential_stmt.where(WebAuthnCredential.id != exclude_webauthn_id)
