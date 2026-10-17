@@ -109,3 +109,62 @@ poetry run arborpress --prefix "$PREFIX" serve --dev
 
 The `Makefile` uses `/tmp/arborpress-dev` by default for its `run` and
 `db-upgrade` targets; set `PREFIX=/path/to/instance` to select another one.
+
+## Runtime and multiple instances
+
+The CLI callback selects and initializes the prefix before commands load
+configuration or open the database. The Quart application factory requires
+that initialized context and ensures the persistent layout before setting up
+logging, themes, or other runtime services. An ASGI server started directly
+must receive `ARBORPRESS_PREFIX`; without a CLI option, environment variable,
+or explicitly initialized embedding context, startup fails instead of
+guessing from its current working directory.
+
+The ordinary web startup is schema-read-only. For an installed instance it
+checks the configured database against the packaged Alembic head and refuses
+to serve if an upgrade is needed. It does not migrate automatically. Apply
+schema changes explicitly with the matching prefix, then start the web
+process:
+
+```sh
+arborpress --prefix /srv/arborpress-a db upgrade
+arborpress --prefix /srv/arborpress-a db check
+arborpress --prefix /srv/arborpress-a serve --workers 2
+```
+
+Each process owns one effective prefix. Multiple sites therefore use separate
+prefixes and configurations rather than a hidden global site directory. The
+database URL is loaded from that prefix's bootstrap configuration (or an
+explicit `--config` override), while SQLite relative filenames, media,
+themes, plugins, cache, and relative logs remain scoped to the selected
+instance. A custom config file does not relocate those paths.
+
+## Container runtime
+
+The Compose examples set `ARBORPRESS_PREFIX=/srv/arborpress`. Their only
+application-state volume is mounted at `/srv/arborpress/instance`. In the
+container image, `app/bin/arborpress` is the CLI entry and `app/runtime/`
+exposes the image-installed virtual environment and CPython; these paths are
+image-owned symlinks to the runtime layers and are replaced with the image,
+not persisted as state. The entrypoint passes the same prefix to one
+`db upgrade` invocation before starting Hypercorn. A failed migration exits
+before the web server starts. Container logging remains on stdout/stderr by
+default; enabling relative file logging places files under
+`instance/var/log/`.
+
+The runtime image contains the installed ArborPress wheel and its runtime
+dependencies. Poetry is used only in the image build stage, and Node is not a
+runtime requirement. The Dockerfile working directory is `/` and does not
+select an instance. A container config file, when used instead of environment
+settings, belongs at `/srv/arborpress/instance/config/config.toml`; the CLI's
+explicit `--config` option overrides only the file for that command and does
+not relocate the instance.
+
+`app/releases/<version>/` and `app/current` are reserved for a future release
+layout. No release download, pointer switching, update, or rollback behavior
+is implemented. `instance/backups/` is the reserved local backup root; no
+backup creation or restore engine is implemented.
+
+Existing source-checkout directories such as `config/`, `media/`, or
+`content/themes/` are not automatically copied or moved. Operators must place
+state in the selected instance or configure explicit overrides.
