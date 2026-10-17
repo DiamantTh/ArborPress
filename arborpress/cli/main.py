@@ -93,8 +93,8 @@ def init(
 
     Sample content is inserted by default (use --no-seed to disable).
     """
-    typer.echo(__("Creating DB schema …"))
-    asyncio.run(_db_create_all())
+    typer.echo(__("Applying database migrations …"))
+    asyncio.run(_db_upgrade())
     if seed:
         typer.echo(__("Inserting sample content …"))
         asyncio.run(_seed(force=force))
@@ -159,17 +159,108 @@ def healthcheck() -> None:
 
 
 # ---------------------------------------------------------------------------
-# §14 db: migrate
+# Database migration commands
 # ---------------------------------------------------------------------------
 
 
-@db_app.command("migrate")
+@db_app.command("upgrade")
+def db_upgrade() -> None:
+    """Adopt a validated legacy schema if needed and upgrade to Alembic head."""
+    from arborpress.core.migrations import upgrade_database
+
+    try:
+        status = asyncio.run(upgrade_database())
+    except Exception as exc:
+        typer.echo(f"Database upgrade failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"Database schema is current at {status.head_revision}.")
+
+
+@db_app.command("migrate", hidden=True)
 def db_migrate() -> None:
-    """Creates / updates the database schema (§14 migrate)."""
-    import arborpress.models  # noqa: F401 – register models
-    typer.echo(__("Creating tables …"))
-    asyncio.run(_db_create_all())
-    typer.echo(__("Done."))
+    """Deprecated compatibility alias for db upgrade."""
+    typer.echo("'arborpress db migrate' is deprecated; use 'arborpress db upgrade'.", err=True)
+    db_upgrade()
+
+
+@db_app.command("current")
+def db_current() -> None:
+    """Show the installed revision and its relation to this release's head."""
+    from arborpress.core.migrations import schema_status
+
+    try:
+        status = asyncio.run(schema_status())
+    except Exception as exc:
+        typer.echo(f"Database status unavailable: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    current = ", ".join(status.current_revisions) if status.current_revisions else "none"
+    typer.echo(f"Current revision: {current}")
+    typer.echo(f"Head revision:    {status.head_revision or 'unavailable'}")
+    typer.echo(f"Status:           {status.state}")
+    if status.detail:
+        typer.echo(f"Detail:           {status.detail}")
+
+
+@db_app.command("check")
+def db_check() -> None:
+    """Return success only when the database is compatible and at current head."""
+    from arborpress.core.migrations import schema_status
+
+    try:
+        status = asyncio.run(schema_status())
+    except Exception as exc:
+        typer.echo(f"Database schema check failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if not status.is_current:
+        typer.echo(
+            f"Database schema is not ready ({status.state}): {status.detail}", err=True
+        )
+        raise typer.Exit(1)
+    typer.echo(f"Database schema is current at {status.head_revision}.")
+
+
+@db_app.command("history")
+def db_history() -> None:
+    """List migration revisions packaged with this ArborPress release."""
+    from arborpress.core.migrations import migration_history
+
+    for revision, message, parent in migration_history():
+        typer.echo(f"{revision} <- {parent or 'base'}  {message}")
+
+
+@db_app.command("adopt-legacy")
+def db_adopt_legacy() -> None:
+    """Validate and mark the supported pre-Alembic schema as adopted."""
+    from arborpress.core.migrations import adopt_legacy_database
+
+    try:
+        asyncio.run(adopt_legacy_database())
+    except Exception as exc:
+        typer.echo(f"Legacy database adoption refused: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo("Validated pre-Alembic database adopted successfully.")
+
+
+@db_app.command("downgrade")
+def db_downgrade(
+    revision: str = typer.Argument(..., help="Target revision or base"),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Confirm the potentially destructive downgrade"
+    ),
+) -> None:
+    """Run an explicit downgrade (may destroy data; never run automatically)."""
+    if not yes and not typer.confirm(
+        f"Downgrade database to {revision!r}? This may destroy data."
+    ):
+        raise typer.Exit(0)
+    from arborpress.core.migrations import downgrade_database
+
+    try:
+        asyncio.run(downgrade_database(revision))
+    except Exception as exc:
+        typer.echo(f"Database downgrade failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"Database downgrade to {revision} completed.")
 
 
 @db_app.command("seed")
@@ -1530,10 +1621,9 @@ def plugin_validate(
 # ---------------------------------------------------------------------------
 
 
-async def _db_create_all() -> None:
-    import arborpress.models  # noqa: F401
-    from arborpress.core.db import create_all_tables
-    await create_all_tables()
+async def _db_upgrade() -> None:
+    from arborpress.core.migrations import upgrade_database
+    await upgrade_database()
 
 
 async def _seed(*, force: bool = False) -> dict[str, int]:

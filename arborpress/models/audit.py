@@ -1,6 +1,6 @@
 """Audit-Event-Log-Tabelle (§2 §10 §16 – opt-in via logging.db_audit_log).
 
-The table is always included in the schema (created by ``create_all_tables``).
+The table is always included in the schema and created by Alembic revisions.
 Rows are only written when ``[logging] db_audit_log = true`` in config.toml.
 This allows operators to enable persistent DB audit trails without code changes.
 """

@@ -339,6 +339,15 @@ def create_app() -> Quart:
         # DB-abhängige Services nur starten wenn bereits installiert.
         # Im Install-Modus ist noch keine DB konfiguriert/bereit.
         if is_installed():
+            from arborpress.core.migrations import schema_status
+
+            schema = await schema_status(get_engine())
+            if not schema.is_current:
+                raise RuntimeError(
+                    "Database schema is not at this ArborPress release's migration head "
+                    f"({schema.state}: {schema.detail}). "
+                    "Run 'arborpress db upgrade' before starting."
+                )
             try:
                 caps = await detect_capabilities(get_engine())
                 set_capabilities(caps)

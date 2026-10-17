@@ -44,7 +44,7 @@ fi
 
 # ── 3. Datenbankmigrationen anwenden ────────────────────────────────
 echo "[arborpress] Führe Datenbankmigrationen aus …"
-arborpress db migrate
+arborpress db upgrade
 
 # ── 4. Server starten ────────────────────────────────────────────────
 WORKERS="${ARBORPRESS_WORKERS:-2}"

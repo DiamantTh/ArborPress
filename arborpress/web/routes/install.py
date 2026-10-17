@@ -118,20 +118,24 @@ async def install_submit():
 
     # ── Run installation ────────────────────────────────────────────────────────────
     try:
-        import arborpress.models  # noqa: F401 – register models
-        from arborpress.core.db import create_all_tables, get_db_session
-        from arborpress.core.site_settings import save_section
-        from arborpress.models.user import User
         from sqlalchemy import func, select
 
-        # 1. Create DB schema
-        await create_all_tables()
+        import arborpress.models  # noqa: F401 – register models
+        from arborpress.core.db import get_db_session
+        from arborpress.core.migrations import upgrade_database
+        from arborpress.core.site_settings import save_section
+        from arborpress.models.user import User
+
+        # 1. Create or upgrade the schema only through the controlled Alembic API.
+        await upgrade_database()
 
         # 2. Reserve no account yet. The install token grants a short-lived
         # enrollment ceremony; the identity and admin role are created only
         # after the first WebAuthn assertion proves user verification.
         async for db in get_db_session():
-            result = await db.execute(select(User).where(func.lower(User.username) == admin_user.lower()))
+            result = await db.execute(
+                select(User).where(func.lower(User.username) == admin_user.lower())
+            )
             if result.scalar_one_or_none() is not None:
                 return await render_template(
                     "install.html",

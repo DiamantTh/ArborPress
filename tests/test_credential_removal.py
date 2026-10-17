@@ -7,8 +7,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import func, select, text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from arborpress.auth.policy import (
     credential_removal_decision,
@@ -817,45 +817,3 @@ async def test_concurrent_totp_removals_cannot_remove_both_remaining_devices(tes
     async with factory() as db:
         remaining = await usable_totp_device_ids(db, user_id)
         assert len(remaining) == 1
-
-
-@pytest.mark.asyncio
-async def test_stepup_grant_schema_migration_preserves_existing_rows():
-    from arborpress.core.db import _add_column_if_missing
-
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(text(
-                "CREATE TABLE auth_stepup_grants ("
-                "id VARCHAR(36) PRIMARY KEY, user_id VARCHAR(36) NOT NULL, "
-                "session_id VARCHAR(36) NOT NULL, action VARCHAR(48) NOT NULL, "
-                "target VARCHAR(512) NOT NULL, created_at DATETIME NOT NULL, "
-                "expires_at DATETIME NOT NULL, consumed_at DATETIME)"
-            ))
-            await conn.execute(text(
-                "INSERT INTO auth_stepup_grants "
-                "(id,user_id,session_id,action,target,created_at,expires_at) "
-                "VALUES ('old','user','session','remove_totp_credential','target',"
-                "CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)"
-            ))
-            await _add_column_if_missing(
-                conn, "auth_stepup_grants", "auth_method", "VARCHAR(32) NOT NULL DEFAULT 'unknown'"
-            )
-            await _add_column_if_missing(
-                conn, "auth_stepup_grants", "assurance_level",
-                "VARCHAR(32) NOT NULL DEFAULT 'unknown'",
-            )
-            await _add_column_if_missing(
-                conn, "auth_stepup_grants", "confirming_credential_id", "VARCHAR(36)"
-            )
-            await _add_column_if_missing(
-                conn, "auth_stepup_grants", "confirming_mfa_device_id", "VARCHAR(36)"
-            )
-            row = (await conn.execute(text(
-                "SELECT id, auth_method, assurance_level, confirming_credential_id, "
-                "confirming_mfa_device_id FROM auth_stepup_grants WHERE id='old'"
-            ))).one()
-            assert row == ("old", "unknown", "unknown", None, None)
-    finally:
-        await engine.dispose()
