@@ -5,19 +5,22 @@
  * Verwendung:
  *   npm run build:editor
  */
-import { resolve } from 'path'
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
+
+const frontendRoot = fileURLToPath(new URL('.', import.meta.url))
 
 export default defineConfig({
   build: {
     lib: {
       // Mehrere Editor-Adapter-Bundles über rollupOptions.input
-      entry: resolve(__dirname, 'src/ap-editor/tiptap/index.ts'),
+      entry: resolve(frontendRoot, 'src/ap-editor/tiptap/index.ts'),
       name: 'ArborPressTiptap',
       formats: ['iife'],
       fileName: () => 'tiptap.js',
     },
-    outDir: resolve(__dirname, '../arborpress/static/js/editor-adapters'),
+    outDir: resolve(frontendRoot, '../arborpress/static/js/editor-adapters'),
     emptyOutDir: false,
     rollupOptions: {
       // Kein window.ArborPressEditor als Extern – wir rufen es zur Laufzeit auf
@@ -33,7 +36,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '$lib': resolve(__dirname, 'src/lib'),
+      '$lib': resolve(frontendRoot, 'src/lib'),
     },
   },
 })

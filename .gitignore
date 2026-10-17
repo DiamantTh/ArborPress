@@ -36,9 +36,8 @@ config/.installed
 *.log
 logs/
 
-# Frontend Build-Output
+# Frontend Build-Output (generated package assets are ignored by the root dist/ rule)
 frontend/.svelte-kit/
-frontend/build/
 node_modules/
 frontend/node_modules/
 
