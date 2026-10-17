@@ -69,6 +69,22 @@ def _install_asset_stub(app, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_packaged_public_and_webauthn_entries_are_served_by_quart(client):
+    from arborpress.web.assets import AssetResolver
+
+    resolver = AssetResolver()
+    for entry in ("public", "webauthn"):
+        bundle = resolver.resolve(entry)
+        response = await client.get(f"/static/{bundle.javascript}")
+        assert response.status_code == 200
+        assert await response.get_data()
+        for stylesheet in bundle.stylesheets:
+            css_response = await client.get(f"/static/{stylesheet}")
+            assert css_response.status_code == 200
+            assert await css_response.get_data()
+
+
+@pytest.mark.asyncio
 async def test_public_index_is_server_rendered_and_preserves_filtered_pagination(
     test_engine, client, app, monkeypatch
 ):

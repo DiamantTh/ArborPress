@@ -30,6 +30,7 @@ jobs:
       - name: Check and build browser assets
         run: |
           npm run check --prefix frontend
+          npm test --prefix frontend
           npm run build --prefix frontend
           npm run build:editor --prefix frontend
           test -f arborpress/static/dist/.vite/manifest.json

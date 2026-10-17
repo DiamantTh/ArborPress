@@ -21,12 +21,22 @@ npm run build --prefix frontend
 npm run build:editor --prefix frontend
 ```
 
-`npm run build` emits a browser-only, fingerprinted bundle for the logical
-`webauthn` entry, plus Vite's manifest, under
+`npm run build` emits browser-only, fingerprinted bundles for the logical
+`public` and `webauthn` entries, plus Vite's manifest, under
 `arborpress/static/dist/`. The manifest is at
 `arborpress/static/dist/.vite/manifest.json`. The existing TipTap editor adapter
 continues to build separately to `arborpress/static/js/editor-adapters/tiptap.js`
 because the current administration template loads that adapter directly.
+
+Public routes remain Quart routes, and Jinja returns complete pages before any
+browser bundle runs. Index, article, page, archive, search, profile, navigation,
+and the ordinary comment form are usable without JavaScript. The public entry
+enhances optional comment quoting on article pages and explains that boundary to
+no-JavaScript visitors. The login page is also server-rendered; its WebAuthn
+action is enabled only after the `webauthn` entry mounts, while SSO, recovery,
+and any configured break-glass form remain ordinary HTML navigation or forms.
+Configured third-party CAPTCHA widgets retain their existing provider-specific
+browser requirements.
 
 For a development rebuild on source changes, run this in one terminal:
 
@@ -59,10 +69,11 @@ use it when a page is migrated to an enhancement bundle:
 
 The resolver checks manifest paths remain inside the packaged `dist/` directory
 and rejects missing or malformed assets. A source checkout without a frontend
-build reports the exact build command when a template requests an entry. Public
-and administration entries will be added as those pages are migrated; their
-current routes and scripts are intentionally unchanged in this
-build-foundation phase.
+build reports the exact build command when a template requests an entry. Jinja
+loads only the bundle needed by a page, and the manifest—not a hard-coded
+fingerprint—selects its files. Public content and authentication policy stay
+server-side; browser code receives only the small values needed for an
+interaction.
 
 For data passed from Jinja to a Svelte island, use `data-*` attributes for small
 primitive values and Jinja's `tojson` filter in a non-executable

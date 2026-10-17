@@ -3,25 +3,37 @@
 {% set noindex = true %}
 {% block body_class %}auth-page{% endblock %}
 
+{% block head %}
+  {% set webauthn_assets = vite_asset('webauthn') %}
+  {% for stylesheet in webauthn_assets.stylesheets %}
+  <link rel="stylesheet" href="{{ url_for('static', filename=stylesheet) }}">
+  {% endfor %}
+{% endblock %}
+
 {% block content %}
 <div class="auth-box">
   <h1>{{ _('Anmelden') }}</h1>
 
-  <p class="auth-box__hint">
-    {{ _('Authentifizierung mit Sicherheitsschlüssel oder Passkey (WebAuthn).') }}
-  </p>
-
-  {# §2 WebAuthn – primärer Auth-Pfad #}
-  <form id="login-form" class="auth-form">
+  <section class="auth-form" aria-labelledby="webauthn-login-heading"
+           data-ap-webauthn-login data-success-url="{{ url_for('admin.dashboard') }}">
+    <h2 id="webauthn-login-heading">{{ _('Mit Sicherheitsschlüssel anmelden') }}</h2>
+    <p class="auth-box__hint">
+      {{ _('Gib zuerst deinen Benutzernamen oder deine E-Mail-Adresse ein. Danach wird nur ein für dieses Konto registrierter Sicherheitsschlüssel angeboten.') }}
+    </p>
     <div class="form-group">
       <label for="user_name">{{ _('Benutzername oder E-Mail') }}</label>
       <input type="text" id="user_name" name="identifier" autocomplete="username"
              autofocus required maxlength="64">
     </div>
-    <button type="submit" class="btn btn--primary" id="login-btn">
+    <p class="auth-box__hint" id="webauthn-javascript-note">
+      {{ _('Für die Anmeldung mit einem Sicherheitsschlüssel oder Passkey ist Browser-JavaScript erforderlich. Ohne JavaScript kannst du die angebotenen SSO- oder Notfall-Anmeldewege nutzen.') }}
+    </p>
+    <button type="button" class="btn btn--primary" id="login-btn"
+            aria-describedby="webauthn-javascript-note" disabled>
       {{ _('Mit Sicherheitsschlüssel anmelden') }}
     </button>
-  </form>
+    <div data-ap-webauthn-feedback></div>
+  </section>
 
   {% if sso_providers %}
   <div class="auth-box__alt" style="margin-top: 1rem;">
@@ -67,6 +79,6 @@
 {% endblock %}
 
 {% block scripts %}
-{# §9 / §10: JS-Modul lokal, kein CDN #}
-<script type="module" src="{{ url_for('static', filename='js/webauthn-login.js') }}"></script>
+{% set webauthn_assets = vite_asset('webauthn') %}
+<script type="module" src="{{ url_for('static', filename=webauthn_assets.javascript) }}"></script>
 {% endblock %}
