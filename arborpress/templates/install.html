@@ -10,7 +10,7 @@
 
   <p class="auth-box__hint">
     Gib den Installations-Token ein, der beim ersten Start in
-    <code>config/install.token</code> abgelegt wurde, und fülle die
+    <code>instance/config/install.token</code> unter dem gewählten Prefix abgelegt wurde, und fülle die
     Stammdaten aus.
   </p>
 
@@ -30,9 +30,9 @@
         <label for="token">Token <span aria-hidden="true">*</span></label>
         <input type="password" id="token" name="token"
                required autocomplete="off" autofocus
-               placeholder="Inhalt von config/install.token">
+               placeholder="Inhalt von instance/config/install.token">
         <small>Den Token findest du auf dem Server in der Datei
-          <code>config/install.token</code>.</small>
+          <code>instance/config/install.token</code> unter dem gewählten Prefix.</small>
       </div>
     </section>
 

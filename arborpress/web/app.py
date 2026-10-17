@@ -10,6 +10,7 @@ from quart import Quart
 from arborpress.core.config import get_settings
 from arborpress.logging.config import setup_logging
 from arborpress.plugins.registry import get_registry
+from arborpress.runtime.paths import ensure_instance_layout, get_runtime_paths
 from arborpress.web.middleware import ReverseProxyMiddleware
 from arborpress.web.routes.api import api_admin_bp, api_v1_bp
 from arborpress.web.routes.auth import auth_bp
@@ -25,6 +26,12 @@ _PKG_ROOT = Path(__file__).parent.parent
 
 
 def create_app() -> Quart:
+    # The caller (CLI, ASGI host, or embedding application) must have selected
+    # this process's prefix before application construction. Resolve it before
+    # reading config or initializing any instance-owned subsystem; never infer
+    # an installed instance from the process working directory.
+    paths = get_runtime_paths()
+    ensure_instance_layout(paths)
     cfg = get_settings()
     setup_logging(cfg.logging)
 
@@ -209,7 +216,7 @@ def create_app() -> Quart:
                 and _session.get("install_enrollment")
             )
             or path.startswith("/static/")
-            or path == "/health"
+            or path == "/_health"
             or path == "/favicon.ico"
         ):
             return None
@@ -309,11 +316,8 @@ def create_app() -> Quart:
         from arborpress.core.db import get_engine
         from arborpress.core.db_capabilities import detect_capabilities, set_capabilities
         from arborpress.core.scheduler import run_scheduler
-        from arborpress.runtime.paths import ensure_instance_layout, get_runtime_paths
-
         # §14 Installations-Token generieren wenn noch nicht installiert
         if not is_installed():
-            ensure_instance_layout(get_runtime_paths())
             token_file = install_token_path()
             if not token_file.exists():
                 token = _sec.token_urlsafe(32)

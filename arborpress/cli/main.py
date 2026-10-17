@@ -198,6 +198,7 @@ def db_upgrade() -> None:
     from arborpress.core.migrations import upgrade_database
 
     try:
+        ensure_instance_layout(get_runtime_paths())
         status = asyncio.run(upgrade_database())
     except Exception as exc:
         typer.echo(f"Database upgrade failed: {exc}", err=True)

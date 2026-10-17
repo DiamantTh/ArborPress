@@ -1,7 +1,7 @@
 """Web-based setup wizard (§14 install wizard).
 
 Flow:
-  1. First start → arborpress writes config/install.token
+  1. First start → arborpress writes PREFIX/instance/config/install.token
   2. Browser    → GET  /install    – form (token + base data)
   3. Submit     → POST /install    – verify token, create DB, create admin,
                                       write marker, delete token
@@ -14,8 +14,9 @@ Token protection:
   Timing-safe comparison (secrets.compare_digest).
 
 After installation:
-  • config/.installed  is created → all further requests to /install → 404
-  • config/install.token is deleted, after the initial WebAuthn credential is verified
+  • PREFIX/instance/config/.installed is created → /install returns 404
+  • PREFIX/instance/config/install.token is deleted after the initial WebAuthn
+    credential is verified
 """
 
 from __future__ import annotations
