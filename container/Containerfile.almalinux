@@ -104,12 +104,13 @@ LABEL org.opencontainers.image.title="ArborPress" \
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/srv/arborpress/app/bin:/srv/arborpress/app/runtime/venv/bin:/srv/arborpress/app/runtime/python314/bin:$PATH" \
+    HOME="/home/arborpress" \
+    PATH="/home/arborpress/arborpress/app/bin:/home/arborpress/arborpress/app/runtime/venv/bin:/home/arborpress/arborpress/app/runtime/python314/bin:$PATH" \
     ARBORPRESS_WEB__HOST="0.0.0.0" \
     ARBORPRESS_WEB__PORT="8066" \
     ARBORPRESS_WEB__TRUSTED_PROXIES="1" \
     ARBORPRESS_LOGGING__LEVEL="INFO" \
-    ARBORPRESS_PREFIX="/srv/arborpress"
+    ARBORPRESS_PREFIX="/home/arborpress/arborpress"
 
 USER root
 
@@ -127,28 +128,32 @@ RUN dnf install -y \
         libjpeg-turbo \
         libpng \
         nmap-ncat \
+        shadow-utils \
     && dnf clean all \
-    && install -d -m 0700 -o 1001 -g 0 \
-        /srv/arborpress \
-        /srv/arborpress/instance \
-    && install -d -m 0755 /srv/arborpress/app/bin /srv/arborpress/app/runtime \
-    && ln -s /opt/venv /srv/arborpress/app/runtime/venv \
-    && ln -s /opt/python314 /srv/arborpress/app/runtime/python314 \
-    && ln -s ../runtime/venv/bin/arborpress /srv/arborpress/app/bin/arborpress
+    && groupadd -g 1001 arborpress \
+    && useradd -u 1001 -g 1001 -d /home/arborpress -s /sbin/nologin -M arborpress \
+    && install -d -m 0700 -o arborpress -g arborpress \
+        /home/arborpress \
+        /home/arborpress/arborpress \
+        /home/arborpress/arborpress/instance \
+    && install -d -m 0755 /home/arborpress/arborpress/app/bin /home/arborpress/arborpress/app/runtime \
+    && ln -s /opt/venv /home/arborpress/arborpress/app/runtime/venv \
+    && ln -s /opt/python314 /home/arborpress/arborpress/app/runtime/python314 \
+    && ln -s ../runtime/venv/bin/arborpress /home/arborpress/arborpress/app/bin/arborpress
 
 # The process working directory is not an instance selector.
 WORKDIR /
 
-COPY --from=builder --chown=1001:0 /opt/python314 /opt/python314
-COPY --from=builder --chown=1001:0 /opt/venv /opt/venv
+COPY --from=builder --chown=1001:1001 /opt/python314 /opt/python314
+COPY --from=builder --chown=1001:1001 /opt/venv /opt/venv
 RUN ! command -v node && ! command -v npm && ! command -v npx && ! command -v poetry
 
-COPY --chown=1001:0 container/entrypoint.sh /opt/app-root/entrypoint.sh
+COPY --chown=1001:1001 container/entrypoint.sh /opt/app-root/entrypoint.sh
 RUN chmod +x /opt/app-root/entrypoint.sh
 
-USER 1001
+USER arborpress
 
-VOLUME ["/srv/arborpress/instance"]
+VOLUME ["/home/arborpress/arborpress/instance"]
 
 EXPOSE 8066
 

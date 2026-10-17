@@ -39,6 +39,20 @@ release downloads, switching, or rollback.
 
 ## Choosing a prefix
 
+The normal recommended installation is under the executing user's home:
+
+```text
+~/arborpress/
+├── arborpress
+├── app/
+└── instance/
+```
+
+Here `~` means that user's home directory. ArborPress is not tied to a
+system-wide location such as `/srv`, `/opt`, or `/var/lib`; an operator may
+still explicitly choose another suitable prefix. The current working directory
+never selects the instance.
+
 The prefix source priority is:
 
 1. global CLI `--prefix`;
@@ -52,8 +66,8 @@ moment it is supplied, and the stored prefix is absolute and canonical (an
 existing symlink is resolved once). Later `chdir()` calls do not change it.
 
 ```sh
-poetry run arborpress --prefix /srv/arborpress-a paths
-ARBORPRESS_PREFIX=/srv/arborpress-a poetry run arborpress paths --json
+poetry run arborpress --prefix ~/arborpress-a paths
+ARBORPRESS_PREFIX=~/arborpress-a poetry run arborpress paths --json
 ```
 
 The CLI prefix wins if both `--prefix` and `ARBORPRESS_PREFIX` are set. The
@@ -127,9 +141,9 @@ schema changes explicitly with the matching prefix, then start the web
 process:
 
 ```sh
-arborpress --prefix /srv/arborpress-a db upgrade
-arborpress --prefix /srv/arborpress-a db check
-arborpress --prefix /srv/arborpress-a serve --workers 2
+arborpress --prefix ~/arborpress-a db upgrade
+arborpress --prefix ~/arborpress-a db check
+arborpress --prefix ~/arborpress-a serve --workers 2
 ```
 
 Each process owns one effective prefix. Multiple sites therefore use separate
@@ -141,24 +155,30 @@ instance. A custom config file does not relocate those paths.
 
 ## Container runtime
 
-The Compose examples set `ARBORPRESS_PREFIX=/srv/arborpress`. Their only
-application-state volume is mounted at `/srv/arborpress/instance`. In the
-container image, `app/bin/arborpress` is the CLI entry and `app/runtime/`
-exposes the image-installed virtual environment and CPython; these paths are
-image-owned symlinks to the runtime layers and are replaced with the image,
-not persisted as state. The entrypoint passes the same prefix to one
-`db upgrade` invocation before starting Hypercorn. A failed migration exits
-before the web server starts. Container logging remains on stdout/stderr by
-default; enabling relative file logging places files under
+The Compose examples run as the non-root `arborpress` user with home
+`/home/arborpress` and set the absolute container prefix to
+`/home/arborpress/arborpress` (the container equivalent of `~/arborpress`).
+The absolute form is deliberate: environment variables and exec-form
+entrypoints do not promise shell tilde expansion. The only application-state
+volume is mounted at `/home/arborpress/arborpress/instance`; a host bind-mount
+may store that volume anywhere the operator chooses and does not define the
+container prefix. In the image, `app/bin/arborpress` is the CLI entry and
+`app/runtime/` exposes the image-installed virtual environment and CPython;
+these paths are image-owned symlinks to runtime layers and are replaced with
+the image, not persisted as state. The entrypoint passes the same explicit
+prefix to one `db upgrade` invocation before starting Hypercorn. A failed
+migration exits before the web server starts. Container logging remains on
+stdout/stderr by default; enabling relative file logging places files under
 `instance/var/log/`.
 
 The runtime image contains the installed ArborPress wheel and its runtime
 dependencies. Poetry is used only in the image build stage, and Node is not a
 runtime requirement. The Dockerfile working directory is `/` and does not
 select an instance. A container config file, when used instead of environment
-settings, belongs at `/srv/arborpress/instance/config/config.toml`; the CLI's
-explicit `--config` option overrides only the file for that command and does
-not relocate the instance.
+settings, belongs at
+`/home/arborpress/arborpress/instance/config/config.toml`; the CLI's explicit
+`--config` option overrides only the file for that command and does not
+relocate the instance.
 
 `app/releases/<version>/` and `app/current` are reserved for a future release
 layout. No release download, pointer switching, update, or rollback behavior

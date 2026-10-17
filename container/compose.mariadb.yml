@@ -16,8 +16,8 @@
 # Ein Wechsel zwischen AlmaLinux und Ubuntu auf einer laufenden Instanz
 # wird AUSDRÜCKLICH NICHT empfohlen:
 #
-# 1) INSTANCE-VOLUME: beide Varianten persistieren /srv/arborpress/instance;
-#    die Container-UID/GID-Zuordnung ist unterschiedlich.
+# 1) INSTANCE-VOLUME: beide Varianten persistieren
+#    /home/arborpress/arborpress/instance; beide Images verwenden 1001:1001.
 #
 # 2) MARIADB INNODB (kritisch!):
 #    InnoDB-Tablespaces und Systemtabellen sind an die libc des jeweiligen
@@ -40,7 +40,7 @@ services:
     restart: unless-stopped
     env_file: ../.env
     environment:
-      ARBORPRESS_PREFIX: /srv/arborpress
+      ARBORPRESS_PREFIX: /home/arborpress/arborpress
       ARBORPRESS_DB__URL: "mysql+aiomysql://${MARIADB_USER}:${MARIADB_PASSWORD}@db:3306/${MARIADB_DATABASE}"
       DB_HOST: db
       DB_PORT: "3306"
@@ -50,7 +50,7 @@ services:
     ports:
       - "${ARBORPRESS_PORT:-8066}:8066"
     volumes:
-      - arborpress_instance:/srv/arborpress/instance
+      - arborpress_instance:/home/arborpress/arborpress/instance
     healthcheck:
       test:
         - "CMD"

@@ -6,7 +6,7 @@ set -e
 
 # One explicit prefix identifies this container instance. Do not use WORKDIR as
 # an implicit instance selector; both commands receive the same prefix.
-ARBORPRESS_PREFIX="${ARBORPRESS_PREFIX:-/srv/arborpress}"
+ARBORPRESS_PREFIX="${ARBORPRESS_PREFIX:-/home/arborpress/arborpress}"
 export ARBORPRESS_PREFIX
 
 # ── 1. Pflicht-Umgebungsvariable prüfen ──────────────────────────────
