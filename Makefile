@@ -30,10 +30,9 @@ frontend-install: ## Gelockte Frontend-Abhängigkeiten installieren (Node 24)
 frontend-check: ## Svelte- und TypeScript-Prüfung ausführen
 	npm run check --prefix frontend
 
-frontend-build: frontend-install ## Fingerprinted Browserassets und TipTap-Adapter bauen
+frontend-build: frontend-install ## Fingerprinted Browserassets für Public, Admin und Editor bauen
 	$(MAKE) frontend-check
 	npm run build --prefix frontend
-	npm run build:editor --prefix frontend
 
 db-upgrade: ## Datenbank der PREFIX-Instanz auf neueste Migration bringen
 	poetry run arborpress --prefix "$(PREFIX)" db upgrade

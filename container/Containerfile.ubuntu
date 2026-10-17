@@ -45,8 +45,7 @@ WORKDIR /build
 COPY frontend/ ./frontend/
 COPY arborpress/static/ ./arborpress/static/
 RUN npm run check --prefix frontend \
-    && npm run build --prefix frontend \
-    && npm run build:editor --prefix frontend
+    && npm run build --prefix frontend
 
 # ── Stage 2: Python builder ────────────────────────────────────────────
 FROM ubuntu:24.04 AS builder
@@ -112,8 +111,6 @@ ARG PIP_EXTRAS=""
 COPY pyproject.toml poetry.lock README.md LICENSE ./
 COPY arborpress/ ./arborpress/
 COPY --from=frontend-builder /build/arborpress/static/dist/ ./arborpress/static/dist/
-COPY --from=frontend-builder /build/arborpress/static/js/editor-adapters/tiptap.js ./arborpress/static/js/editor-adapters/tiptap.js
-COPY --from=frontend-builder /build/arborpress/static/js/editor-adapters/tiptap.js.map ./arborpress/static/js/editor-adapters/tiptap.js.map
 RUN set -eu; \
     set -- --only main --extras cache-redis; \
     set -f; \

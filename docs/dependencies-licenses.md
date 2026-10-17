@@ -55,9 +55,9 @@ Angaben zu Lizenzen basieren auf den veröffentlichten Paketmetadaten bzw. den v
 | tslib | Dev | 0BSD | https://www.npmjs.com/package/tslib | https://github.com/microsoft/tslib |
 | typescript | Dev | Apache-2.0 | https://www.npmjs.com/package/typescript | https://github.com/microsoft/TypeScript |
 | vite | Dev | MIT | https://www.npmjs.com/package/vite | https://github.com/vitejs/vite |
-| @tiptap/core | Runtime (editor-adapters/tiptap) | MIT | https://www.npmjs.com/package/@tiptap/core | https://github.com/ueberdosis/tiptap |
-| @tiptap/starter-kit | Runtime (editor-adapters/tiptap) | MIT | https://www.npmjs.com/package/@tiptap/starter-kit | https://github.com/ueberdosis/tiptap |
-| tiptap-markdown | Runtime (editor-adapters/tiptap) | MIT | https://www.npmjs.com/package/tiptap-markdown | https://github.com/aguingand/tiptap-markdown |
+| @tiptap/core | Runtime browser bundle (manifest entry `editor-tiptap`) | MIT | https://www.npmjs.com/package/@tiptap/core | https://github.com/ueberdosis/tiptap |
+| @tiptap/starter-kit | Runtime browser bundle (manifest entry `editor-tiptap`) | MIT | https://www.npmjs.com/package/@tiptap/starter-kit | https://github.com/ueberdosis/tiptap |
+| tiptap-markdown | Runtime browser bundle (manifest entry `editor-tiptap`) | MIT | https://www.npmjs.com/package/tiptap-markdown | https://github.com/aguingand/tiptap-markdown |
 
 ## Lizenz-Kompatibilitätsmatrix
 

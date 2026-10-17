@@ -9,7 +9,6 @@
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build",
-    "build:editor": "vite build --config vite.config.editor.js",
     "check": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts"
   },

@@ -43,7 +43,7 @@ table_of_contents = false
 
 [assets]
 css   = ["css/style.css"]     # Wird zusätzlich zu style.css eingebunden
-js    = ["js/app.js"]
+js    = []                    # Reserviertes Feld; ArborPress lädt diese Scripts nicht automatisch
 fonts = []
 
 [overrides]
@@ -59,6 +59,9 @@ templates = ["post.html", "index.html"]
   werden von eigenen Themes mit gleicher ID überschrieben.
 - **CSS-Einbindung**: `static/css/style.css` wird immer automatisch als Haupt-CSS geladen,
   sofern die Datei existiert.
+- **JavaScript**: Das Legacy-Feld `assets.js` wird derzeit nicht automatisch eingebunden.
+  Theme- und Plugin-Scripts werden insbesondere nicht in Admin-Seiten ausgeführt.
+  Ein kontrollierter Theme-Vertrag folgt in einer späteren Architekturphase.
 - **Aktivierung**: Nach dem Hinzufügen eines Themes den Server neu starten.
   Dann im Admin unter **Einstellungen → Theme** auswählen und speichern.
 

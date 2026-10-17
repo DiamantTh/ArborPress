@@ -17,16 +17,18 @@ the repository root:
 ```sh
 npm ci --prefix frontend
 npm run check --prefix frontend
+npm test --prefix frontend
 npm run build --prefix frontend
-npm run build:editor --prefix frontend
 ```
 
 `npm run build` emits browser-only, fingerprinted bundles for the logical
-`public` and `webauthn` entries, plus Vite's manifest, under
+`site`, `public`, `webauthn`, `admin`, and `editor-tiptap` entries, plus Vite's manifest, under
 `arborpress/static/dist/`. The manifest is at
-`arborpress/static/dist/.vite/manifest.json`. The existing TipTap editor adapter
-continues to build separately to `arborpress/static/js/editor-adapters/tiptap.js`
-because the current administration template loads that adapter directly.
+`arborpress/static/dist/.vite/manifest.json`. TipTap is a separately loaded,
+fingerprinted entry, so its larger code is sent only on post-edit pages that
+select that adapter. The smaller built-in and legacy-compatible editor adapters
+remain package static files and the editor textarea remains the no-JavaScript
+fallback.
 
 Public routes remain Quart routes, and Jinja returns complete pages before any
 browser bundle runs. Index, article, page, archive, search, profile, navigation,
@@ -38,7 +40,24 @@ and any configured break-glass form remain ordinary HTML navigation or forms.
 Configured third-party CAPTCHA widgets retain their existing provider-specific
 browser requirements.
 
-For a development rebuild on source changes, run this in one terminal:
+The Admin is also Quart/Jinja SSR, not a client-side application. Its navigation,
+lists, settings, post forms, and security forms are rendered by the server; each
+HTML mutation form contains its CSRF field before JavaScript runs. The fingerprinted
+`admin` entry enhances the captcha question editor, password tools, session/action
+confirmation, media URL copying, plugin step-up actions, and existing security
+step-up flows. Without JavaScript, settings and content forms remain ordinary
+submittable forms; the two browser-only tools explain their limitation and retain
+their CLI/server-side alternatives where applicable.
+
+The Admin receives structured captcha data through a non-executable
+`application/json` element rendered with Jinja's `tojson`. The Svelte entry uses
+an explicit set of known mount points; it does not select components dynamically
+from arbitrary DOM-provided names. The `editor-tiptap` entry is loaded only when
+the configured post editor is TipTap. Its original Markdown textarea remains the
+no-JavaScript and initialization-failure fallback.
+
+For a development rebuild on source changes (including Public and Admin
+entries), run this in one terminal:
 
 ```sh
 npm run dev --prefix frontend
@@ -48,23 +67,28 @@ Then start Quart with the desired explicit development prefix in another
 terminal. The Vite watch build writes to the package static directory, which
 Quart serves; no Vite development server or proxy is needed.
 
-`make build` performs the locked install, checks, both browser builds, and then
+`make build` performs the locked install, checks, the browser build, and then
 builds the Python wheel and sdist. The container build uses a Node 24 build stage
 and copies only compiled assets into the Python package before packaging. The
 final runtime image remains Python-only.
 
+The old unbundled site helper and Admin security helper have been removed after
+their behavior moved into Vite entries or server-rendered form markup. Theme
+manifests may still contain a legacy `assets.js` field, but ArborPress does not
+automatically execute theme or plugin scripts in Admin pages; the supported
+theme contract remains a later architecture phase.
+
 ## Jinja asset lookup
 
-The Python `vite_asset` Jinja global resolves a logical entry from the packaged
-Vite manifest. It returns package-static paths, not external URLs. A template can
-use it when a page is migrated to an enhancement bundle:
+The shared Jinja macros in `templates/macros/assets.html` resolve a logical
+entry from the packaged Vite manifest. They emit same-origin stylesheet and
+module-script tags; templates do not duplicate manifest traversal or hard-code
+fingerprinted names:
 
 ```jinja
-{% set bundle = vite_asset("webauthn") %}
-{% for stylesheet in bundle.stylesheets %}
-  <link rel="stylesheet" href="{{ url_for('static', filename=stylesheet) }}">
-{% endfor %}
-<script type="module" src="{{ url_for('static', filename=bundle.javascript) }}"></script>
+{% from "macros/assets.html" import vite_styles, vite_script with context %}
+{{ vite_styles("admin") }}
+{{ vite_script("admin") }}
 ```
 
 The resolver checks manifest paths remain inside the packaged `dist/` directory

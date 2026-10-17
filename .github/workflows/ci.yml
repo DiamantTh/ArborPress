@@ -32,7 +32,6 @@ jobs:
           npm run check --prefix frontend
           npm test --prefix frontend
           npm run build --prefix frontend
-          npm run build:editor --prefix frontend
           test -f arborpress/static/dist/.vite/manifest.json
 
       - name: Publish compiled package assets for the Python matrix
@@ -41,8 +40,6 @@ jobs:
           name: arborpress-browser-assets
           path: |
             arborpress/static/dist/
-            arborpress/static/js/editor-adapters/tiptap.js
-            arborpress/static/js/editor-adapters/tiptap.js.map
           include-hidden-files: true
           if-no-files-found: error
 
@@ -141,6 +138,8 @@ jobs:
 
           bundle = AssetResolver().resolve("webauthn")
           assert bundle.javascript.endswith(".js") and bundle.stylesheets
+          for entry in ("site", "public", "admin", "editor-tiptap"):
+              assert AssetResolver().resolve(entry).javascript.endswith(".js")
           assert arborpress.__version__
           assert importlib.util.find_spec("poetry") is None
           assert shutil.which("node") is None
