@@ -89,7 +89,7 @@ Sonderregel fuer kritische Kernpakete:
 
 Release-Artefakte:
 - `pyproject.toml` mit stabilen Ranges
-- `requirements-release.txt` mit validierten exakten Pins
+- `poetry.lock` mit reproduzierbarer Dependency-Auflösung
 
 ## 4. Entscheidungsmatrix: 0.2.0 vs 1.0.0
 
