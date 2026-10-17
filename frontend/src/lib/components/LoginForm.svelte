@@ -9,9 +9,10 @@
   let error = ''
 
   onMount(() => {
+    const form = loginRoot.querySelector<HTMLFormElement>('[data-ap-webauthn-form]')
     const identifier = loginRoot.querySelector<HTMLInputElement>('#user_name')
     const button = loginRoot.querySelector<HTMLButtonElement>('#login-btn')
-    if (!identifier || !button) return
+    if (!form || !identifier || !button) return
 
     if (!browserSupportsWebAuthn()) {
       error = 'Dieser Browser unterstützt WebAuthn nicht.'
@@ -20,7 +21,8 @@
 
     button.disabled = false
 
-    const handleLogin = async () => {
+    const handleLogin = async (event: SubmitEvent) => {
+      event.preventDefault()
       if (!identifier.reportValidity()) return
       status = 'Passkey wird abgefragt …'
       error = ''
@@ -60,8 +62,8 @@
       }
     }
 
-    button.addEventListener('click', handleLogin)
-    return () => button.removeEventListener('click', handleLogin)
+    form.addEventListener('submit', handleLogin)
+    return () => form.removeEventListener('submit', handleLogin)
   })
 </script>
 

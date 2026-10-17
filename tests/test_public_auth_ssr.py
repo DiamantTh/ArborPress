@@ -31,7 +31,9 @@ async def test_login_is_jinja_rendered_and_webauthn_is_only_an_enhancement(
     assert "Benutzername oder E-Mail" in html
     assert "Sicherheitsschlüssel oder Passkey" in html
     assert "Browser-JavaScript erforderlich" in html
-    assert 'type="button"' in html and "disabled" in html
+    assert 'form method="get" action="/auth/login"' in html
+    assert 'type="submit"' in html and "disabled" in html
+    assert 'id="user_name" name=' not in html
     assert 'href="/auth/recovery"' in html
     assert "/static/dist/assets/webauthn-a1b2.js" in html
     assert "/static/dist/assets/webauthn-c3d4.css" in html

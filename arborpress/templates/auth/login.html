@@ -20,19 +20,21 @@
     <p class="auth-box__hint">
       {{ _('Gib zuerst deinen Benutzernamen oder deine E-Mail-Adresse ein. Danach wird nur ein für dieses Konto registrierter Sicherheitsschlüssel angeboten.') }}
     </p>
-    <div class="form-group">
-      <label for="user_name">{{ _('Benutzername oder E-Mail') }}</label>
-      <input type="text" id="user_name" name="identifier" autocomplete="username"
-             autofocus required maxlength="64">
-    </div>
-    <p class="auth-box__hint" id="webauthn-javascript-note">
-      {{ _('Für die Anmeldung mit einem Sicherheitsschlüssel oder Passkey ist Browser-JavaScript erforderlich. Ohne JavaScript kannst du die angebotenen SSO- oder Notfall-Anmeldewege nutzen.') }}
-    </p>
-    <button type="button" class="btn btn--primary" id="login-btn"
-            aria-describedby="webauthn-javascript-note" disabled>
-      {{ _('Mit Sicherheitsschlüssel anmelden') }}
-    </button>
-    <div data-ap-webauthn-feedback></div>
+    <form method="get" action="{{ url_for('auth.login_page') }}" data-ap-webauthn-form>
+      <div class="form-group">
+        <label for="user_name">{{ _('Benutzername oder E-Mail') }}</label>
+        <input type="text" id="user_name" autocomplete="username"
+               autofocus required maxlength="64">
+      </div>
+      <p class="auth-box__hint" id="webauthn-javascript-note">
+        {{ _('Für die Anmeldung mit einem Sicherheitsschlüssel oder Passkey ist Browser-JavaScript erforderlich. Ohne JavaScript kannst du die angebotenen SSO- oder Notfall-Anmeldewege nutzen.') }}
+      </p>
+      <button type="submit" class="btn btn--primary" id="login-btn"
+              aria-describedby="webauthn-javascript-note" disabled>
+        {{ _('Mit Sicherheitsschlüssel anmelden') }}
+      </button>
+      <div data-ap-webauthn-feedback></div>
+    </form>
   </section>
 
   {% if sso_providers %}
