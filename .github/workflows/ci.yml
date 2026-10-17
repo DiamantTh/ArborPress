@@ -1,0 +1,77 @@
+name: Python CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.14", "3.15"]
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      # Keep Poetry itself on the supported 3.14 interpreter while testing
+      # ArborPress on each matrix interpreter.
+      - name: Set up Poetry interpreter
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install Poetry
+        run: python -m pip install --disable-pip-version-check "poetry==2.5.1"
+
+      - name: Set up project interpreter
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: poetry
+          cache-dependency-path: poetry.lock
+
+      - name: Create Poetry environment
+        run: poetry env use "$(command -v python)"
+
+      - name: Validate project and lockfile
+        run: poetry check --lock
+
+      - name: Install locked development dependencies
+        run: poetry install --with dev --no-interaction --no-ansi
+
+      - name: Compile Python sources
+        run: poetry run python -m compileall -q arborpress tests
+
+      - name: Run tests
+        run: poetry run pytest tests/ -v
+
+      # These checks currently report pre-existing repository-wide findings.
+      # Keep them visible on both interpreters without making the new CI
+      # workflow permanently red for issues unrelated to the Python baseline.
+      - name: Ruff (existing findings are non-blocking)
+        continue-on-error: true
+        run: poetry run ruff check arborpress/
+
+      - name: mypy (existing findings are non-blocking)
+        continue-on-error: true
+        run: poetry run mypy arborpress/
+
+      - name: Build wheel and source distribution
+        run: poetry build
+
+      - name: Install wheel in a fresh environment and smoke-test CLI
+        shell: bash
+        run: |
+          smoke_venv="${RUNNER_TEMP}/arborpress-wheel-${{ matrix.python-version }}"
+          python -m venv "${smoke_venv}"
+          "${smoke_venv}/bin/python" -m pip install --disable-pip-version-check dist/*.whl
+          "${smoke_venv}/bin/python" -c 'import arborpress, importlib.util; assert arborpress.__version__; assert importlib.util.find_spec("poetry") is None'
+          "${smoke_venv}/bin/arborpress" --help
