@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "arborpress"
@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Arbor Press – small, security-focused blogging platform / mini CMS"
 readme = "README.md"
 requires-python = ">=3.13"
-license = { text = "AGPL-3.0-or-later" }
+license = "AGPL-3.0-or-later"
 authors = [
     { name = "ArborPress Contributors" }
 ]
@@ -120,8 +120,17 @@ all = [
 [project.scripts]
 arborpress = "arborpress.cli.main:app"
 
-[tool.hatch.build.targets.wheel]
-packages = ["arborpress"]
+[tool.poetry]
+packages = [{ include = "arborpress" }]
+include = [
+    { path = "arborpress/**/*.css", format = ["sdist", "wheel"] },
+    { path = "arborpress/**/*.html", format = ["sdist", "wheel"] },
+    { path = "arborpress/**/*.js", format = ["sdist", "wheel"] },
+    { path = "arborpress/**/*.map", format = ["sdist", "wheel"] },
+    { path = "arborpress/**/*.po", format = ["sdist", "wheel"] },
+    { path = "arborpress/**/*.toml", format = ["sdist", "wheel"] },
+    { path = "arborpress/**/*.txt", format = ["sdist", "wheel"] },
+]
 
 [tool.ruff]
 target-version = "py313"
