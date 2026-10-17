@@ -105,12 +105,12 @@ LABEL org.opencontainers.image.title="ArborPress" \
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HOME="/home/arborpress" \
-    PATH="/home/arborpress/arborpress/app/bin:/home/arborpress/arborpress/app/runtime/venv/bin:/home/arborpress/arborpress/app/runtime/python314/bin:$PATH" \
+    PATH="/home/arborpress/app/bin:/home/arborpress/app/runtime/venv/bin:/home/arborpress/app/runtime/python314/bin:$PATH" \
     ARBORPRESS_WEB__HOST="0.0.0.0" \
     ARBORPRESS_WEB__PORT="8066" \
     ARBORPRESS_WEB__TRUSTED_PROXIES="1" \
     ARBORPRESS_LOGGING__LEVEL="INFO" \
-    ARBORPRESS_PREFIX="/home/arborpress/arborpress"
+    ARBORPRESS_PREFIX="/home/arborpress"
 
 USER root
 
@@ -134,12 +134,11 @@ RUN dnf install -y \
     && useradd -u 1001 -g 1001 -d /home/arborpress -s /sbin/nologin -M arborpress \
     && install -d -m 0700 -o arborpress -g arborpress \
         /home/arborpress \
-        /home/arborpress/arborpress \
-        /home/arborpress/arborpress/instance \
-    && install -d -m 0755 /home/arborpress/arborpress/app/bin /home/arborpress/arborpress/app/runtime \
-    && ln -s /opt/venv /home/arborpress/arborpress/app/runtime/venv \
-    && ln -s /opt/python314 /home/arborpress/arborpress/app/runtime/python314 \
-    && ln -s ../runtime/venv/bin/arborpress /home/arborpress/arborpress/app/bin/arborpress
+        /home/arborpress/instance \
+    && install -d -m 0755 /home/arborpress/app/bin /home/arborpress/app/runtime \
+    && ln -s /opt/venv /home/arborpress/app/runtime/venv \
+    && ln -s /opt/python314 /home/arborpress/app/runtime/python314 \
+    && ln -s ../runtime/venv/bin/arborpress /home/arborpress/app/bin/arborpress
 
 # The process working directory is not an instance selector.
 WORKDIR /
@@ -153,7 +152,7 @@ RUN chmod +x /opt/app-root/entrypoint.sh
 
 USER arborpress
 
-VOLUME ["/home/arborpress/arborpress/instance"]
+VOLUME ["/home/arborpress/instance"]
 
 EXPOSE 8066
 

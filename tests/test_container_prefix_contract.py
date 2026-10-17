@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_runtime_images_use_explicit_prefix_and_only_persist_instance_state() -> None:
-    prefix = "/home/arborpress/arborpress"
+    prefix = "/home/arborpress"
     home = "/home/arborpress"
     for name in ("Containerfile.ubuntu", "Containerfile.almalinux"):
         contents = (ROOT / "container" / name).read_text(encoding="utf-8")
@@ -27,6 +27,7 @@ def test_runtime_images_use_explicit_prefix_and_only_persist_instance_state() ->
         assert f'VOLUME ["{prefix}/instance"]' in runtime
         assert "USER arborpress" in runtime
         assert "/srv/arborpress" not in runtime
+        assert "/home/arborpress/arborpress" not in runtime
         assert 'ARG PIP_EXTRAS=""' in contents
         assert 'for extra in $(printf \'%s\' "$PIP_EXTRAS" | tr \',\' \' \')' in contents
         assert "/app/media" not in runtime
@@ -46,9 +47,10 @@ def test_compose_examples_share_one_prefix_and_instance_volume() -> None:
     for compose_file in compose_files:
         contents = compose_file.read_text(encoding="utf-8")
 
-        assert "ARBORPRESS_PREFIX: /home/arborpress/arborpress" in contents
-        assert "arborpress_instance:/home/arborpress/arborpress/instance" in contents
+        assert "ARBORPRESS_PREFIX: /home/arborpress" in contents
+        assert "arborpress_instance:/home/arborpress/instance" in contents
         assert "/srv/arborpress" not in contents
+        assert "/home/arborpress/arborpress" not in contents
         assert "app_media:" not in contents
         assert "app_logs:" not in contents
         assert "/app/media" not in contents
@@ -65,5 +67,6 @@ def test_container_entrypoint_upgrades_then_starts_with_same_prefix() -> None:
     assert server in contents
     assert contents.index(migration) < contents.index(server)
     assert "/data" not in contents
-    assert 'ARBORPRESS_PREFIX="${ARBORPRESS_PREFIX:-/home/arborpress/arborpress}"' in contents
+    assert 'ARBORPRESS_PREFIX="${ARBORPRESS_PREFIX:-/home/arborpress}"' in contents
     assert "/srv/arborpress" not in contents
+    assert "/home/arborpress/arborpress" not in contents

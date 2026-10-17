@@ -18,7 +18,7 @@
 # wird AUSDRÜCKLICH NICHT empfohlen:
 #
 # 1) INSTANCE-VOLUME: beide Varianten persistieren
-#    /home/arborpress/arborpress/instance; beide Images verwenden 1001:1001.
+#    /home/arborpress/instance; beide Images verwenden 1001:1001.
 #
 # 2) POSTGRESQL PGDATA (kritisch!):
 #    PostgreSQL-PGDATA ist an die libc/locale des Container-Images gebunden.
@@ -40,7 +40,7 @@ services:
     restart: unless-stopped
     env_file: ../.env
     environment:
-      ARBORPRESS_PREFIX: /home/arborpress/arborpress
+      ARBORPRESS_PREFIX: /home/arborpress
       ARBORPRESS_DB__URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
       DB_HOST: db
       DB_PORT: "5432"
@@ -50,7 +50,7 @@ services:
     ports:
       - "${ARBORPRESS_PORT:-8066}:8066"
     volumes:
-      - arborpress_instance:/home/arborpress/arborpress/instance
+      - arborpress_instance:/home/arborpress/instance
     healthcheck:
       test:
         - "CMD"

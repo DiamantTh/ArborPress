@@ -157,10 +157,11 @@ instance. A custom config file does not relocate those paths.
 
 The Compose examples run as the non-root `arborpress` user with home
 `/home/arborpress` and set the absolute container prefix to
-`/home/arborpress/arborpress` (the container equivalent of `~/arborpress`).
+`/home/arborpress` (the container equivalent of `~`, since this runtime user's
+home is itself the selected prefix).
 The absolute form is deliberate: environment variables and exec-form
 entrypoints do not promise shell tilde expansion. The only application-state
-volume is mounted at `/home/arborpress/arborpress/instance`; a host bind-mount
+volume is mounted at `/home/arborpress/instance`; a host bind-mount
 may store that volume anywhere the operator chooses and does not define the
 container prefix. In the image, `app/bin/arborpress` is the CLI entry and
 `app/runtime/` exposes the image-installed virtual environment and CPython;
@@ -176,7 +177,7 @@ dependencies. Poetry is used only in the image build stage, and Node is not a
 runtime requirement. The Dockerfile working directory is `/` and does not
 select an instance. A container config file, when used instead of environment
 settings, belongs at
-`/home/arborpress/arborpress/instance/config/config.toml`; the CLI's explicit
+`/home/arborpress/instance/config/config.toml`; the CLI's explicit
 `--config` option overrides only the file for that command and does not
 relocate the instance.
 

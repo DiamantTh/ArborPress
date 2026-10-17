@@ -20,7 +20,7 @@
 # wird AUSDRÜCKLICH NICHT empfohlen:
 #
 # 1) INSTANCE-VOLUME: beide Varianten verwenden
-#    /home/arborpress/arborpress/instance und UID/GID 1001:1001.
+#    /home/arborpress/instance und UID/GID 1001:1001.
 #
 # 2) DATENBANKDATEN (kritisch!):
 #    PostgreSQL-PGDATA und MariaDB-InnoDB-Tablespaces sind an die
@@ -134,7 +134,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     HOME="/home/arborpress" \
-    PATH="/home/arborpress/arborpress/app/bin:/home/arborpress/arborpress/app/runtime/venv/bin:/home/arborpress/arborpress/app/runtime/python314/bin:$PATH" \
+    PATH="/home/arborpress/app/bin:/home/arborpress/app/runtime/venv/bin:/home/arborpress/app/runtime/python314/bin:$PATH" \
     # Host muss im Container auf 0.0.0.0 gebunden werden.
     ARBORPRESS_WEB__HOST="0.0.0.0" \
     ARBORPRESS_WEB__PORT="8066" \
@@ -142,7 +142,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     # 0 setzen, wenn ArborPress direkt erreichbar ist (kein Proxy).
     ARBORPRESS_WEB__TRUSTED_PROXIES="1" \
     ARBORPRESS_LOGGING__LEVEL="INFO" \
-    ARBORPRESS_PREFIX="/home/arborpress/arborpress"
+    ARBORPRESS_PREFIX="/home/arborpress"
 
 # Nur Laufzeit-Bibliotheken – keine Build-Werkzeuge im finalen Image
 RUN apt-get update \
@@ -170,12 +170,11 @@ RUN apt-get update \
     # Ein expliziter Prefix mit ausschließlich persistentem Instance-State.
     && install -d -m 0700 -o arborpress -g arborpress \
         /home/arborpress \
-        /home/arborpress/arborpress \
-        /home/arborpress/arborpress/instance \
-    && install -d -m 0755 /home/arborpress/arborpress/app/bin /home/arborpress/arborpress/app/runtime \
-    && ln -s /opt/venv /home/arborpress/arborpress/app/runtime/venv \
-    && ln -s /opt/python314 /home/arborpress/arborpress/app/runtime/python314 \
-    && ln -s ../runtime/venv/bin/arborpress /home/arborpress/arborpress/app/bin/arborpress
+        /home/arborpress/instance \
+    && install -d -m 0755 /home/arborpress/app/bin /home/arborpress/app/runtime \
+    && ln -s /opt/venv /home/arborpress/app/runtime/venv \
+    && ln -s /opt/python314 /home/arborpress/app/runtime/python314 \
+    && ln -s ../runtime/venv/bin/arborpress /home/arborpress/app/bin/arborpress
 
 # Deliberately unrelated to the ArborPress instance identity.
 WORKDIR /
@@ -192,7 +191,7 @@ RUN chmod +x /entrypoint.sh
 # Nicht-privilegierter Benutzer
 USER arborpress
 
-VOLUME ["/home/arborpress/arborpress/instance"]
+VOLUME ["/home/arborpress/instance"]
 
 EXPOSE 8066
 
