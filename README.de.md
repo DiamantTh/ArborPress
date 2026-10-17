@@ -15,22 +15,24 @@ Sicherheitsfokussierte Blogging-Plattform und Mini-CMS.
 ## Schnellstart (Entwicklung)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+# Poetry 2.x wird für Entwicklung und Build-Werkzeuge benötigt.
+poetry install --with dev
 
 # Konfiguration
 cp config/config.example.toml config/config.toml
 # Datenbankverbindung + Geheimnisse in config/config.toml eintragen
 
 # DB-Schema anlegen
-arborpress db migrate
+poetry run arborpress db migrate
 
 # Dev-Server starten
-arborpress serve --dev
+poetry run arborpress serve --dev
 
 # Vollständige CLI-Hilfe
-arborpress --help
+poetry run arborpress --help
 ```
+
+Installierte ArborPress-Instanzen benötigen Poetry nicht zur Laufzeit.
 
 ## Verzeichnisstruktur
 
@@ -179,7 +181,7 @@ Audit-Log: Nur relevante Ereignisse, minimale sensitive Daten (§16 no sensitive
 
 | Komponente     | Technologie                                      |
 |----------------|--------------------------------------------------|
-| Backend        | Python 3.13+, Quart (ASGI), Hypercorn            |
+| Backend        | Python 3.14+, Quart (ASGI), Hypercorn            |
 | Datenbank      | PostgreSQL ≥ 16 / MariaDB ≥ 11                   |
 | ORM            | SQLAlchemy 2.0 async + asyncpg / aiomysql        |
 | Auth           | webauthn ≥ 2, argon2-cffi, pyotp                 |

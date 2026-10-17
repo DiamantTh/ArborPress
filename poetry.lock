@@ -400,10 +400,7 @@ files = [
 ]
 
 [package.dependencies]
-cffi = [
-    {version = ">=1.0.1", markers = "python_version < \"3.14\""},
-    {version = ">=2", markers = "python_version >= \"3.14\""},
-]
+cffi = {version = ">=2", markers = "python_version >= \"3.14\""}
 
 [[package]]
 name = "asyncpg"
@@ -4094,5 +4091,5 @@ wysiwyg = ["markdownify"]
 
 [metadata]
 lock-version = "2.1"
-python-versions = ">=3.13"
-content-hash = "95ae0e4be8746ff1726a4625587a680bb22ddb328cc3c60a42f21bf655c07be9"
+python-versions = ">=3.14"
+content-hash = "7bb119e166aac392d6484bfffab4170ca060d4e8a630a0fc0e1c77e4ed830e25"

@@ -53,10 +53,11 @@ future/
 Makefile
 *.toml
 !pyproject.toml
+!arborpress/**/*.toml
 
 # Compose-Dateien (nicht ins Image)
 container/compose*.yml
 
 # README
 !README.md
-LICENSE
+!LICENSE

@@ -1,13 +1,7 @@
 # syntax=docker/dockerfile:1
 # ======================================================================
 # ArborPress – Produktions-Image  (Ubuntu 24.04 LTS)
-# Basis: ubuntu:24.04 mit Ubuntu-Python 3.12.
-#
-# Python-Versionsstatus (Stand März 2026):
-#   3.10  EOL: Oktober 2026  ← veraltet – nicht mehr verwenden!
-#   3.11  EOL: Oktober 2027
-#   3.12  EOL: Oktober 2028  ← diese Basis  ✓
-#   3.13  EOL: Oktober 2029
+# Basis: ubuntu:24.04 mit CPython 3.14 aus einem Source-Build.
 #
 # Ubuntu 24.04 LTS (Noble) Standard-Support: April 2029
 #                  ESM-Support:              April 2034
@@ -56,19 +50,42 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
-        gcc \
-        python3 \
-        python3-dev \
-        python3-venv \
+        build-essential \
+        wget \
+        xz-utils \
         libffi-dev \
+        libssl-dev \
         libjpeg-dev \
         libpng-dev \
         zlib1g-dev \
+        libbz2-dev \
+        liblzma-dev \
+        libreadline-dev \
+        libsqlite3-dev \
+        libgdbm-dev \
+        uuid-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Isolierte Python-Umgebung (vom Runtime-Image getrennt)
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+ARG PYTHON_VERSION=3.14.8
+ARG POETRY_VERSION=2.5.1
+
+# Build CPython because Ubuntu 24.04's system Python is below the project minimum.
+RUN wget -O /tmp/Python.tgz "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
+    && tar -xzf /tmp/Python.tgz -C /tmp \
+    && cd /tmp/Python-${PYTHON_VERSION} \
+    && ./configure --prefix=/opt/python314 --with-ensurepip=install \
+    && make -j"$(nproc)" \
+    && make install \
+    && /opt/python314/bin/python3.14 -m pip install --upgrade pip \
+    && rm -rf /tmp/Python* \
+    && /opt/python314/bin/python3.14 --version
+
+# Poetry stays in its build-only environment; the application gets a separate venv.
+RUN /opt/python314/bin/python3.14 -m venv /opt/poetry \
+    && /opt/poetry/bin/python -m pip install --no-cache-dir "poetry==${POETRY_VERSION}" \
+    && /opt/python314/bin/python3.14 -m venv /opt/venv
+ENV VIRTUAL_ENV="/opt/venv" \
+    PATH="/opt/poetry/bin:/opt/venv/bin:/opt/python314/bin:$PATH"
 
 WORKDIR /build
 
@@ -79,17 +96,11 @@ ARG PIP_EXTRAS=""
 
 # Paket inkl. aller Abhängigkeiten installieren.
 # cache-redis: optionaler Redis-Cache-Backend-Support.
-COPY pyproject.toml ./
-COPY README.md ./
+COPY pyproject.toml poetry.lock README.md LICENSE ./
 COPY arborpress/ ./arborpress/
-RUN set -e; \
-    BASE_EXTRAS="cache-redis"; \
-    if [ -n "${PIP_EXTRAS}" ]; then \
-        INSTALL_EXTRAS="${BASE_EXTRAS},${PIP_EXTRAS}"; \
-    else \
-        INSTALL_EXTRAS="${BASE_EXTRAS}"; \
-    fi; \
-    pip install --no-cache-dir ".[${INSTALL_EXTRAS}]"
+RUN poetry install --only main --extras "cache-redis${PIP_EXTRAS:+,${PIP_EXTRAS}}" --no-root --no-interaction --no-ansi \
+    && poetry build --format wheel \
+    && /opt/venv/bin/python -m pip install --no-cache-dir --no-deps dist/*.whl
 
 # ── Stage 2: Runtime ───────────────────────────────────────────────────
 FROM ubuntu:24.04 AS runtime
@@ -102,7 +113,7 @@ LABEL org.opencontainers.image.title="ArborPress" \
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
-    PATH="/opt/venv/bin:$PATH" \
+    PATH="/opt/venv/bin:/opt/python314/bin:$PATH" \
     # Host muss im Container auf 0.0.0.0 gebunden werden.
     ARBORPRESS_WEB__HOST="0.0.0.0" \
     ARBORPRESS_WEB__PORT="8066" \
@@ -115,11 +126,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
-        python3 \
+        libbz2-1.0 \
+        libexpat1 \
+        libffi8 \
+        libgdbm-compat4t64 \
+        libgdbm6t64 \
         libjpeg-turbo8 \
+        liblzma5 \
+        libncursesw6 \
         libpng16-16t64 \
+        libreadline8t64 \
+        libsqlite3-0 \
+        libssl3t64 \
         netcat-openbsd \
         zlib1g \
+        libuuid1 \
     && rm -rf /var/lib/apt/lists/* \
     # Nicht-privilegierten Benutzer anlegen (kein Login-Shell, kein Passwort)
     && groupadd -g 1001 arborpress \
@@ -134,6 +155,7 @@ WORKDIR /app
 
 # Virtualenv aus Builder übernehmen
 COPY --from=builder --chown=arborpress:arborpress /opt/venv /opt/venv
+COPY --from=builder --chown=arborpress:arborpress /opt/python314 /opt/python314
 
 # Entrypoint-Skript
 COPY --chown=arborpress:arborpress container/entrypoint.sh /entrypoint.sh
@@ -148,7 +170,7 @@ VOLUME ["/app/media", "/app/logs", "/data"]
 EXPOSE 8066
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD python3 -c \
+    CMD python3.14 -c \
         "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8066/_health')" \
         || exit 1
 

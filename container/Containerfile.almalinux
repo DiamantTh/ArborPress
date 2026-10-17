@@ -3,8 +3,8 @@
 # ArborPress – Produktions-Image  (AlmaLinux 10)
 # Datei-Name: Containerfile.almalinux
 #
-# Ziel: Python 3.13 als Mindestlinie trotz fehlender UBI-3.13-Base-Images.
-# Daher wird CPython 3.13 aus Source gebaut und in ein schlankes Runtime-
+# Ziel: Python 3.14 als Mindestlinie trotz fehlender AlmaLinux-Base-Images.
+# Daher wird CPython 3.14 aus Source gebaut und in ein schlankes Runtime-
 # Image auf AlmaLinux 10 uebernommen.
 # ======================================================================
 
@@ -16,7 +16,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-ARG PYTHON_VERSION=3.13.14
+ARG PYTHON_VERSION=3.14.8
+ARG POETRY_VERSION=2.5.1
 
 USER root
 
@@ -43,28 +44,32 @@ RUN dnf install -y \
         libpng-devel \
     && dnf clean all
 
-# CPython 3.13 aus Source bauen
+# CPython 3.14 aus Source bauen
 RUN wget -O /tmp/Python.tgz "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
     && tar -xzf /tmp/Python.tgz -C /tmp \
     && cd /tmp/Python-${PYTHON_VERSION} \
-    && ./configure --prefix=/opt/python313 --with-ensurepip=install \
+    && ./configure --prefix=/opt/python314 --with-ensurepip=install \
     && make -j"$(nproc)" \
     && make install \
-    && /opt/python313/bin/python3.13 -m pip install --upgrade pip \
+    && /opt/python314/bin/python3.14 -m pip install --upgrade pip \
     && rm -rf /tmp/Python* \
-    && /opt/python313/bin/python3.13 --version
+    && /opt/python314/bin/python3.14 --version
 
-# Isolierte Python-Umgebung (vom Runtime-Image getrennt)
-RUN /opt/python313/bin/python3.13 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:/opt/python313/bin:$PATH"
+# Poetry stays in its build-only environment; the application gets a separate venv.
+RUN /opt/python314/bin/python3.14 -m venv /opt/poetry \
+    && /opt/poetry/bin/python -m pip install --no-cache-dir "poetry==${POETRY_VERSION}" \
+    && /opt/python314/bin/python3.14 -m venv /opt/venv
+ENV VIRTUAL_ENV="/opt/venv" \
+    PATH="/opt/poetry/bin:/opt/venv/bin:/opt/python314/bin:$PATH"
 
 WORKDIR /build
 
 # Paket inkl. aller Abhängigkeiten installieren
-COPY pyproject.toml ./
-COPY README.md ./
+COPY pyproject.toml poetry.lock README.md LICENSE ./
 COPY arborpress/ ./arborpress/
-RUN pip install --no-cache-dir ".[cache-redis]"
+RUN poetry install --only main --extras cache-redis --no-root --no-interaction --no-ansi \
+    && poetry build --format wheel \
+    && /opt/venv/bin/python -m pip install --no-cache-dir --no-deps dist/*.whl
 
 # ── Stage 2: Runtime ───────────────────────────────────────────────────
 FROM docker.io/library/almalinux:10 AS runtime
@@ -75,7 +80,7 @@ LABEL org.opencontainers.image.title="ArborPress" \
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/opt/venv/bin:/opt/python313/bin:$PATH" \
+    PATH="/opt/venv/bin:/opt/python314/bin:$PATH" \
     ARBORPRESS_WEB__HOST="0.0.0.0" \
     ARBORPRESS_WEB__PORT="8066" \
     ARBORPRESS_WEB__TRUSTED_PROXIES="1" \
@@ -106,7 +111,7 @@ RUN dnf install -y \
 
 WORKDIR /opt/app-root/src
 
-COPY --from=builder --chown=1001:0 /opt/python313 /opt/python313
+COPY --from=builder --chown=1001:0 /opt/python314 /opt/python314
 COPY --from=builder --chown=1001:0 /opt/venv /opt/venv
 
 COPY --chown=1001:0 container/entrypoint.sh /opt/app-root/entrypoint.sh
@@ -119,7 +124,7 @@ VOLUME ["/opt/app-root/src/media", "/opt/app-root/src/logs"]
 EXPOSE 8066
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD python3.13 -c \
+    CMD python3.14 -c \
         "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8066/_health')" \
         || exit 1
 

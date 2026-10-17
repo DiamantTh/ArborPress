@@ -3,7 +3,7 @@
 # ======================================================================
 #
 # Genutzte Images:
-#   App:  AlmaLinux 10 + CPython 3.13 (Source-Build aus Containerfile.almalinux)
+#   App:  AlmaLinux 10 + CPython 3.14 (Source-Build aus Containerfile.almalinux)
 #   DB:   postgres:17
 #
 # Starten:    docker compose -f container/compose.postgresql.yml up -d
