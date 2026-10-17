@@ -228,14 +228,20 @@ and are atomically consumed once. An unregistered operation fails closed.
   additional SSO check separately from WebAuthn user-verification policy.
 
 ### Database upgrade path
-- `arborpress db migrate` (also run by the production container entrypoint)
-  applies the repository's additive, idempotent schema upgrades for auth
-  metadata, pending ceremonies, and step-up grants. Existing users, WebAuthn
-  credentials, and OTP rows are retained. Legacy single-transport values are
-  copied into the new transport list; historical UV and TOTP enrollment states
-  are marked unknown. Legacy active TOTP remains usable after a correct code
-  confirms possession. The migration runner is additive and versionless;
-  deployments must run it before serving traffic.
+- Alembic revisions are the only regular schema migration system. Fresh
+  databases are built to the packaged head; the immediately preceding
+  pre-Alembic schema is structurally validated before it is stamped as adopted.
+  Unsupported or ambiguous unversioned databases are never stamped blindly.
+- Run `arborpress db upgrade` before starting the web process. Normal startup
+  performs a read-only schema check and refuses an outdated or unknown schema;
+  the production container entrypoint runs one upgrade before starting workers.
+- `arborpress db current`, `db history`, and `db check` inspect migration state.
+  `db adopt-legacy` performs explicit validated adoption, and `db downgrade`
+  requires an explicit target and confirmation because future downgrades may
+  destroy data. Back up the database before a risky migration or downgrade.
+- Migration configuration uses ArborPress's normal database settings. The
+  application invokes Alembic through its Python API; no system Alembic
+  executable or Poetry runtime installation is required.
 - Optional HOTP (SHA-256 minimum; 8–12 digits configurable)
 - Backup codes (one-time recovery)
 

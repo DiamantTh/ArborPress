@@ -22,7 +22,7 @@ build: ## sdist und Wheel bauen
 	poetry build
 
 db-upgrade: ## Datenbank auf neueste Migration bringen
-	alembic upgrade head
+	poetry run arborpress db upgrade
 
 run: ## Entwicklungsserver starten  (config/config.toml wird benötigt)
 	poetry run python -m arborpress.cli.main serve --dev

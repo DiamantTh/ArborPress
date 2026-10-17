@@ -22,8 +22,8 @@ poetry install --with dev
 cp config/config.example.toml config/config.toml
 # Datenbankverbindung + Geheimnisse in config/config.toml eintragen
 
-# DB-Schema anlegen
-poetry run arborpress db migrate
+# DB-Schema anlegen oder aktualisieren (Alembic)
+poetry run arborpress db upgrade
 
 # Dev-Server starten
 poetry run arborpress serve --dev
@@ -78,7 +78,12 @@ arborpress serve --dev               Dev-Server mit Reload
 
 arborpress healthcheck               DB-Verbindung + Capabilities prüfen
 
-arborpress db migrate                DB-Schema erstellen / aktualisieren
+arborpress db upgrade                DB bis zum Migrations-Head aktualisieren
+arborpress db current                Installierte Revision und Head-Status anzeigen
+arborpress db check                  Read-only-Schema-Prüfung
+arborpress db history                Enthaltene Schema-Revisionen auflisten
+arborpress db adopt-legacy           Unterstütztes Pre-Alembic-Schema prüfen/übernehmen
+arborpress db downgrade <revision>   Explizites, potenziell destruktives Downgrade
 arborpress db capabilities           Erkannte DB-Features anzeigen
 
 arborpress user add <name>           Benutzer anlegen
