@@ -13,6 +13,7 @@ export default defineConfig({
     manifest: '.vite/manifest.json',
     rollupOptions: {
       input: {
+        public: resolve(frontendRoot, 'src/entries/public.ts'),
         webauthn: resolve(frontendRoot, 'src/entries/webauthn.ts'),
       },
     },

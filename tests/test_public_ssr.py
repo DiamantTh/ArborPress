@@ -110,6 +110,13 @@ async def test_article_and_comment_form_are_complete_without_javascript(
     assert 'method="POST"' in html
     assert f'action="/p/{first_slug}/comment"' in html
     assert 'name="_csrf"' in html
+    assert "data-comment-quote" in html
+    assert "data-comment-quote disabled" in html
+    assert "Browser-JavaScript erforderlich" in html
+    assert 'aria-live="polite"' in html
+    assert "onclick=" not in html
+    assert 'data-author="Visitor &#34;One&#34; &amp; &lt;tag&gt;"' in html
+    assert "/static/dist/assets/public-e5f6.js" in html
     assert "&lt;script&gt;" in html
     assert "<script>alert(1)</script>" not in html
 
