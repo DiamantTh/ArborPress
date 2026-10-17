@@ -1,8 +1,13 @@
 #!/bin/sh
 # ArborPress Container-Entrypoint
-# Funktioniert in beiden Image-Varianten (UBI9 und Ubuntu LTS).
-# Erwartet, dass die arborpress-CLI (installiert via pip install .) im PATH liegt.
+# Funktioniert in beiden Image-Varianten (AlmaLinux 10 und Ubuntu LTS).
+# Erwartet, dass das ArborPress-Wheel samt Runtime-Dependencies im Image liegt.
 set -e
+
+# One explicit prefix identifies this container instance. Do not use WORKDIR as
+# an implicit instance selector; both commands receive the same prefix.
+ARBORPRESS_PREFIX="${ARBORPRESS_PREFIX:-/srv/arborpress}"
+export ARBORPRESS_PREFIX
 
 # ── 1. Pflicht-Umgebungsvariable prüfen ──────────────────────────────
 if [ -z "${ARBORPRESS_WEB__SECRET_KEY:-}" ]; then
@@ -10,19 +15,6 @@ if [ -z "${ARBORPRESS_WEB__SECRET_KEY:-}" ]; then
     echo "[arborpress] Bitte einen sicheren Zufallswert setzen (z.B. openssl rand -base64 48)." >&2
     exit 1
 fi
-
-# ── 1a. SQLite-Datenverzeichnis vorbereiten (UX-Only-Modus) ──────────
-# Wird nur aktiv wenn ARBORPRESS_DB__URL auf sqlite+aiosqlite zeigt.
-# /data ist als persistenter SQLite-Datenpfad vorgesehen, wenn ein Volume
-# darauf gemountet wird.
-case "${ARBORPRESS_DB__URL:-}" in
-    sqlite+aiosqlite://*)
-        SQLITE_DIR="/data"
-        echo "[arborpress] SQLite-Modus – Datenverzeichnis: ${SQLITE_DIR}"
-        # Verzeichnis anlegen falls Volume noch leer ist
-        mkdir -p "${SQLITE_DIR}"
-        ;;
-esac
 
 # ── 2. Auf Datenbankverbindung warten ────────────────────────────────
 # DB_HOST und DB_PORT können optional direkt gesetzt werden.
@@ -44,9 +36,9 @@ fi
 
 # ── 3. Datenbankmigrationen anwenden ────────────────────────────────
 echo "[arborpress] Führe Datenbankmigrationen aus …"
-arborpress db upgrade
+arborpress --prefix "$ARBORPRESS_PREFIX" db upgrade
 
 # ── 4. Server starten ────────────────────────────────────────────────
 WORKERS="${ARBORPRESS_WORKERS:-2}"
 echo "[arborpress] Starte Server mit ${WORKERS} Worker(n) …"
-exec arborpress serve --workers "${WORKERS}"
+exec arborpress --prefix "$ARBORPRESS_PREFIX" serve --workers "${WORKERS}"

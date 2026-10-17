@@ -16,9 +16,8 @@
 # Ein Wechsel zwischen AlmaLinux und Ubuntu auf einer laufenden Instanz
 # wird AUSDRÜCKLICH NICHT empfohlen:
 #
-# 1) APP-VOLUMES: Pfade und UIDs unterscheiden sich:
-#      AlmaLinux: /opt/app-root/src/media  /opt/app-root/src/logs  (UID 1001/GID 0)
-#      Ubuntu:  /app/media  /app/logs                            (UID/GID 1001)
+# 1) INSTANCE-VOLUME: beide Varianten persistieren /srv/arborpress/instance;
+#    die Container-UID/GID-Zuordnung ist unterschiedlich.
 #
 # 2) POSTGRESQL PGDATA (kritisch!):
 #    PostgreSQL-PGDATA ist an die libc/locale des Container-Images gebunden.
@@ -40,6 +39,7 @@ services:
     restart: unless-stopped
     env_file: ../.env
     environment:
+      ARBORPRESS_PREFIX: /srv/arborpress
       ARBORPRESS_DB__URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
       DB_HOST: db
       DB_PORT: "5432"
@@ -49,14 +49,11 @@ services:
     ports:
       - "${ARBORPRESS_PORT:-8066}:8066"
     volumes:
-      - app_media:/opt/app-root/src/media
-      - app_logs:/opt/app-root/src/logs
-      # Konfiguration einbinden (Verzeichnis oder Einzeldatei):
-      # - ../config:/opt/app-root/src/config:ro
+      - arborpress_instance:/srv/arborpress/instance
     healthcheck:
       test:
         - "CMD"
-        - "python3"
+        - "python3.14"
         - "-c"
         - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8066/_health')"
       interval: 30s
@@ -72,7 +69,7 @@ services:
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
       POSTGRES_DB: "${POSTGRES_DB}"
     volumes:
-      - pg_data:/var/lib/pgsql/data
+      - pg_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
       interval: 10s
@@ -81,6 +78,5 @@ services:
       retries: 5
 
 volumes:
-  app_media:
-  app_logs:
+  arborpress_instance:
   pg_data:

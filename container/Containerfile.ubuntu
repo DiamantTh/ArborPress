@@ -15,18 +15,17 @@
 #
 # !! WICHTIGER HINWEIS – KEIN OS-WECHSEL IM BETRIEB !!
 # -------------------------------------------------------
-# Es existiert auch eine AlmaLinux-Variante (Containerfile.almalinux).
-# Ein Wechsel des Basis-OS (UBI9 ↔ Ubuntu) auf einer laufenden Instanz
+# Es existiert auch eine AlmaLinux-10-Variante (Containerfile.almalinux).
+# Ein Wechsel des Basis-OS (AlmaLinux 10 ↔ Ubuntu) auf einer laufenden Instanz
 # wird AUSDRÜCKLICH NICHT empfohlen:
 #
-# 1) APP-VOLUMES: Pfade und UIDs unterscheiden sich:
-#      UBI9:    /opt/app-root/src/media  /opt/app-root/src/logs  (UID 1001/GID 0)
-#      Ubuntu:  /app/media  /app/logs                            (UID/GID 1001)
+# 1) INSTANCE-VOLUME: beide Varianten verwenden /srv/arborpress/instance,
+#    die UID/GID-Zuordnung unterscheidet sich (Ubuntu 1001:1001, Alma 1001:0).
 #
 # 2) DATENBANKDATEN (kritisch!):
 #    PostgreSQL-PGDATA und MariaDB-InnoDB-Tablespaces sind an die
 #    libc/locale des jeweiligen Container-Images gebunden.
-#    Ein roher Volume-Copy zwischen UBI9 und Ubuntu führt zu
+#    Ein roher Volume-Copy zwischen AlmaLinux und Ubuntu führt zu
 #    Datenbankkorruption – auch bei identischer DB-Version.
 #    Nicht getestet; verlasse dich NICHT darauf.
 #
@@ -98,7 +97,14 @@ ARG PIP_EXTRAS=""
 # cache-redis: optionaler Redis-Cache-Backend-Support.
 COPY pyproject.toml poetry.lock README.md LICENSE ./
 COPY arborpress/ ./arborpress/
-RUN poetry install --only main --extras "cache-redis${PIP_EXTRAS:+,${PIP_EXTRAS}}" --no-root --no-interaction --no-ansi \
+RUN set -eu; \
+    set -- --only main --extras cache-redis; \
+    set -f; \
+    for extra in $(printf '%s' "$PIP_EXTRAS" | tr ',' ' '); do \
+        set -- "$@" --extras "$extra"; \
+    done; \
+    set +f; \
+    poetry install "$@" --no-root --no-interaction --no-ansi \
     && poetry build --format wheel \
     && /opt/venv/bin/python -m pip install --no-cache-dir --no-deps dist/*.whl
 
@@ -113,14 +119,15 @@ LABEL org.opencontainers.image.title="ArborPress" \
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
-    PATH="/opt/venv/bin:/opt/python314/bin:$PATH" \
+    PATH="/srv/arborpress/app/bin:/srv/arborpress/app/runtime/venv/bin:/srv/arborpress/app/runtime/python314/bin:$PATH" \
     # Host muss im Container auf 0.0.0.0 gebunden werden.
     ARBORPRESS_WEB__HOST="0.0.0.0" \
     ARBORPRESS_WEB__PORT="8066" \
     # 1 = ein vorgelagerter Reverse-Proxy (nginx/Traefik/Caddy).
     # 0 setzen, wenn ArborPress direkt erreichbar ist (kein Proxy).
     ARBORPRESS_WEB__TRUSTED_PROXIES="1" \
-    ARBORPRESS_LOGGING__LEVEL="INFO"
+    ARBORPRESS_LOGGING__LEVEL="INFO" \
+    ARBORPRESS_PREFIX="/srv/arborpress"
 
 # Nur Laufzeit-Bibliotheken – keine Build-Werkzeuge im finalen Image
 RUN apt-get update \
@@ -145,13 +152,17 @@ RUN apt-get update \
     # Nicht-privilegierten Benutzer anlegen (kein Login-Shell, kein Passwort)
     && groupadd -g 1001 arborpress \
     && useradd -u 1001 -g 1001 -s /sbin/nologin -M arborpress \
-    # Verzeichnisse für Medien, Logs und SQLite-Datenbankpfad anlegen
-    && install -d -m 0775 -o arborpress -g arborpress \
-        /app/media \
-        /app/logs \
-        /data
+    # Ein expliziter Prefix mit ausschließlich persistentem Instance-State.
+    && install -d -m 0700 -o arborpress -g arborpress \
+        /srv/arborpress \
+        /srv/arborpress/instance \
+    && install -d -m 0755 /srv/arborpress/app/bin /srv/arborpress/app/runtime \
+    && ln -s /opt/venv /srv/arborpress/app/runtime/venv \
+    && ln -s /opt/python314 /srv/arborpress/app/runtime/python314 \
+    && ln -s ../runtime/venv/bin/arborpress /srv/arborpress/app/bin/arborpress
 
-WORKDIR /app
+# Deliberately unrelated to the ArborPress instance identity.
+WORKDIR /
 
 # Virtualenv aus Builder übernehmen
 COPY --from=builder --chown=arborpress:arborpress /opt/venv /opt/venv
@@ -164,8 +175,7 @@ RUN chmod +x /entrypoint.sh
 # Nicht-privilegierter Benutzer
 USER arborpress
 
-# /data: persistentes SQLite-Datenbankvolume (nur bei UX-Only/SQLite-Setup genutzt)
-VOLUME ["/app/media", "/app/logs", "/data"]
+VOLUME ["/srv/arborpress/instance"]
 
 EXPOSE 8066
 
