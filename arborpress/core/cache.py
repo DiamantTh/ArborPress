@@ -29,7 +29,7 @@ Configuration via config.toml [cache]:
   memcached_host = "localhost"
   memcached_port = 11211
   # File
-  file_dir     = "/tmp/arborpress_cache"
+  file_dir     = None  # defaults to PREFIX/instance/var/cache
 
 Public API (async):
   cache_get(key)               -> Any | None
@@ -271,7 +271,7 @@ class FileBackend(CacheBackend):
     def __init__(self, directory: str, prefix: str = "ap_") -> None:
         self._dir = Path(directory)
         self._prefix = prefix
-        self._dir.mkdir(parents=True, exist_ok=True)
+        self._dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
         # Replace unsafe characters
@@ -310,6 +310,7 @@ class FileBackend(CacheBackend):
             p.unlink(missing_ok=True)
 
     def info(self) -> str:
+        count = sum(1 for _ in self._dir.glob(f"{self._prefix}*.cache"))
         return f"file ({self._dir}, {count} entries)"
 
 
@@ -456,7 +457,15 @@ def _build_backend() -> CacheBackend:
                 prefix=prefix,
             )
         elif backend_name == "file":
-            backend = FileBackend(directory=cache_cfg.file_dir, prefix=prefix.replace(":", "_"))
+            from arborpress.runtime.paths import ensure_instance_layout, get_runtime_paths
+
+            paths = get_runtime_paths()
+            ensure_instance_layout(paths)
+            file_dir = cache_cfg.file_dir or paths.cache
+            backend = FileBackend(
+                directory=str(file_dir),
+                prefix=prefix.replace(":", "_"),
+            )
         elif backend_name == "none":
             return NoneBackend()
         else:
@@ -484,6 +493,13 @@ def get_backend() -> CacheBackend:
         _backend = _build_backend()
         log.info("Cache backend: %s", _backend.info())
     return _backend
+
+
+def reset_backend_for_tests() -> None:
+    """Reset the backend singleton between tests using different prefixes."""
+    global _backend, _default_ttl
+    _backend = None
+    _default_ttl = 300
 
 
 def reset_backend(new_backend: CacheBackend | None = None) -> None:

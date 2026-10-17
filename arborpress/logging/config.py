@@ -29,6 +29,17 @@ def setup_logging(cfg: LoggingSettings) -> None:
     - arborpress.access – optional access log
     - arborpress.audit  – credential/policy/admin events
     """
+    # File paths supplied directly by callers receive the same semantics as
+    # paths loaded through get_settings(): relative paths are instance-local.
+    file_path = _resolve_log_path(cfg.file) if cfg.file is not None else None
+    audit_file_path = (
+        _resolve_log_path(cfg.audit_file) if cfg.audit_file is not None else None
+    )
+    if cfg.file is not None or cfg.audit_file is not None:
+        from arborpress.runtime.paths import ensure_instance_layout, get_runtime_paths
+
+        ensure_instance_layout(get_runtime_paths())
+
     root = logging.getLogger("arborpress")
     root.setLevel(cfg.level)
 
@@ -38,8 +49,8 @@ def setup_logging(cfg: LoggingSettings) -> None:
     root.addHandler(stdout_handler)
 
     # --- Optional app file log --------------------------------------------
-    if cfg.file:
-        _add_file_handler(root, cfg.file, _FMT_STD)
+    if file_path is not None:
+        _add_file_handler(root, file_path, _FMT_STD)
 
     # --- Audit log --------------------------------------------------------
     audit_logger = logging.getLogger(AUDIT_LOGGER_NAME)
@@ -50,8 +61,8 @@ def setup_logging(cfg: LoggingSettings) -> None:
         audit_stderr.setFormatter(logging.Formatter(_FMT_AUDIT))
         audit_logger.addHandler(audit_stderr)
 
-        if cfg.audit_file:
-            _add_file_handler(audit_logger, cfg.audit_file, _FMT_AUDIT)
+        if audit_file_path is not None:
+            _add_file_handler(audit_logger, audit_file_path, _FMT_AUDIT)
 
     # --- Optional access log ----------------------------------------------
     if cfg.access_log:
@@ -65,11 +76,36 @@ def setup_logging(cfg: LoggingSettings) -> None:
 def _add_file_handler(
     logger: logging.Logger, path: Path, fmt: str
 ) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     handler = logging.handlers.WatchedFileHandler(path)
     handler.setFormatter(logging.Formatter(fmt))
     logger.addHandler(handler)
 
 
+def _resolve_log_path(path: Path) -> Path:
+    """Resolve relative log paths under the active instance log directory."""
+    candidate = path.expanduser()
+    if candidate.is_absolute():
+        return candidate
+
+    from arborpress.runtime.paths import get_runtime_paths
+
+    root = get_runtime_paths().log.resolve(strict=False)
+    resolved = (root / candidate).resolve(strict=False)
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"Relative log paths must remain inside {root}")
+    return resolved
+
+
 def get_audit_logger() -> logging.Logger:
     return logging.getLogger(AUDIT_LOGGER_NAME)
+
+
+def reset_logging_for_tests() -> None:
+    """Remove ArborPress handlers between tests using different prefixes."""
+    for name in ("arborpress", "arborpress.access", AUDIT_LOGGER_NAME):
+        logger = logging.getLogger(name)
+        for handler in logger.handlers[:]:
+            logger.removeHandler(handler)
+            handler.close()
+        logger.propagate = True

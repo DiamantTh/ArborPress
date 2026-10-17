@@ -1,5 +1,5 @@
 # ArborPress – Infrastruktur-Konfiguration
-# Kopieren nach config/config.toml (empfohlen) oder config.toml
+# In PREFIX/instance/config/config.toml ablegen oder mit --config explizit angeben.
 # und anpassen.  Geheimnisse NIE committen!
 #
 # Alle weiteren Einstellungen (Mail, Captcha, Kommentare, Federation,
@@ -10,21 +10,21 @@
 # Empfohlenes Layout
 # ---------------------------------------------------------------------------
 #
-#  Standalone (venv):
-#       config/
-#         config.toml      ← Hauptkonfiguration  (wird auto-gefunden)
-#         secrets.toml     ← Passwörter, Secret-Keys  (chmod 600, .gitignore)
+#  Standalone-Instanz:
+#       PREFIX/instance/config/
+#         config.toml      ← Hauptkonfiguration (Standardpfad)
+#         secrets.toml     ← Passwörter, Secret-Keys (restriktive Dateirechte)
 #
-#  Docker:
-#       Gleiches Layout, Volume mounten:
-#         volumes:
-#           - ./config:/app/config:ro
+#  Container:
+#       Die Instanz-Konfiguration liegt unter
+#       <PREFIX>/instance/config/config.toml. Das passende Prefix-/Volume-
+#       Wiring der Container wird in einer späteren Integrationsphase festgelegt.
 #
 #  Alternativ – alles in einer Datei:
 #       config.toml        (mit optionalem include = ["secrets.toml"])
 #
-#  Auto-Discover (ohne --config): sucht erst config/ dann config.toml im cwd.
-#  Explizit: arborpress --config ./config/ serve
+#  Ohne --config wird ausschließlich die Config der aktiven Prefix-Instanz genutzt.
+#  Explizit: arborpress --prefix /srv/blog --config /secure/blog.toml db check
 #
 # ---------------------------------------------------------------------------
 # include-Direktive
@@ -43,7 +43,7 @@
 url       = "postgresql+asyncpg://arborpress:passwort@localhost/arborpress"
 # MariaDB:
 # url     = "mysql+aiomysql://arborpress:passwort@localhost/arborpress"
-# SQLite (nur Entwicklung):
+# SQLite (nur Entwicklung): relative DB-Pfade werden unter instance/data aufgelöst.
 # url     = "sqlite+aiosqlite:///./arborpress.db"
 pool_size = 10
 echo      = false
@@ -129,18 +129,19 @@ auth_rate_limit         = "10/minute"
 # ---------------------------------------------------------------------------
 [logging]
 level      = "INFO"
-# file     = "/var/log/arborpress/app.log"   # optional
+# file     = "arborpress.log"  # optional; relativ unter instance/var/log/
 access_log = false
 audit_log  = true
-# audit_file = "/var/log/arborpress/audit.log"
+# audit_file = "audit.log"  # relativ unter instance/var/log/
 
 # ---------------------------------------------------------------------------
 # Plugins
 # ---------------------------------------------------------------------------
 [plugins]
-# Verzeichnisse mit manuell installierten Plugins
+# Optionale Plugin-Verzeichnisse. Relativpfade beziehen sich auf dieses
+# Config-Verzeichnis. PREFIX/instance/plugins wird immer zusätzlich geladen.
 dirs = [
-    # "content/plugins/mein-plugin",
+    # "/opt/arborpress/shared-plugins",
     # "/opt/arborpress/plugins",
 ]
 
@@ -175,7 +176,9 @@ prefix  = "ap:"
 # memcached_port = 11211
 
 # Dateibasiert (backend = "file") – kein externer Dienst, persistent über Neustarts:
-# file_dir = "/var/cache/arborpress"
+# file_dir = "custom-cache"  # relativ unter PREFIX/instance/var/cache
+# Ohne file_dir: PREFIX/instance/var/cache
+# file_dir = "/var/cache/arborpress"  # expliziter absoluter Override
 
 # ---------------------------------------------------------------------------
 # Federation / ActivityPub (im Admin-Bereich konfigurierbar)

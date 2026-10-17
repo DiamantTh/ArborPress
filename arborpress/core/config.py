@@ -212,8 +212,8 @@ class CacheSettings(BaseSettings):
     # Memcached
     memcached_host: str = "localhost"
     memcached_port: int = 11211
-    # File
-    file_dir: str = "/tmp/arborpress_cache"  # noqa: S108
+    # File cache defaults to the active instance's var/cache directory.
+    file_dir: Path | None = None
 
 
 class PluginSettings(BaseSettings):
@@ -350,15 +350,23 @@ def get_settings(config_path: Path | None = None) -> Settings:
 
 def _resolve_instance_paths(settings: Settings, paths: ArborPressPaths) -> None:
     """Resolve local paths which have instance-relative config semantics."""
-    media_root = paths.instance.resolve(strict=False)
-    media_dir = Path(settings.web.media_dir).expanduser()
-    if media_dir.is_absolute():
-        settings.web.media_dir = media_dir
+    settings.web.media_dir = _resolve_relative_instance_path(
+        paths.instance, settings.web.media_dir, "media"
+    )
+    if settings.cache.file_dir is None:
+        settings.cache.file_dir = paths.cache
     else:
-        resolved_media_dir = (media_root / media_dir).resolve(strict=False)
-        if not resolved_media_dir.is_relative_to(media_root):
-            raise ValueError("Relative media paths must remain inside the instance")
-        settings.web.media_dir = resolved_media_dir
+        settings.cache.file_dir = _resolve_relative_instance_path(
+            paths.cache, settings.cache.file_dir, "cache"
+        )
+    if settings.logging.file is not None:
+        settings.logging.file = _resolve_relative_instance_path(
+            paths.log, settings.logging.file, "log"
+        )
+    if settings.logging.audit_file is not None:
+        settings.logging.audit_file = _resolve_relative_instance_path(
+            paths.log, settings.logging.audit_file, "audit log"
+        )
 
     url = make_url(settings.db.url)
     database = url.database
@@ -378,3 +386,15 @@ def _resolve_instance_paths(settings: Settings, paths: ArborPressPaths) -> None:
         settings.db.url = url.set(database=str(database_path)).render_as_string(
             hide_password=False
         )
+
+
+def _resolve_relative_instance_path(base: Path, value: Path, label: str) -> Path:
+    """Resolve a relative local path under a fixed instance-owned root."""
+    candidate = value.expanduser()
+    if candidate.is_absolute():
+        return candidate
+    root = base.resolve(strict=False)
+    resolved = (root / candidate).resolve(strict=False)
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"Relative {label} paths must remain inside {root}")
+    return resolved

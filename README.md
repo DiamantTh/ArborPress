@@ -21,17 +21,19 @@ Security-focused blogging platform and mini-CMS.
 poetry install --with dev
 
 # Configuration
-cp config/config.example.toml config/config.toml
-# Fill in database connection + secrets in config/config.toml
+PREFIX=/tmp/arborpress-dev
+mkdir -p "$PREFIX/instance/config"
+cp config/config.example.toml "$PREFIX/instance/config/config.toml"
+# Fill in database connection + secrets in that instance config
 
 # Create or upgrade the DB schema (Alembic)
-poetry run arborpress db upgrade
+poetry run arborpress --prefix "$PREFIX" db upgrade
 
 # Start dev server
-poetry run arborpress serve --dev
+poetry run arborpress --prefix "$PREFIX" serve --dev
 
 # Full CLI help
-poetry run arborpress --help
+poetry run arborpress --prefix "$PREFIX" --help
 ```
 
 Installed ArborPress instances do not require Poetry at runtime.
@@ -47,16 +49,15 @@ arborpress/               Python package (backend)
   mail/                   SMTP backend + async queue (§13)
   themes/                 Theme manifest schema (§9)
   logging/                Logging configuration (stdout/file)
+  runtime/                Prefix-scoped program and instance paths
   web/                    Quart app, routes, middleware
     routes/               public, auth, admin, federation, sso, api
     security.py           CSP + security headers middleware
     app.py                App factory (create_app)
   cli/                    Typer CLI (§14 all admin commands)
-content/                  Operator content (≡ wp-content)
-  plugins/                Manually installed plugins
-  themes/                 Custom themes
-config/                   Configuration directory
-  config.example.toml     Example configuration (→ copy to config/config.toml)
+content/                  Existing source-checkout content/examples (not a runtime default)
+config/                   Source-checkout configuration examples
+  config.example.toml     Example copied to PREFIX/instance/config/config.toml
 container/                Container files (OCI – Docker/Podman)
   Containerfile.ubuntu    Production image on Ubuntu 24.04 LTS
   Containerfile.almalinux Production image on AlmaLinux 10
@@ -74,6 +75,7 @@ tests/                    Automated tests
 
 ```
 arborpress init                      Initial setup / DB schema
+arborpress --prefix PREFIX paths     Show the resolved instance paths (read-only)
 
 arborpress serve                     Production server (Hypercorn)
 arborpress serve --dev               Dev server with reload
@@ -136,9 +138,10 @@ arborpress plugin validate <path>    Validate plugin manifest
 Plugins are installed manually only – no automatic updates:
 
 ```bash
-# 1. Add plugin directory in config/config.toml:
+# 1. Add optional extra plugin directories in instance/config/config.toml.
+#    PREFIX/instance/plugins is included automatically.
 [plugins]
-dirs = ["content/plugins/my-plugin"]
+dirs = ["/opt/arborpress/shared-plugins"]
 
 # 2. Validate manifest
 arborpress plugin validate /path/to/plugin
@@ -176,13 +179,16 @@ Default: stdout/stderr (container- and systemd-compatible).
 ```toml
 [logging]
 level      = "INFO"
-# file     = "/var/log/arborpress/app.log"
+# file     = "arborpress.log"  # relative paths go under PREFIX/instance/var/log/
 access_log = false
 audit_log  = true
-# audit_file = "/var/log/arborpress/audit.log"
+# audit_file = "audit.log"
 ```
 
 Audit log: only relevant events, minimal sensitive data (§16 no sensitive data in logs).
+
+For the per-instance path contract and relative-path rules, see
+[docs/instance-paths.md](docs/instance-paths.md).
 
 ## Stack (Appendix A)
 

@@ -67,7 +67,7 @@ def test_relative_media_override_cannot_escape_instance(tmp_path: Path) -> None:
     paths.config_file.write_text('[web]\nmedia_dir = "../outside"\n', encoding="utf-8")
     reset_settings()
 
-    with pytest.raises(ValueError, match="inside the instance"):
+    with pytest.raises(ValueError, match="Relative media paths"):
         get_settings()
 
 

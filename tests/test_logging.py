@@ -19,6 +19,7 @@ def test_setup_logging_stdout(capfd) -> None:
 
 
 def test_audit_logger_is_isolated() -> None:
+    setup_logging(LoggingSettings(audit_log=True))
     audit = get_audit_logger()
     assert audit.name == AUDIT_LOGGER_NAME
     # Audit soll nicht in Root propagiert werden
