@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import cast
 
 import pytest
 from quart.testing.app import LifespanError
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from typer.testing import CliRunner
 
 import arborpress.core.config as config_module
@@ -67,7 +68,7 @@ def test_database_cli_upgrade_failure_has_a_nonzero_exit(
     import arborpress.core.migrations as migration_module
     from arborpress.cli.main import app
 
-    async def fail_upgrade() -> None:
+    async def fail_upgrade(*, engine: object = None) -> None:
         raise RuntimeError("synthetic migration failure")
 
     monkeypatch.setattr(migration_module, "upgrade_database", fail_upgrade)
@@ -75,6 +76,35 @@ def test_database_cli_upgrade_failure_has_a_nonzero_exit(
     result = CliRunner().invoke(app, ["--prefix", str(prefix), "db", "upgrade"])
     assert result.exit_code == 1
     assert "synthetic migration failure" in result.output
+
+
+def test_cli_database_operation_disposes_its_isolated_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arborpress.cli.main import _run_db_migration_operation
+
+    old_engine = db_module._engine
+    old_factory = db_module._session_factory
+    disposed = False
+
+    class FakeEngine:
+        async def dispose(self) -> None:
+            nonlocal disposed
+            disposed = True
+
+    engine = FakeEngine()
+    monkeypatch.setattr(
+        db_module, "create_engine_for_cli", lambda: cast(AsyncEngine, engine)
+    )
+
+    async def operation(*, engine: AsyncEngine) -> str:
+        assert engine is not None
+        return "completed"
+
+    assert asyncio.run(_run_db_migration_operation(operation)) == "completed"
+    assert disposed
+    assert db_module._engine is old_engine
+    assert db_module._session_factory is old_factory
 
 
 @pytest.mark.asyncio

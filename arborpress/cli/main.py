@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import fields
 from datetime import UTC, datetime
 from pathlib import Path
@@ -199,7 +200,7 @@ def db_upgrade() -> None:
 
     try:
         ensure_instance_layout(get_runtime_paths())
-        status = asyncio.run(upgrade_database())
+        status = asyncio.run(_run_db_migration_operation(upgrade_database))
     except Exception as exc:
         typer.echo(f"Database upgrade failed: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -219,7 +220,7 @@ def db_current() -> None:
     from arborpress.core.migrations import schema_status
 
     try:
-        status = asyncio.run(schema_status())
+        status = asyncio.run(_run_db_migration_operation(schema_status))
     except Exception as exc:
         typer.echo(f"Database status unavailable: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -237,7 +238,7 @@ def db_check() -> None:
     from arborpress.core.migrations import schema_status
 
     try:
-        status = asyncio.run(schema_status())
+        status = asyncio.run(_run_db_migration_operation(schema_status))
     except Exception as exc:
         typer.echo(f"Database schema check failed: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -264,7 +265,7 @@ def db_adopt_legacy() -> None:
     from arborpress.core.migrations import adopt_legacy_database
 
     try:
-        asyncio.run(adopt_legacy_database())
+        asyncio.run(_run_db_migration_operation(adopt_legacy_database))
     except Exception as exc:
         typer.echo(f"Legacy database adoption refused: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -286,7 +287,7 @@ def db_downgrade(
     from arborpress.core.migrations import downgrade_database
 
     try:
-        asyncio.run(downgrade_database(revision))
+        asyncio.run(_run_db_migration_operation(downgrade_database, revision))
     except Exception as exc:
         typer.echo(f"Database downgrade failed: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -1653,7 +1654,21 @@ def plugin_validate(
 
 async def _db_upgrade() -> None:
     from arborpress.core.migrations import upgrade_database
-    await upgrade_database()
+
+    await _run_db_migration_operation(upgrade_database)
+
+
+async def _run_db_migration_operation[T](
+    operation: Callable[..., Awaitable[T]], *args: object
+) -> T:
+    """Run a one-shot DB CLI operation and close its async engine cleanly."""
+    from arborpress.core.db import create_engine_for_cli
+
+    engine = create_engine_for_cli()
+    try:
+        return await operation(*args, engine=engine)
+    finally:
+        await engine.dispose()
 
 
 async def _seed(*, force: bool = False) -> dict[str, int]:
