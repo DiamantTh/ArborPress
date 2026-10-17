@@ -33,6 +33,10 @@ jobs:
           npm test --prefix frontend
           npm run build --prefix frontend
           test -f arborpress/static/dist/.vite/manifest.json
+          if rg -n '"@sveltejs/kit"|"@sveltejs/adapter-|adapter-static|svelte-kit|\$app/|\$env/' frontend/package.json frontend/package-lock.json frontend/src frontend/vite.config.ts; then
+            echo "SvelteKit runtime/build remnants found"
+            exit 1
+          fi
 
       - name: Publish compiled package assets for the Python matrix
         uses: actions/upload-artifact@v4
@@ -138,7 +142,10 @@ jobs:
 
           bundle = AssetResolver().resolve("webauthn")
           assert bundle.javascript.endswith(".js") and bundle.stylesheets
-          for entry in ("site", "public", "admin", "editor-tiptap"):
+          for entry in (
+              "site", "public", "webauthn", "auth-security", "auth-mfa",
+              "webauthn-register", "admin", "editor", "editor-tiptap",
+          ):
               assert AssetResolver().resolve(entry).javascript.endswith(".js")
           assert arborpress.__version__
           assert importlib.util.find_spec("poetry") is None
