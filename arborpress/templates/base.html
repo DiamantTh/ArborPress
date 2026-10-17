@@ -101,6 +101,7 @@
       {% if session.get('user_id') %}
         <a href="{{ url_for('admin.dashboard') }}">{{ _('Admin') }}</a>
         <form method="post" action="{{ url_for('auth.logout') }}" style="display:inline">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
           <button type="submit">{{ _('Abmelden') }}</button>
         </form>
       {% else %}
