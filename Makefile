@@ -1,4 +1,4 @@
-.PHONY: help demo test lint check build run db-upgrade
+.PHONY: help demo test lint check frontend-install frontend-check frontend-build build run db-upgrade
 
 PREFIX ?= /tmp/arborpress-dev
 
@@ -21,7 +21,19 @@ check: ## Projektmetadaten und Lockfile prüfen
 	poetry check --lock
 
 build: ## sdist und Wheel bauen
+	$(MAKE) frontend-build
 	poetry build
+
+frontend-install: ## Gelockte Frontend-Abhängigkeiten installieren (Node 24)
+	npm ci --prefix frontend --no-audit --no-fund
+
+frontend-check: ## Svelte- und TypeScript-Prüfung ausführen
+	npm run check --prefix frontend
+
+frontend-build: frontend-install ## Fingerprinted Browserassets und TipTap-Adapter bauen
+	$(MAKE) frontend-check
+	npm run build --prefix frontend
+	npm run build:editor --prefix frontend
 
 db-upgrade: ## Datenbank der PREFIX-Instanz auf neueste Migration bringen
 	poetry run arborpress --prefix "$(PREFIX)" db upgrade

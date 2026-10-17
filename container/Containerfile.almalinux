@@ -8,7 +8,21 @@
 # Image auf AlmaLinux 10 uebernommen.
 # ======================================================================
 
-# ── Stage 1: Builder ───────────────────────────────────────────────────
+# ── Stage 1: Browser asset builder (Node is build-time only) ────────────
+FROM docker.io/library/node:24-bookworm-slim AS frontend-builder
+
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+WORKDIR /build/frontend
+RUN npm ci --no-audit --no-fund
+WORKDIR /build
+COPY frontend/ ./frontend/
+COPY arborpress/static/ ./arborpress/static/
+RUN npm run check --prefix frontend \
+    && npm run build --prefix frontend \
+    && npm run build:editor --prefix frontend
+
+# ── Stage 2: Python builder ────────────────────────────────────────────
 FROM docker.io/library/almalinux:10 AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -70,6 +84,9 @@ ARG PIP_EXTRAS=""
 # Paket inkl. aller Abhängigkeiten installieren
 COPY pyproject.toml poetry.lock README.md LICENSE ./
 COPY arborpress/ ./arborpress/
+COPY --from=frontend-builder /build/arborpress/static/dist/ ./arborpress/static/dist/
+COPY --from=frontend-builder /build/arborpress/static/js/editor-adapters/tiptap.js ./arborpress/static/js/editor-adapters/tiptap.js
+COPY --from=frontend-builder /build/arborpress/static/js/editor-adapters/tiptap.js.map ./arborpress/static/js/editor-adapters/tiptap.js.map
 RUN set -eu; \
     set -- --only main --extras cache-redis; \
     set -f; \
@@ -81,7 +98,7 @@ RUN set -eu; \
     && poetry build --format wheel \
     && /opt/venv/bin/python -m pip install --no-cache-dir --no-deps dist/*.whl
 
-# ── Stage 2: Runtime ───────────────────────────────────────────────────
+# ── Stage 3: Python-only runtime ──────────────────────────────────────
 FROM docker.io/library/almalinux:10 AS runtime
 
 LABEL org.opencontainers.image.title="ArborPress" \
@@ -127,6 +144,7 @@ WORKDIR /
 
 COPY --from=builder --chown=1001:0 /opt/python314 /opt/python314
 COPY --from=builder --chown=1001:0 /opt/venv /opt/venv
+RUN ! command -v node && ! command -v npm && ! command -v npx && ! command -v poetry
 
 COPY --chown=1001:0 container/entrypoint.sh /opt/app-root/entrypoint.sh
 RUN chmod +x /opt/app-root/entrypoint.sh

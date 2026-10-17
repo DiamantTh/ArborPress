@@ -34,7 +34,21 @@
 #   MariaDB:     mysqldump --single-transaction  →  mysql import
 # ======================================================================
 
-# ── Stage 1: Builder ───────────────────────────────────────────────────
+# ── Stage 1: Browser asset builder (Node is build-time only) ────────────
+FROM node:24-bookworm-slim AS frontend-builder
+
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+WORKDIR /build/frontend
+RUN npm ci --no-audit --no-fund
+WORKDIR /build
+COPY frontend/ ./frontend/
+COPY arborpress/static/ ./arborpress/static/
+RUN npm run check --prefix frontend \
+    && npm run build --prefix frontend \
+    && npm run build:editor --prefix frontend
+
+# ── Stage 2: Python builder ────────────────────────────────────────────
 FROM ubuntu:24.04 AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -97,6 +111,9 @@ ARG PIP_EXTRAS=""
 # cache-redis: optionaler Redis-Cache-Backend-Support.
 COPY pyproject.toml poetry.lock README.md LICENSE ./
 COPY arborpress/ ./arborpress/
+COPY --from=frontend-builder /build/arborpress/static/dist/ ./arborpress/static/dist/
+COPY --from=frontend-builder /build/arborpress/static/js/editor-adapters/tiptap.js ./arborpress/static/js/editor-adapters/tiptap.js
+COPY --from=frontend-builder /build/arborpress/static/js/editor-adapters/tiptap.js.map ./arborpress/static/js/editor-adapters/tiptap.js.map
 RUN set -eu; \
     set -- --only main --extras cache-redis; \
     set -f; \
@@ -108,7 +125,7 @@ RUN set -eu; \
     && poetry build --format wheel \
     && /opt/venv/bin/python -m pip install --no-cache-dir --no-deps dist/*.whl
 
-# ── Stage 2: Runtime ───────────────────────────────────────────────────
+# ── Stage 3: Python-only runtime ──────────────────────────────────────
 FROM ubuntu:24.04 AS runtime
 
 LABEL org.opencontainers.image.title="ArborPress" \
@@ -167,6 +184,7 @@ WORKDIR /
 # Virtualenv aus Builder übernehmen
 COPY --from=builder --chown=arborpress:arborpress /opt/venv /opt/venv
 COPY --from=builder --chown=arborpress:arborpress /opt/python314 /opt/python314
+RUN ! command -v node && ! command -v npm && ! command -v npx && ! command -v poetry
 
 # Entrypoint-Skript
 COPY --chown=arborpress:arborpress container/entrypoint.sh /entrypoint.sh

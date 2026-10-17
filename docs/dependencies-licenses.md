@@ -49,14 +49,7 @@ Angaben zu Lizenzen basieren auf den veröffentlichten Paketmetadaten bzw. den v
 | Paket | Bereich | Lizenz (SPDX) | Paketquelle | Quell-/Lizenzlink |
 |---|---|---|---|---|
 | @simplewebauthn/browser | Runtime | MIT | https://www.npmjs.com/package/@simplewebauthn/browser | https://github.com/MasterKale/SimpleWebAuthn |
-| @sveltejs/adapter-static | Dev | MIT | https://www.npmjs.com/package/@sveltejs/adapter-static | https://github.com/sveltejs/kit |
-| @sveltejs/kit | Dev | MIT | https://www.npmjs.com/package/@sveltejs/kit | https://github.com/sveltejs/kit |
 | @sveltejs/vite-plugin-svelte | Dev | MIT | https://www.npmjs.com/package/@sveltejs/vite-plugin-svelte | https://github.com/sveltejs/vite-plugin-svelte |
-| eslint | Dev | MIT | https://www.npmjs.com/package/eslint | https://github.com/eslint/eslint |
-| eslint-config-prettier | Dev | MIT | https://www.npmjs.com/package/eslint-config-prettier | https://github.com/prettier/eslint-config-prettier |
-| eslint-plugin-svelte | Dev | MIT | https://www.npmjs.com/package/eslint-plugin-svelte | https://github.com/sveltejs/eslint-plugin-svelte |
-| prettier | Dev | MIT | https://www.npmjs.com/package/prettier | https://github.com/prettier/prettier |
-| prettier-plugin-svelte | Dev | MIT | https://www.npmjs.com/package/prettier-plugin-svelte | https://github.com/sveltejs/prettier-plugin-svelte |
 | svelte | Dev | MIT | https://www.npmjs.com/package/svelte | https://github.com/sveltejs/svelte |
 | svelte-check | Dev | MIT | https://www.npmjs.com/package/svelte-check | https://github.com/sveltejs/language-tools |
 | tslib | Dev | 0BSD | https://www.npmjs.com/package/tslib | https://github.com/microsoft/tslib |

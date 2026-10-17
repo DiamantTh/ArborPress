@@ -65,9 +65,12 @@ container/                Container-Dateien (OCI – Docker/Podman)
   compose.mariadb.yml     Compose: AlmaLinux-App + MariaDB (Upstream-Image)
   compose.mariadb.ubuntu.yml     Compose: Ubuntu + MariaDB
 docs/                     Proxy-Konfigurationen + Spezifikation (§0–§17)
-frontend/                 SvelteKit-Frontend (Build-Zeit, §9)
+frontend/                 Plain-Svelte- + Vite-Browserbuild (Node nur zur Build-Zeit)
 tests/                    Automatisierte Tests
 ```
+
+Das Frontend-Buildmodell und lokale Befehle stehen in
+[docs/frontend-build.md](docs/frontend-build.md).
 
 ## CLI-Referenz (§14)
 
@@ -199,7 +202,7 @@ Der verbindliche Instanz-Pfadvertrag und die Regeln für relative Pfade stehen i
 | Federation     | httpx (ActivityPub-HTTP-Sig), bleach             |
 | Mail           | aiosmtplib, cryptography (OpenPGP)               |
 | CLI            | Typer ≥ 0.15                                     |
-| Frontend       | SvelteKit + @simplewebauthn/browser              |
+| Frontend       | Svelte + TypeScript + Vite (Browser-Bundles; Node nur zur Build-Zeit) |
 | Config         | pydantic-settings v2, TOML                       |
 
 ## Release-Planung

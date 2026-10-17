@@ -34,9 +34,8 @@ htmlcov/
 .coverage
 coverage.xml
 
-# Docs / Frontend (werden im Image nicht benötigt)
+# Docs / developer scripts
 docs/
-frontend/
 scripts/
 tests/
 # Betreiber-Inhalte (content/) werden per Volume eingebunden
@@ -57,6 +56,12 @@ Makefile
 
 # Compose-Dateien (nicht ins Image)
 container/compose*.yml
+
+# The build stage needs the locked browser source but never host-installed packages.
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
+frontend/dist/
 
 # README
 !README.md

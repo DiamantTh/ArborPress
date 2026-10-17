@@ -24,7 +24,10 @@ def test_runtime_images_use_explicit_prefix_and_only_persist_instance_state() ->
         assert "/opt/app-root/src" not in runtime
         assert "/data" not in runtime
         assert "/opt/poetry" not in runtime
-        assert "node" not in runtime.lower()
+        assert (
+            "RUN ! command -v node && ! command -v npm && "
+            "! command -v npx && ! command -v poetry"
+        ) in runtime
 
 
 def test_compose_examples_share_one_prefix_and_instance_volume() -> None:

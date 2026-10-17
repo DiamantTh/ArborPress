@@ -413,10 +413,12 @@ Requirements:
   - navigation ordering / widgets
 - no theme/plugin may override login/security pages or core security UX
 
-### Frontend build note
-If an SPA is used (Svelte/Vue) it should be build-time only:
-- runtime does not require Node
-- static build artifacts served by backend/reverse proxy
+### Frontend build and rendering model
+- Quart owns all HTTP routes and Jinja renders complete server-side HTML.
+- Svelte is used only for optional browser enhancements; there is no client router or Node SSR.
+- Vite builds fingerprinted same-origin assets into the Python package's `static/dist/` directory.
+- Node and the npm toolchain are build-time only; production runtime serves static files through Quart.
+- See `docs/frontend-build.md` for the build workflow and Jinja manifest helper.
 
 ---
 

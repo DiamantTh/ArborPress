@@ -9,9 +9,46 @@ permissions:
   contents: read
 
 jobs:
+  frontend:
+    name: Node 24 browser assets
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Check and build browser assets
+        run: |
+          npm run check --prefix frontend
+          npm run build --prefix frontend
+          npm run build:editor --prefix frontend
+          test -f arborpress/static/dist/.vite/manifest.json
+
+      - name: Publish compiled package assets for the Python matrix
+        uses: actions/upload-artifact@v4
+        with:
+          name: arborpress-browser-assets
+          path: |
+            arborpress/static/dist/
+            arborpress/static/js/editor-adapters/tiptap.js
+            arborpress/static/js/editor-adapters/tiptap.js.map
+          include-hidden-files: true
+          if-no-files-found: error
+
   validate:
     name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-24.04
+    needs: frontend
     strategy:
       fail-fast: false
       matrix:
@@ -20,6 +57,12 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+
+      - name: Download the validated browser assets
+        uses: actions/download-artifact@v4
+        with:
+          name: arborpress-browser-assets
+          path: arborpress/static
 
       # Keep Poetry itself on the supported 3.14 interpreter while testing
       # ArborPress on each matrix interpreter.
@@ -67,11 +110,38 @@ jobs:
       - name: Build wheel and source distribution
         run: poetry build
 
+      - name: Verify wheel contains Vite manifest and browser assets
+        run: |
+          poetry run python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          wheel = next(Path("dist").glob("*.whl"))
+          with ZipFile(wheel) as archive:
+              names = archive.namelist()
+          assert "arborpress/static/dist/.vite/manifest.json" in names
+          assert any(name.startswith("arborpress/static/dist/assets/") and name.endswith(".js") for name in names)
+          assert any(name.startswith("arborpress/static/dist/assets/") and name.endswith(".css") for name in names)
+          assert not any("node_modules" in name for name in names)
+          PY
+
       - name: Install wheel in a fresh environment and smoke-test CLI
         shell: bash
         run: |
           smoke_venv="${RUNNER_TEMP}/arborpress-wheel-${{ matrix.python-version }}"
           python -m venv "${smoke_venv}"
           "${smoke_venv}/bin/python" -m pip install --disable-pip-version-check dist/*.whl
-          "${smoke_venv}/bin/python" -c 'import arborpress, importlib.util; assert arborpress.__version__; assert importlib.util.find_spec("poetry") is None'
-          "${smoke_venv}/bin/arborpress" --help
+          PATH="${smoke_venv}/bin" "${smoke_venv}/bin/python" - <<'PY'
+          import importlib.util
+          import shutil
+
+          import arborpress
+          from arborpress.web.assets import AssetResolver
+
+          bundle = AssetResolver().resolve("webauthn")
+          assert bundle.javascript.endswith(".js") and bundle.stylesheets
+          assert arborpress.__version__
+          assert importlib.util.find_spec("poetry") is None
+          assert shutil.which("node") is None
+          PY
+          PATH="${smoke_venv}/bin" "${smoke_venv}/bin/arborpress" --help
