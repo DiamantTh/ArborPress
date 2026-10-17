@@ -286,6 +286,27 @@ async def test_unknown_and_incomplete_legacy_schemas_are_not_stamped(tmp_path: P
     finally:
         await incomplete_engine.dispose()
 
+    extended_path = tmp_path / "extended-legacy.db"
+    _load_legacy_fixture(extended_path)
+    with sqlite3.connect(extended_path) as connection:
+        connection.execute("CREATE TABLE unrecognized_extension (id TEXT PRIMARY KEY)")
+        connection.commit()
+    extended_engine = _sqlite_engine(extended_path)
+    try:
+        status = await schema_status(extended_engine)
+        assert status.state == "unknown_legacy"
+        assert "unexpected table unrecognized_extension" in status.detail
+        with pytest.raises(MigrationError, match="Legacy adoption refused"):
+            await adopt_legacy_database(extended_engine)
+        async with extended_engine.connect() as connection:
+            tables = await connection.run_sync(
+                lambda sync_connection: set(sa.inspect(sync_connection).get_table_names())
+            )
+            assert "unrecognized_extension" in tables
+            assert "alembic_version" not in tables
+    finally:
+        await extended_engine.dispose()
+
 
 @pytest.mark.asyncio
 async def test_unknown_revision_and_migration_lock_timeout_fail_closed(

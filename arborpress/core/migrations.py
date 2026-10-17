@@ -168,11 +168,19 @@ def _normalized_action(value: object) -> str | None:
     return str(value).upper() if value is not None else None
 
 
-def _expected_schema_errors(connection: Connection) -> list[str]:
+def _expected_schema_errors(
+    connection: Connection,
+    *,
+    allow_extra_tables: bool = True,
+) -> list[str]:
     """Check the model's core structural contract without trying to diff SQL."""
     inspector = sa.inspect(connection)
     actual_tables = _table_names(inspector)
     errors: list[str] = []
+    expected_table_names = {table.name for table in Base.metadata.sorted_tables}
+    if not allow_extra_tables:
+        for table_name in sorted(actual_tables - expected_table_names):
+            errors.append(f"unexpected table {table_name}")
 
     for table in Base.metadata.sorted_tables:
         if table.name not in actual_tables:
@@ -304,7 +312,7 @@ async def _inspect_status(connection: AsyncConnection) -> SchemaStatus:
         if not app_tables and not has_version:
             return SchemaStatus("empty", (), head, "Database has no tables or Alembic version.")
         if not has_version:
-            errors = _expected_schema_errors(sync_connection)
+            errors = _expected_schema_errors(sync_connection, allow_extra_tables=False)
             if errors:
                 detail = "; ".join(errors[:8])
                 return SchemaStatus("unknown_legacy", (), head, detail)
