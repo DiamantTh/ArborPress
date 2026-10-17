@@ -130,12 +130,14 @@ include = [
     { path = "arborpress/**/*.css", format = ["sdist", "wheel"] },
     { path = "arborpress/**/*.html", format = ["sdist", "wheel"] },
     { path = "arborpress/**/*.ini", format = ["sdist", "wheel"] },
+    { path = "arborpress/**/*.json", format = ["sdist", "wheel"] },
     { path = "arborpress/**/*.js", format = ["sdist", "wheel"] },
     { path = "arborpress/**/*.mako", format = ["sdist", "wheel"] },
     { path = "arborpress/**/*.map", format = ["sdist", "wheel"] },
     { path = "arborpress/**/*.po", format = ["sdist", "wheel"] },
     { path = "arborpress/**/*.toml", format = ["sdist", "wheel"] },
     { path = "arborpress/**/*.txt", format = ["sdist", "wheel"] },
+    { path = "arborpress/static/dist/.vite/manifest.json", format = ["sdist", "wheel"] },
 ]
 
 [tool.ruff]

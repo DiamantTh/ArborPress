@@ -11,6 +11,7 @@ from arborpress.core.config import get_settings
 from arborpress.logging.config import setup_logging
 from arborpress.plugins.registry import get_registry
 from arborpress.runtime.paths import ensure_instance_layout, get_runtime_paths
+from arborpress.web.assets import AssetResolver
 from arborpress.web.middleware import ReverseProxyMiddleware
 from arborpress.web.routes.api import api_admin_bp, api_v1_bp
 from arborpress.web.routes.auth import auth_bp
@@ -41,6 +42,10 @@ def create_app() -> Quart:
         static_folder=str(_PKG_ROOT / "static"),
         static_url_path="/static",
     )
+    # Vite assets are resolved lazily when a Jinja template requests an entry.
+    # This keeps application startup usable in a source checkout before a local
+    # frontend build, while installed releases ship the manifest and bundles.
+    app.jinja_env.globals["vite_asset"] = AssetResolver().resolve
     app.secret_key = cfg.web.secret_key.get_secret_value()
 
     # §10 Session cookie hardening
