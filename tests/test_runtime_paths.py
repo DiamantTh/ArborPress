@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -117,6 +119,20 @@ def test_layout_creation_preserves_existing_files(tmp_path: Path) -> None:
     assert marker.read_text(encoding="utf-8") == "keep-me\n"
 
 
+def test_new_sensitive_instance_directories_are_owner_only_on_posix(
+    tmp_path: Path,
+) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX mode bits are not portable to this platform")
+    paths = ArborPressPaths.from_prefix(tmp_path / "prefix")
+
+    ensure_instance_layout(paths)
+
+    assert stat.S_IMODE(paths.config.stat().st_mode) == 0o700
+    assert stat.S_IMODE(paths.backups.stat().st_mode) == 0o700
+    assert stat.S_IMODE(paths.run.stat().st_mode) == 0o700
+
+
 def test_existing_non_directory_prefix_is_rejected(tmp_path: Path) -> None:
     file_prefix = tmp_path / "not-a-directory"
     file_prefix.write_text("x", encoding="utf-8")
@@ -148,3 +164,23 @@ def test_runtime_context_rejects_uncontrolled_second_prefix(tmp_path: Path) -> N
     with pytest.raises(RuntimeError, match="refusing a second instance"):
         initialize_runtime(tmp_path / "two")
     assert get_runtime_paths().prefix == first.resolve()
+
+
+def test_runtime_context_lazily_initializes_from_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prefix = tmp_path / "environment-prefix"
+    reset_runtime_for_tests()
+    monkeypatch.setenv("ARBORPRESS_PREFIX", str(prefix))
+
+    assert get_runtime_paths().prefix == prefix.resolve()
+
+
+def test_path_access_without_environment_or_context_has_actionable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reset_runtime_for_tests()
+    monkeypatch.delenv("ARBORPRESS_PREFIX", raising=False)
+
+    with pytest.raises(RuntimeError, match="pass --prefix, set ARBORPRESS_PREFIX"):
+        get_runtime_paths()

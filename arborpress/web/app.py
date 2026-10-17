@@ -309,13 +309,14 @@ def create_app() -> Quart:
         from arborpress.core.db import get_engine
         from arborpress.core.db_capabilities import detect_capabilities, set_capabilities
         from arborpress.core.scheduler import run_scheduler
+        from arborpress.runtime.paths import ensure_instance_layout, get_runtime_paths
 
         # §14 Installations-Token generieren wenn noch nicht installiert
         if not is_installed():
+            ensure_instance_layout(get_runtime_paths())
             token_file = install_token_path()
             if not token_file.exists():
                 token = _sec.token_urlsafe(32)
-                token_file.parent.mkdir(parents=True, exist_ok=True)
                 token_file.write_text(token + "\n", encoding="utf-8")
                 _log.getLogger("arborpress").warning(
                     "\n"

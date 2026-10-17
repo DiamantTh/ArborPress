@@ -10,8 +10,34 @@ from quart import Quart
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
+@pytest.fixture(scope="session", autouse=True)
+def runtime_prefix(tmp_path_factory: pytest.TempPathFactory):
+    """Give tests one explicit instance identity without relying on cwd."""
+    from arborpress.runtime.paths import reset_runtime_for_tests
+
+    prefix = tmp_path_factory.mktemp("arborpress-test-prefix")
+    reset_runtime_for_tests(prefix)
+    yield prefix
+    reset_runtime_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def reset_runtime_settings(runtime_prefix):
+    """Isolate prefix-sensitive settings and service singletons per test."""
+    from arborpress.core.config import reset_settings
+    from arborpress.runtime.paths import reset_runtime_for_tests
+    from arborpress.web import ratelimit
+
+    reset_settings()
+    ratelimit._limiter = None
+    yield
+    reset_settings()
+    ratelimit._limiter = None
+    reset_runtime_for_tests(runtime_prefix)
+
+
 @pytest.fixture(scope="session")
-async def test_engine():
+async def test_engine(runtime_prefix):
     """Datei-SQLite-Engine für Tests (kein PostgreSQL nötig).
 
     Eine temporäre Datei statt :memory: wird verwendet, damit Verbindungs-

@@ -860,9 +860,10 @@ async def register_complete():
 
     if initial_enrollment:
         from arborpress.core.config import install_token_path, installed_marker_path
+        from arborpress.runtime.paths import ensure_instance_layout, get_runtime_paths
 
+        ensure_instance_layout(get_runtime_paths())
         marker = installed_marker_path()
-        marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text("installed\n", encoding="utf-8")
         token_path = install_token_path()
         if token_path.exists():

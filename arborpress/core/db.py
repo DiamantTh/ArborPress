@@ -45,6 +45,12 @@ def get_engine() -> AsyncEngine:
         echo = cfg.db.echo
 
         if cfg.db.is_sqlite:
+            from sqlalchemy.engine import make_url
+
+            from arborpress.runtime.paths import ensure_instance_layout, get_runtime_paths
+
+            if make_url(url).database != ":memory:":
+                ensure_instance_layout(get_runtime_paths())
             # SQLite: no connection pool, WAL + FK via connect_args/event
             from sqlalchemy import event as sa_event
             from sqlalchemy.pool import NullPool, StaticPool

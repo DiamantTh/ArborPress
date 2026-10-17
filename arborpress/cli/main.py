@@ -11,14 +11,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import fields
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import typer
 
-from arborpress.core.config import Settings, get_settings
+from arborpress.core.config import get_settings
 from arborpress.core.i18n import cli_gettext as __
+from arborpress.runtime.paths import (
+    ensure_instance_layout,
+    get_runtime_paths,
+    initialize_runtime,
+    resolve_prefix,
+)
 
 if TYPE_CHECKING:
     from cryptography.fernet import Fernet
@@ -63,15 +70,36 @@ app.add_typer(webauthn_app, name="webauthn")
 
 @app.callback()
 def main_callback(
+    prefix: Path | None = typer.Option(  # noqa: B008
+        None, "--prefix", help="ArborPress installation prefix"
+    ),
     config: Path | None = typer.Option(  # noqa: B008
         None, "--config", "-c",
         help="Path to config.toml or a config/ directory",
     ),
 ) -> None:
-    """Shared entry point. Loads configuration."""
-    if config:
-        import arborpress.core.config as config_mod
-        config_mod._settings = Settings.from_path(config)  # type: ignore[attr-defined]
+    """Initialize prefix identity before any command loads configuration."""
+    selected_prefix = resolve_prefix(prefix)
+    initialize_runtime(selected_prefix, override=True)
+    import arborpress.core.config as config_mod
+
+    config_mod.reset_settings()
+    if config is not None:
+        config_mod.get_settings(config)
+
+
+@app.command("paths")
+def show_paths(
+    as_json: bool = typer.Option(False, "--json", help="Print stable JSON fields"),
+) -> None:
+    """Show the active prefix layout without starting services or opening the DB."""
+    paths = get_runtime_paths()
+    values = {field.name: str(getattr(paths, field.name)) for field in fields(paths)}
+    if as_json:
+        typer.echo(json.dumps(values, indent=2, sort_keys=True))
+        return
+    for name, value in values.items():
+        typer.echo(f"{name.replace('_', ' ')}: {value}")
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +121,7 @@ def init(
 
     Sample content is inserted by default (use --no-seed to disable).
     """
+    ensure_instance_layout(get_runtime_paths())
     typer.echo(__("Applying database migrations …"))
     asyncio.run(_db_upgrade())
     if seed:

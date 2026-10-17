@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 import arborpress.core.config as config_mod
 import arborpress.core.db as db_mod
 from arborpress.core import site_settings
-from arborpress.core.config import Settings
+from arborpress.runtime.paths import (
+    ensure_instance_layout,
+    initialize_runtime,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -23,9 +26,11 @@ def _reset_cache():
 
 @pytest.fixture()
 async def install_app(tmp_path, test_engine):
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    (config_dir / "config.toml").write_text(
+    paths = initialize_runtime(tmp_path / "install-prefix", override=True)
+    ensure_instance_layout(paths)
+    external_config_dir = tmp_path / "secure-config"
+    external_config_dir.mkdir()
+    (external_config_dir / "config.toml").write_text(
         """
 [web]
 secret_key = "test-secret-key"
@@ -33,10 +38,14 @@ base_url = "http://localhost:8066"
 """,
         encoding="utf-8",
     )
-    (config_dir / "install.token").write_text(secrets.token_urlsafe(32) + "\n", encoding="utf-8")
+    paths.config.joinpath("install.token").write_text(
+        secrets.token_urlsafe(32) + "\n", encoding="utf-8"
+    )
 
-    settings = Settings.from_path(config_dir)
     old_settings = config_mod._settings
+    old_settings_key = config_mod._settings_key
+    config_mod.reset_settings()
+    settings = config_mod.get_settings(external_config_dir)
     old_engine = db_mod._engine
     old_factory = db_mod._session_factory
 
@@ -66,7 +75,7 @@ base_url = "http://localhost:8066"
     app = create_app()
     app.config["TESTING"] = True
 
-    yield app, config_dir
+    yield app, paths.config
 
     async with factory() as db:
         for user_id in prior_admin_ids:
@@ -87,6 +96,7 @@ base_url = "http://localhost:8066"
         await db.commit()
 
     config_mod._settings = old_settings
+    config_mod._settings_key = old_settings_key
     db_mod._engine = old_engine
     db_mod._session_factory = old_factory
 

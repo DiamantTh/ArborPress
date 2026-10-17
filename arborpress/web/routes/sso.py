@@ -56,10 +56,7 @@ def _load_sso_config() -> dict:
     """Read SSO configuration from config.toml if available."""
     cfg = get_settings()
     config_file = getattr(cfg, "_config_file", None)
-    candidates: list[Path] = []
-    if config_file:
-        candidates.append(Path(config_file))
-    candidates.extend([Path("config/config.toml"), Path("config.toml")])
+    candidates = [Path(config_file)] if config_file else []
 
     for candidate in candidates:
         try:

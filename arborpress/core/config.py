@@ -12,11 +12,9 @@ search, general blog settings) are read via arborpress.core.site_settings
 from the database and managed in the admin interface under /admin/settings.
 
 Configuration sources (load order):
-  1.  --config ./config/    – directory: loads config/config.toml
-  2.  --config config.toml  – single file
-  3.  config/               – auto-discover: directory in cwd
-  4.  config.toml           – auto-discover: single file in cwd
-  5.  Defaults + env vars   – ARBORPRESS_SECTION__KEY=value
+  1.  --config PATH         – explicit file or configuration directory
+  2.  PREFIX/instance/config/config.toml
+  3.  Defaults + env vars   – ARBORPRESS_SECTION__KEY=value
 
 include directive:
   include = ["secrets.toml"]   # relative to the file's directory
@@ -30,8 +28,11 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, PrivateAttr, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+
+from arborpress.runtime.paths import ArborPressPaths, get_runtime_paths
 
 # ---------------------------------------------------------------------------
 # TOML loading helpers
@@ -86,6 +87,7 @@ def _load_config_dir(directory: Path) -> tuple[dict, Path]:
     optionally contains `include = ["secrets.toml"]` – all included
     files are resolved relative to the directory (i.e. the same folder).
     """
+    directory = directory.expanduser().resolve()
     main = directory / "config.toml"
     if not main.exists():
         raise FileNotFoundError(
@@ -236,6 +238,7 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
         case_sensitive=False,
     )
+    _config_file: Path | None = PrivateAttr(default=None)
 
     db:      DatabaseSettings = Field(default_factory=DatabaseSettings)
     web:     WebSettings      = Field(default_factory=WebSettings)
@@ -251,6 +254,7 @@ class Settings(BaseSettings):
         File:       TOML file, optionally with ``include`` directive.
         Directory:  all ``*.toml`` alphabetically sorted and merged.
         """
+        path = path.expanduser().resolve()
         if path.is_dir():
             data, anchor = _load_config_dir(path)
         else:
@@ -278,19 +282,19 @@ class Settings(BaseSettings):
 
 
 _settings: Settings | None = None
+_settings_key: tuple[Path, Path] | None = None
+
+
+def reset_settings() -> None:
+    """Clear the process settings cache for controlled CLI/test reinitialization."""
+    global _settings, _settings_key
+    _settings = None
+    _settings_key = None
 
 
 def get_config_dir() -> Path:
-    """Return the directory where sidecar files live (install.token, .installed).
-
-    Corresponds to the loaded config file's directory, or ``config/`` as fallback.
-    """
-    cfg_file = getattr(_settings, "_config_file", None) if _settings else None
-    if cfg_file is not None:
-        return Path(cfg_file).parent
-    if Path("config").is_dir():
-        return Path("config")
-    return Path(".")
+    """Return the prefix-owned directory for install sidecar files."""
+    return get_runtime_paths().config
 
 
 def install_token_path() -> Path:
@@ -309,20 +313,56 @@ def is_installed() -> bool:
 
 
 def get_settings(config_path: Path | None = None) -> Settings:
-    """Singleton – load order: config/ → config.toml → env vars → defaults.
+    """Load prefix configuration, optionally from an explicit override.
 
-    ``config_path`` can be a file or a directory.
-    Auto-discover (when None): first ``config/``, then ``config.toml``.
+    An explicit override is kept independent from prefix identity and may be a
+    TOML file or directory. Without it, only the active prefix's canonical
+    ``instance/config/config.toml`` is considered; the working directory is
+    never searched.
     """
-    global _settings
-    if _settings is None:
-        if config_path is None:
-            if (Path("config") / "config.toml").is_file():
-                config_path = Path("config")
-            else:
-                config_path = Path("config.toml")
-        if config_path.exists():
-            _settings = Settings.from_path(config_path)
+    global _settings, _settings_key
+    paths = get_runtime_paths()
+    if (
+        config_path is None
+        and _settings is not None
+        and _settings_key is not None
+        and _settings_key[0] == paths.prefix
+    ):
+        return _settings
+    resolved_config = (
+        paths.config_file
+        if config_path is None
+        else Path(config_path).expanduser().resolve()
+    )
+    key = (paths.prefix, resolved_config)
+    if _settings is None or _settings_key != key:
+        if resolved_config.exists():
+            _settings = Settings.from_path(resolved_config)
         else:
             _settings = Settings()
+            _settings._config_file = resolved_config
+        _resolve_instance_paths(_settings, paths)
+        _settings_key = key
     return _settings
+
+
+def _resolve_instance_paths(settings: Settings, paths: ArborPressPaths) -> None:
+    """Resolve a relative SQLite database under the instance data directory."""
+    url = make_url(settings.db.url)
+    database = url.database
+    if (
+        url.drivername.startswith("sqlite")
+        and database is not None
+        and database != ""
+        and database != ":memory:"
+        and not Path(database).is_absolute()
+    ):
+        data_root = paths.data.resolve(strict=False)
+        database_path = (data_root / Path(database)).resolve(strict=False)
+        if not database_path.is_relative_to(data_root):
+            raise ValueError(
+                "Relative SQLite database paths must remain inside instance/data"
+            )
+        settings.db.url = url.set(database=str(database_path)).render_as_string(
+            hide_password=False
+        )

@@ -121,7 +121,10 @@ def resolve_prefix(
 
 
 def get_runtime_paths() -> ArborPressPaths:
-    """Return the initialized paths or explain how to initialize them."""
+    """Return initialized paths, lazily honoring the process prefix environment."""
+    global _runtime_paths
+    if _runtime_paths is None and os.environ.get("ARBORPRESS_PREFIX"):
+        return initialize_runtime(os.environ["ARBORPRESS_PREFIX"])
     if _runtime_paths is None:
         raise RuntimeError(
             "ArborPress prefix is not initialized; pass --prefix, set "
