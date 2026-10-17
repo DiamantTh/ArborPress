@@ -153,3 +153,9 @@ def get_registry() -> PluginRegistry:
     if _registry is None:
         _registry = PluginRegistry()
     return _registry
+
+
+def reset_registry_for_tests() -> None:
+    """Reset the process singleton between tests using different prefixes."""
+    global _registry
+    _registry = None

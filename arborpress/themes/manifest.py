@@ -199,13 +199,17 @@ def get_theme_registry() -> ThemeRegistry:
     global _registry
     if _registry is None:
         _registry = ThemeRegistry()
-        # Load external themes from content/themes/
-        extra: list[Path] = []
-        external = Path("content/themes")
-        if external.is_dir():
-            extra.append(external)
-        _registry.load(extra_dirs=extra or None)
+        from arborpress.runtime.paths import get_runtime_paths
+
+        # Built-ins remain package resources and override colliding external IDs.
+        _registry.load(extra_dirs=[get_runtime_paths().themes])
     return _registry
+
+
+def reset_theme_registry_for_tests() -> None:
+    """Reset the process singleton between tests using different prefixes."""
+    global _registry
+    _registry = None
 
 
 def get_active_theme() -> ThemeManifest:

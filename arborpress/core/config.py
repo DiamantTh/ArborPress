@@ -270,15 +270,17 @@ class Settings(BaseSettings):
         return cls.from_path(path)
 
     def plugin_dirs(self) -> list[Path]:
-        """Plugin directories as resolved absolute paths.
+        """Return configured plugin roots followed by the canonical instance root.
 
-        Relative paths are resolved relative to the config file,
-        not relative to the working directory.
+        Additional relative paths are anchored to the active config file (which
+        may be an explicit override), never to the working directory. The
+        canonical instance directory is loaded last and therefore takes
+        precedence when plugin IDs collide.
         """
-        cfg = getattr(self, "_config_file", None)
-        if cfg is not None:
-            return self.plugins.resolved_dirs(cfg)
-        return [d.resolve() for d in self.plugins.dirs]
+        paths = get_runtime_paths()
+        config_file = self._config_file or paths.config_file
+        directories = [*self.plugins.resolved_dirs(config_file), paths.plugins]
+        return list(dict.fromkeys(directories))
 
 
 _settings: Settings | None = None
@@ -347,7 +349,17 @@ def get_settings(config_path: Path | None = None) -> Settings:
 
 
 def _resolve_instance_paths(settings: Settings, paths: ArborPressPaths) -> None:
-    """Resolve a relative SQLite database under the instance data directory."""
+    """Resolve local paths which have instance-relative config semantics."""
+    media_root = paths.instance.resolve(strict=False)
+    media_dir = Path(settings.web.media_dir).expanduser()
+    if media_dir.is_absolute():
+        settings.web.media_dir = media_dir
+    else:
+        resolved_media_dir = (media_root / media_dir).resolve(strict=False)
+        if not resolved_media_dir.is_relative_to(media_root):
+            raise ValueError("Relative media paths must remain inside the instance")
+        settings.web.media_dir = resolved_media_dir
+
     url = make_url(settings.db.url)
     database = url.database
     if (

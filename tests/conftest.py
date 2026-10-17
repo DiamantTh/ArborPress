@@ -25,14 +25,20 @@ def runtime_prefix(tmp_path_factory: pytest.TempPathFactory):
 def reset_runtime_settings(runtime_prefix):
     """Isolate prefix-sensitive settings and service singletons per test."""
     from arborpress.core.config import reset_settings
+    from arborpress.plugins.registry import reset_registry_for_tests
     from arborpress.runtime.paths import reset_runtime_for_tests
+    from arborpress.themes.manifest import reset_theme_registry_for_tests
     from arborpress.web import ratelimit
 
     reset_settings()
     ratelimit._limiter = None
+    reset_registry_for_tests()
+    reset_theme_registry_for_tests()
     yield
     reset_settings()
     ratelimit._limiter = None
+    reset_registry_for_tests()
+    reset_theme_registry_for_tests()
     reset_runtime_for_tests(runtime_prefix)
 
 
