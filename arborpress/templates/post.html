@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "macros/assets.html" import vite_styles, vite_script with context %}
 {% block title %}{{ post.title }}{% endblock %}
 {% block description %}{{ post.excerpt or post.title }}{% endblock %}
 
@@ -9,10 +10,7 @@
 {% if federation_settings.get('mode', 'disabled') != 'disabled' and post.ap_object_id %}
 <link rel="alternate" type="application/activity+json" href="{{ post.ap_object_id }}">
 {% endif %}
-{% set public_assets = vite_asset('public') %}
-{% for stylesheet in public_assets.stylesheets %}
-<link rel="stylesheet" href="{{ url_for('static', filename=stylesheet) }}">
-{% endfor %}
+{{ vite_styles('public') }}
 {% endblock %}
 
 {% block content %}
@@ -285,6 +283,5 @@
 {% endblock %}
 
 {% block scripts %}
-{% set public_assets = vite_asset('public') %}
-<script type="module" src="{{ url_for('static', filename=public_assets.javascript) }}"></script>
+{{ vite_script('public') }}
 {% endblock %}

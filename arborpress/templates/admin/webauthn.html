@@ -53,6 +53,7 @@
       id="webauthn-form" data-stepup-action="change_webauthn_settings" data-stepup-target="instance"
       data-stepup-active="{{ 'true' if stepup_active else 'false' }}"
       {% if not stepup_active %}inert{% endif %}>
+  {{ csrf_input() }}
 
   <fieldset>
     <legend>Authenticator-Auswahl</legend>
@@ -188,6 +189,7 @@
        geprüft.</p>
     {% if rp_id_blocked %}
     <form method="POST" action="{{ url_for('admin.webauthn_unlock_rp_id') }}" class="admin-form" data-stepup-action="unlock_webauthn_rp_id" data-stepup-target="instance">
+      {{ csrf_input() }}
       <p><strong>Bestätigung erforderlich.</strong> Gib zur Bestätigung die
          neue <code>rp.id</code> ein:</p>
       <label>
@@ -206,6 +208,7 @@
        nächsten WebAuthn-Aufruf automatisch übernommen. Empfehlung: nach
        Migration sofort wieder sperren.</p>
     <form method="POST" action="{{ url_for('admin.webauthn_relock_rp_id') }}" data-stepup-action="lock_webauthn_rp_id" data-stepup-target="instance">
+      {{ csrf_input() }}
       <button type="submit" class="btn btn-primary">RP-ID wieder sperren</button>
     </form>
   {% endif %}
@@ -213,5 +216,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="{{ url_for('static', filename='js/admin-security.js') }}"></script>
+{{ super() }}
 {% endblock %}

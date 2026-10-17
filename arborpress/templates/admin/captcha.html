@@ -52,32 +52,38 @@
   </p>
 
   <form method="POST" action="{{ url_for('admin.captcha_settings_save') }}" id="qform" class="admin-form">
-    <div id="questions-list">
+    {{ csrf_input() }}
+    <div id="questions-list-fallback">
       {% for entry in questions %}
       <div class="q-row" data-idx="{{ loop.index0 }}">
         <div class="q-row__inputs">
-          <input type="text" name="q_{{ loop.index0 }}" value="{{ entry.q }}"
-                 placeholder="Frage …" required class="q-input q-input--q">
-          <input type="text" name="a_{{ loop.index0 }}" value="{{ entry.a }}"
-                 placeholder="Antwort (case-insensitiv)" required class="q-input q-input--a">
+          <label>Frage
+            <input type="text" name="q_{{ loop.index0 }}" value="{{ entry.q }}"
+                   required class="q-input q-input--q">
+          </label>
+          <label>Antwort (case-insensitiv)
+            <input type="text" name="a_{{ loop.index0 }}" value="{{ entry.a }}"
+                   required class="q-input q-input--a">
+          </label>
         </div>
-        <button type="button" class="btn btn-danger btn--small q-remove" title="Entfernen">×</button>
       </div>
       {% endfor %}
       {% if not questions %}
       <div class="q-row" data-idx="0">
         <div class="q-row__inputs">
-          <input type="text" name="q_0" placeholder="Frage …" required class="q-input q-input--q">
-          <input type="text" name="a_0" placeholder="Antwort (case-insensitiv)" required class="q-input q-input--a">
+          <label>Frage
+            <input type="text" name="q_0" required class="q-input q-input--q">
+          </label>
+          <label>Antwort (case-insensitiv)
+            <input type="text" name="a_0" required class="q-input q-input--a">
+          </label>
         </div>
-        <button type="button" class="btn btn-danger btn--small q-remove" title="Entfernen">×</button>
       </div>
       {% endif %}
     </div>
-
-    <button type="button" id="add-q" class="btn" style="margin:0.75rem 0;">
-      + Frage hinzufügen
-    </button>
+    <p>Ohne JavaScript können vorhandene Fragen bearbeitet werden. Das Hinzufügen und Entfernen von Fragen benötigt die optionale Browser-Erweiterung.</p>
+    <script id="captcha-questions-data" type="application/json">{{ questions | tojson }}</script>
+    <div data-ap-admin-mount="captcha-questions" hidden></div>
 
     <div class="form-actions">
       <button type="submit" class="btn btn-primary">Speichern</button>
@@ -132,35 +138,4 @@
   </table>
 </section>
 
-<style>
-  .q-row { display: flex; align-items: center; gap: .5rem; margin-bottom: .6rem; }
-  .q-row__inputs { display: grid; grid-template-columns: 2fr 1fr; gap: .5rem; flex: 1; }
-  .q-input { padding: .45rem .7rem; border: 1px solid var(--admin-border); border-radius: 4px;
-              font-size: .9rem; width: 100%; }
-  @media(max-width:640px){ .q-row__inputs { grid-template-columns: 1fr; } }
-</style>
-
-<script>
-  let nextIdx = {{ questions | length if questions else 1 }};
-
-  document.getElementById('add-q').addEventListener('click', () => {
-    const list = document.getElementById('questions-list');
-    const row = document.createElement('div');
-    row.className = 'q-row';
-    row.dataset.idx = nextIdx;
-    row.innerHTML = `
-      <div class="q-row__inputs">
-        <input type="text" name="q_${nextIdx}" placeholder="Frage …" required class="q-input q-input--q">
-        <input type="text" name="a_${nextIdx}" placeholder="Antwort (case-insensitiv)" required class="q-input q-input--a">
-      </div>
-      <button type="button" class="btn btn-danger btn--small q-remove" title="Entfernen">×</button>`;
-    list.appendChild(row);
-    row.querySelector('.q-remove').addEventListener('click', () => row.remove());
-    nextIdx++;
-  });
-
-  document.querySelectorAll('.q-remove').forEach(btn =>
-    btn.addEventListener('click', () => btn.closest('.q-row').remove())
-  );
-</script>
 {% endblock %}

@@ -29,12 +29,16 @@
       <td>
         {% if plugin.enabled %}
         <button class="btn btn-sm btn-danger plugin-toggle"
-                data-id="{{ plugin.manifest.id }}"
-                data-action="disable">Deaktivieren</button>
+                data-url="{{ url_for('admin.plugin_disable', plugin_id=plugin.manifest.id) }}"
+                data-stepup-action="disable_plugin"
+                data-stepup-target="{{ plugin.manifest.id }}"
+                disabled>Deaktivieren</button>
         {% else %}
         <button class="btn btn-sm btn-primary plugin-toggle"
-                data-id="{{ plugin.manifest.id }}"
-                data-action="enable">Aktivieren</button>
+                data-url="{{ url_for('admin.plugin_enable', plugin_id=plugin.manifest.id) }}"
+                data-stepup-action="enable_plugin"
+                data-stepup-target="{{ plugin.manifest.id }}"
+                disabled>Aktivieren</button>
         {% endif %}
       </td>
     </tr>
@@ -43,19 +47,6 @@
     {% endfor %}
   </tbody>
 </table>
-
-<script>
-document.querySelectorAll('.plugin-toggle').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const id = btn.dataset.id;
-    const action = btn.dataset.action;
-    const res = await fetch(`/admin/plugins/${id}/${action}`, { method: 'POST' });
-    if (res.status === 403) {
-      window.location.href = '/auth/stepup';
-    } else if (res.ok) {
-      window.location.reload();
-    }
-  });
-});
-</script>
+<p data-admin-feedback role="status" aria-live="polite"></p>
+<noscript><p>Plugin-Aktionen benötigen JavaScript und eine serverseitige Step-up-Bestätigung.</p></noscript>
 {% endblock %}

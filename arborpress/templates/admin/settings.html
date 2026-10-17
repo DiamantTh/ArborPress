@@ -33,6 +33,7 @@
 <section class="admin-card" id="sec-general">
   <h3>Allgemein</h3>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    {{ csrf_input() }}
     <input type="hidden" name="section" value="general">
 
     <label>
@@ -78,6 +79,7 @@
 <section class="admin-card" id="sec-mail">
   <h3>E-Mail</h3>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    {{ csrf_input() }}
     <input type="hidden" name="section" value="mail">
 
     <label>
@@ -159,6 +161,7 @@
 <section class="admin-card" id="sec-comments">
   <h3>Kommentare</h3>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    {{ csrf_input() }}
     <input type="hidden" name="section" value="comments">
 
     <label class="checkbox">
@@ -229,6 +232,7 @@
     DNS-Blacklists gefiltert werden. Whitelist hat immer Vorrang vor Blocklist.
   </p>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    {{ csrf_input() }}
     <input type="hidden" name="section" value="comment_filter">
 
     <fieldset>
@@ -321,6 +325,7 @@
 <section class="admin-card" id="sec-federation">
   <h3>Federation <span class="badge">ActivityPub</span></h3>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    {{ csrf_input() }}
     <input type="hidden" name="section" value="federation">
 
     <label>
@@ -371,6 +376,7 @@
 <section class="admin-card" id="sec-search">
   <h3>Suche</h3>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    {{ csrf_input() }}
     <input type="hidden" name="section" value="search">
 
     <label>
@@ -401,6 +407,7 @@
 <section class="admin-card" id="sec-theme">
   <h3>Theme</h3>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    {{ csrf_input() }}
     <input type="hidden" name="section" value="theme">
 
     <label>
@@ -501,6 +508,7 @@
     Ideal für Demo-Installationen, Showcases oder Theme-Previews.
   </p>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+    {{ csrf_input() }}
     <input type="hidden" name="section" value="demo">
 
     <label class="checkbox-row">

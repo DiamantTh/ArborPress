@@ -1,0 +1,12 @@
+{# Resolve logical Vite entries; templates never contain fingerprinted names. #}
+{% macro vite_styles(entry) -%}
+  {% set bundle = vite_asset(entry) %}
+  {% for stylesheet in bundle.stylesheets %}
+<link rel="stylesheet" href="{{ url_for('static', filename=stylesheet) }}">
+  {% endfor %}
+{%- endmacro %}
+
+{% macro vite_script(entry) -%}
+  {% set bundle = vite_asset(entry) %}
+<script type="module" src="{{ url_for('static', filename=bundle.javascript) }}"></script>
+{%- endmacro %}

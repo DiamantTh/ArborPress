@@ -21,6 +21,7 @@ import secrets
 from collections.abc import Callable
 from typing import Any
 
+from markupsafe import Markup
 from quart import abort, request, session
 
 from arborpress.core.config import get_settings
@@ -38,6 +39,13 @@ def get_csrf_token() -> str:
     if _CSRF_SESSION_KEY not in session:
         session[_CSRF_SESSION_KEY] = secrets.token_hex(32)
     return session[_CSRF_SESSION_KEY]
+
+
+def csrf_input() -> Markup:
+    """Render the session-bound CSRF token as a safe HTML form field."""
+    return Markup('<input type="hidden" name="_csrf" value="{}">').format(
+        get_csrf_token()
+    )
 
 
 async def validate_csrf() -> None:

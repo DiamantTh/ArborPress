@@ -1,13 +1,11 @@
 {% extends "base.html" %}
+{% from "macros/assets.html" import vite_styles, vite_script with context %}
 {% block title %}{{ _('Anmelden') }}{% endblock %}
 {% set noindex = true %}
 {% block body_class %}auth-page{% endblock %}
 
 {% block head %}
-  {% set webauthn_assets = vite_asset('webauthn') %}
-  {% for stylesheet in webauthn_assets.stylesheets %}
-  <link rel="stylesheet" href="{{ url_for('static', filename=stylesheet) }}">
-  {% endfor %}
+  {{ vite_styles('webauthn') }}
 {% endblock %}
 
 {% block content %}
@@ -81,6 +79,5 @@
 {% endblock %}
 
 {% block scripts %}
-{% set webauthn_assets = vite_asset('webauthn') %}
-<script type="module" src="{{ url_for('static', filename=webauthn_assets.javascript) }}"></script>
+{{ vite_script('webauthn') }}
 {% endblock %}

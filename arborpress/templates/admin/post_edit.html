@@ -1,4 +1,5 @@
 {% extends "admin/_base.html" %}
+{% from "macros/assets.html" import vite_script with context %}
 {% block title %}{{ 'Beitrag bearbeiten' if post else 'Neuer Beitrag' }} – ArborPress Admin{% endblock %}
 
 {% block head_extra %}
@@ -158,6 +159,7 @@
 <form method="POST"
       action="{{ url_for('admin.post_edit', slug=post.slug) if post else url_for('admin.post_new') }}"
       class="admin-form">
+  {{ csrf_input() }}
   <label>
     Titel
     <input type="text" name="title" value="{{ post.title if post else '' }}" required>
@@ -174,14 +176,14 @@
      data-ap-debounce    : Preview-Debounce in ms
   #}
   <div class="form-group">
-    <label style="margin-bottom:.35rem;display:block;">Inhalt (Markdown)</label>
+    <label for="post-body" style="margin-bottom:.35rem;display:block;">Inhalt (Markdown)</label>
     <div id="ap-editor-wrap"
          data-ap-editor="{{ config.web.admin_editor }}"
          data-ap-preview-endpoint="/api/v1/admin/markdown/preview"
          data-ap-debounce="350">
       {# Adapter setzt dieses Feld vor Form-Submit auf 'html' (WYSIWYG) oder 'markdown' #}
       <input type="hidden" name="_editor_type" id="ap-editor-type" value="markdown">
-      <textarea name="body" rows="20" class="code-editor" style="width:100%">{{ post.body_md if post else '' }}</textarea>
+      <textarea id="post-body" name="body" rows="20" class="code-editor" style="width:100%">{{ post.body_md if post else '' }}</textarea>
     </div>
     <small style="color:var(--admin-muted);margin-top:.3rem;display:block;">
       Markdown · GFM-Syntax ·
@@ -277,7 +279,7 @@
     {% if post %}
     <button type="submit" name="action" value="delete"
             class="btn btn-danger"
-            onclick="return confirm('Wirklich löschen?')">Löschen</button>
+            data-confirm="Wirklich löschen?">Löschen</button>
     {% endif %}
     <a href="{{ url_for('admin.posts') }}" class="btn">Abbrechen</a>
   </div>
@@ -287,6 +289,10 @@
 {% block scripts %}{{ super() }}
 {# Editor-Registry zuerst, dann der konfigurierte Adapter #}
 <script src="{{ url_for('static', filename='js/editor-registry.js') }}"></script>
+{% if config.web.admin_editor == 'tiptap' %}
+{{ vite_script('editor-tiptap') }}
+{% else %}
 <script src="{{ url_for('static', filename='js/editor-adapters/' + config.web.admin_editor + '.js') }}"></script>
+{% endif %}
 {% endblock %}
 

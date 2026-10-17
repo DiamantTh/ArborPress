@@ -1,3 +1,4 @@
+{% from "macros/assets.html" import vite_script with context %}
 <!DOCTYPE html>
 <html lang="{{ get_lang() }}">
 <head>
@@ -95,7 +96,7 @@
     <a class="site-title" href="{{ url_for('public.index') }}">
       {{ config.web.base_url | replace('https://', '') | replace('http://', '') }}
     </a>
-    <nav aria-label="{{ _('Hauptnavigation') }}">
+    <nav aria-label="{{ _('Admin-Navigation') if request.endpoint and request.endpoint.startswith('admin.') else _('Hauptnavigation') }}">
       {% block nav %}
       <a href="{{ url_for('public.index') }}">{{ _('Startseite') }}</a>
       {% if session.get('user_id') %}
@@ -113,7 +114,7 @@
         <span id="ap-toggle-icon">🌙</span>
       </button>
       <button id="ap-oled-toggle" class="btn-icon" aria-label="OLED-Modus" title="OLED: Absolutes Schwarz für AMOLED-Displays"
-              style="display:none; font-size:.62rem; font-weight:800; letter-spacing:-.02em">OLED</button>
+              hidden style="font-size:.62rem; font-weight:800; letter-spacing:-.02em">OLED</button>
       {% endif %}
     </nav>
   </div>
@@ -169,145 +170,7 @@
 </div>
 {% endif %}
 
-<script src="{{ url_for('static', filename='js/app.js') }}?v={{ _cv }}" defer></script>
-{% if theme_dark %}
-<script>
-(function () {
-  var lightEl = document.getElementById('ap-theme-css');
-  var darkEl  = document.getElementById('ap-theme-dark-css');
-  var btn     = document.getElementById('ap-dark-toggle');
-  var iconEl  = document.getElementById('ap-toggle-icon');
-  if (!lightEl || !darkEl) return;
-
-  function applyScheme(dark) {
-    darkEl.disabled  = !dark;
-    lightEl.disabled = dark;
-    if (iconEl) iconEl.textContent = dark ? '☀️' : '🌙';
-    document.documentElement.setAttribute('data-scheme', dark ? 'dark' : 'light');
-  }
-
-  // Initialzustand: 1. gespeicherte Präferenz, 2. Systemeinstellung, 3. Hell
-  var stored = localStorage.getItem('ap-color-scheme');
-  var useDark = stored === 'dark'
-    || (stored === null && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  applyScheme(useDark);
-
-  if (btn) {
-    btn.addEventListener('click', function () {
-      var nowDark = !darkEl.disabled;   // currently dark?
-      applyScheme(!nowDark);
-      localStorage.setItem('ap-color-scheme', nowDark ? 'light' : 'dark');
-    });
-  }
-})();
-</script>
-<script>
-/* OLED-Toggle */
-(function () {
-  var btn  = document.getElementById('ap-oled-toggle');
-  var html = document.documentElement;
-  if (!btn) return;
-
-  function applyOled(on) {
-    if (on) html.setAttribute('data-oled', '');
-    else    html.removeAttribute('data-oled');
-    btn.classList.toggle('active', on);
-    localStorage.setItem('ap-oled', on ? '1' : '0');
-  }
-  function syncVisibility() {
-    var isDark = html.getAttribute('data-scheme') === 'dark';
-    btn.style.display = isDark ? '' : 'none';
-    if (!isDark) { html.removeAttribute('data-oled'); btn.classList.remove('active'); }
-  }
-  var oledOn = localStorage.getItem('ap-oled') === '1';
-  applyOled(oledOn);
-  syncVisibility();
-  btn.addEventListener('click', function () { applyOled(!html.hasAttribute('data-oled')); });
-  new MutationObserver(syncVisibility).observe(html, { attributes: true, attributeFilter: ['data-scheme'] });
-})();
-</script>
-{% endif %}
 {% block scripts %}{% endblock %}
-{% if demo_mode %}
-<script>
-(function () {
-  var CKEY   = 'ap-theme';
-  var panel  = document.getElementById('ap-demo-panel');
-  var toggle = document.getElementById('ap-demo-toggle');
-  var inner  = document.getElementById('ap-demo-inner');
-  var label  = document.getElementById('ap-demo-label');
-  var lightEl = document.getElementById('ap-theme-css');
-  var darkEl  = document.getElementById('ap-theme-dark-css');
-  if (!panel || !toggle || !inner) return;
-
-  function saveCookie(id) {
-    document.cookie = CKEY + '=' + encodeURIComponent(id) +
-      '; path=/; max-age=31536000; SameSite=Lax';
-  }
-
-  function applyTheme(id, lightCss, darkId, darkCss) {
-    // CSS-Swap
-    if (lightEl) lightEl.href = lightCss;
-    if (darkEl) {
-      if (darkCss) {
-        darkEl.href = darkCss;
-        var pref = localStorage.getItem('ap-color-scheme');
-        var wantDark = (pref === 'dark');
-        darkEl.disabled  = !wantDark;
-        if (lightEl) lightEl.disabled = wantDark;
-      } else {
-        darkEl.href = ''; darkEl.disabled = true;
-        if (lightEl) lightEl.disabled = false;
-      }
-    } else if (lightEl) {
-      lightEl.disabled = false;
-    }
-    // Dark-Toggle-Icon aktualisieren
-    var icon = document.getElementById('ap-toggle-icon');
-    if (icon) icon.textContent = darkEl && !darkEl.disabled ? '\u2600\ufe0f' : '\uD83C\uDF19';
-    // Persistenz
-    localStorage.setItem(CKEY, id);
-    saveCookie(id);
-    // Panel-Label + aktiver Button
-    var btn = inner.querySelector('[data-id="' + id + '"]');
-    if (label) label.textContent = btn ? btn.textContent.trim() : id;
-    inner.querySelectorAll('.ap-demo-panel__item').forEach(function (b) {
-      b.classList.toggle('is-active', b.dataset.id === id);
-    });
-  }
-
-  // Panel öffnen/schließen
-  toggle.addEventListener('click', function (e) {
-    e.stopPropagation();
-    var open = !inner.hidden;
-    inner.hidden = open;
-    toggle.setAttribute('aria-expanded', String(!open));
-  });
-  document.addEventListener('click', function (e) {
-    if (!panel.contains(e.target)) {
-      inner.hidden = true;
-      toggle.setAttribute('aria-expanded', 'false');
-    }
-  });
-
-  // Theme auswählen
-  inner.querySelectorAll('.ap-demo-panel__item').forEach(function (btn) {
-    btn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      applyTheme(btn.dataset.id, btn.dataset.light, btn.dataset.darkId, btn.dataset.dark);
-      inner.hidden = true;
-      toggle.setAttribute('aria-expanded', 'false');
-    });
-  });
-
-  // Sofort gespeichertes Theme anwenden (verhindert FOUC beim Seiten-Reload)
-  var stored = localStorage.getItem(CKEY);
-  if (stored) {
-    var b = inner.querySelector('[data-id="' + stored + '"]');
-    if (b) applyTheme(stored, b.dataset.light, b.dataset.darkId, b.dataset.dark);
-  }
-})();
-</script>
-{% endif %}
+{{ vite_script('site') }}
 </body>
 </html>

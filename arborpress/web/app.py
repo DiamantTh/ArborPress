@@ -69,8 +69,9 @@ def create_app() -> Quart:
 
     # §10 CSRF token function as Jinja2 global
     from arborpress.auth.roles import has_min_role
-    from arborpress.web.security import get_csrf_token
+    from arborpress.web.security import csrf_input, get_csrf_token
     app.jinja_env.globals["csrf_token"] = get_csrf_token
+    app.jinja_env.globals["csrf_input"] = csrf_input
     app.jinja_env.globals["has_role"] = has_min_role
 
     # nl2br filter (for comment display: \n → <br>)

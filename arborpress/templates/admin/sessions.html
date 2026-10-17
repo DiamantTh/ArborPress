@@ -26,7 +26,12 @@
   </thead>
   <tbody>
     {% for sess, username in rows %}
-    {%- set expired = sess.expires_at and sess.expires_at < now() -%}
+    {%- set current_time = now() -%}
+    {%- set expires_at = sess.expires_at -%}
+    {%- if expires_at and expires_at.tzinfo is none -%}
+      {%- set expires_at = expires_at.replace(tzinfo=current_time.tzinfo) -%}
+    {%- endif -%}
+    {%- set expired = expires_at and expires_at < current_time -%}
     {%- set inactive = not sess.is_valid or expired -%}
     <tr class="{% if inactive %}session-row--inactive{% elif sess.id == current_session_id %}session-row--current{% endif %}">
 
@@ -109,8 +114,8 @@
         {% if sess.is_valid and not expired %}
         <form method="post"
               action="{{ url_for('admin.session_revoke', session_id=sess.id) }}"
-              onsubmit="return confirm('Sitzung {{ sess.id[:8] | e }} widerrufen?')">
-          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+              data-confirm="Sitzung {{ sess.id[:8] | e }} widerrufen?">
+          {{ csrf_input() }}
           <button type="submit" class="btn btn--small btn--danger">Widerrufen</button>
         </form>
         {% else %}

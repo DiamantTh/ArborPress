@@ -157,6 +157,21 @@ body.admin-page .site-footer {
   border-bottom: 2px solid var(--color-border);
 }
 
+.site-header nav a[aria-current="page"] {
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+
+.q-row { margin: 0 0 .75rem; }
+.q-row__inputs { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: .5rem; }
+.q-input { width: 100%; }
+.copy-url-status { display: block; min-height: 1.25em; }
+
+@media (max-width: 640px) {
+  .q-row__inputs { grid-template-columns: 1fr; }
+}
+
 /* ── Cards / Panels ───────────────────────────────────────────────────── */
 
 .admin-card {

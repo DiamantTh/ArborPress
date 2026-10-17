@@ -21,6 +21,7 @@
 
 <form method="POST" action="{{ url_for('admin.security_update') }}" class="admin-form"
       id="security-form" {% if not stepup_active %}inert{% endif %}>
+  {{ csrf_input() }}
   <fieldset>
     <legend>WebAuthn</legend>
     <label>
@@ -103,74 +104,19 @@
   </div>
 </form>
 
-<section class="dashboard-card" id="password-tools"
-         data-default-words="6"
-         data-default-delimiter="-"
-         data-default-length="24">
-  <h3>Break-Glass Passwort-Werkzeuge</h3>
-  <p>
-    Beide Generatorarten sind vorgesehen: Diceware-Passphrasen aus der EFF Large Wordlist
-    und klassische Zufallspasswoerter. Bewertet wird jeweils mit zxcvbn und der
-    aktuellen Break-Glass-Policy.
+<section data-ap-admin-mount="password-tools"
+         data-generate-url="{{ url_for('admin.security_password_generate') }}"
+         data-evaluate-url="{{ url_for('admin.security_password_evaluate') }}">
+  <p data-admin-fallback>
+    Die interaktiven Passwort-Werkzeuge benötigen JavaScript. Alternativ:
+    <code>arborpress user password-generate --generator diceware</code> oder
+    <code>arborpress user password-set USER --generate --generator random --length 24</code>.
   </p>
-
-  <div class="admin-form">
-    <label>
-      Generator
-      <select id="pw-generator-mode">
-        <option value="random">Zufallspasswort</option>
-        <option value="diceware">EFF Large Wordlist / Diceware</option>
-      </select>
-    </label>
-
-    <div id="pw-generator-diceware-fields" hidden>
-      <label>
-        Woerter
-        <input type="number" id="pw-generator-words" min="4" max="10" value="6">
-      </label>
-      <label>
-        Trenner
-        <input type="text" id="pw-generator-delimiter" maxlength="8" value="-">
-      </label>
-    </div>
-
-    <div id="pw-generator-random-fields" hidden>
-      <label>
-        Laenge
-        <input type="number" id="pw-generator-length" min="16" max="256" value="24">
-      </label>
-    </div>
-
-    <div class="form-actions">
-      <button type="button" class="btn btn-primary" id="pw-generate-btn">Passwort generieren</button>
-      <button type="button" class="btn" id="pw-copy-btn">In Zwischenablage kopieren</button>
-    </div>
-
-    <label>
-      Generiertes Passwort
-      <input type="text" id="pw-generated" readonly autocomplete="off">
-    </label>
-
-    <label>
-      Eigenes Passwort pruefen
-      <input type="password" id="pw-evaluate-input" autocomplete="new-password">
-    </label>
-
-    <div class="form-actions">
-      <button type="button" class="btn" id="pw-evaluate-btn">Qualitaet pruefen</button>
-    </div>
-
-    <div id="pw-assessment" aria-live="polite"></div>
-
-    <p>
-      CLI: <code>arborpress user password-generate --generator diceware</code> oder
-      <code>arborpress user password-set USER --generate --generator random --length 24</code>
-    </p>
-  </div>
+  <div data-admin-mount-point></div>
 </section>
 
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="{{ url_for('static', filename='js/admin-security.js') }}"></script>
+{{ super() }}
 {% endblock %}

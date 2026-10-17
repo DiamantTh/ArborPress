@@ -1,40 +1,47 @@
 {% extends "base.html" %}
+{% from "macros/assets.html" import vite_styles, vite_script with context %}
 {% set noindex = true %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
-{# §10: CSRF-Token als Meta-Tag; wird vom externen app.js ausgelesen und in alle Formulare injiziert #}
+{{ vite_styles('admin') }}
+{# JSON action requests use the same session-bound token as server-rendered forms. #}
 <meta name="csrf-token" content="{{ csrf_token() }}">
 {% block head_extra %}{% endblock %}
 {% endblock %}
 
 {% block nav %}
-<a href="{{ url_for('admin.dashboard') }}">{{ _('Dashboard') }}</a>
-<a href="{{ url_for('admin.posts') }}">{{ _('Beiträge') }}</a>
+<a href="{{ url_for('admin.dashboard') }}"{% if request.endpoint == 'admin.dashboard' %} aria-current="page"{% endif %}>{{ _('Dashboard') }}</a>
+<a href="{{ url_for('admin.posts') }}"{% if request.endpoint in ('admin.posts', 'admin.post_new', 'admin.post_edit') %} aria-current="page"{% endif %}>{{ _('Beiträge') }}</a>
 {% if has_role('editor') %}
-<a href="{{ url_for('admin.pages_list') }}">{{ _('Seiten') }}</a>
+<a href="{{ url_for('admin.pages_list') }}"{% if request.endpoint == 'admin.pages_list' %} aria-current="page"{% endif %}>{{ _('Seiten') }}</a>
 {% endif %}
-<a href="{{ url_for('admin.media_list') }}">{{ _('Medien') }}</a>
-<a href="{{ url_for('auth.account_security_page') }}">{{ _('Kontosicherheit') }}</a>
+<a href="{{ url_for('admin.media_list') }}"{% if request.endpoint == 'admin.media_list' %} aria-current="page"{% endif %}>{{ _('Medien') }}</a>
+<a href="{{ url_for('auth.account_security_page') }}"{% if request.endpoint == 'auth.account_security_page' %} aria-current="page"{% endif %}>{{ _('Kontosicherheit') }}</a>
 {% if has_role('editor') %}
-<a href="{{ url_for('admin.comments_list') }}">{{ _('Kommentare') }}</a>
+<a href="{{ url_for('admin.comments_list') }}"{% if request.endpoint == 'admin.comments_list' %} aria-current="page"{% endif %}>{{ _('Kommentare') }}</a>
 {% endif %}
 {% if has_role('admin') %}
-<a href="{{ url_for('admin.users') }}">{{ _('Benutzer') }}</a>
-<a href="{{ url_for('admin.sessions_list') }}">{{ _('Sitzungen') }}</a>
-<a href="{{ url_for('admin.captcha_settings') }}">{{ _('Captcha') }}</a>
-<a href="{{ url_for('admin.site_settings_page') }}">{{ _('Einstellungen') }}</a>
-<a href="{{ url_for('admin.plugins_list') }}">{{ _('Plugins') }}</a>
-<a href="{{ url_for('admin.security') }}">{{ _('Sicherheit') }}</a>
+<a href="{{ url_for('admin.users') }}"{% if request.endpoint == 'admin.users' %} aria-current="page"{% endif %}>{{ _('Benutzer') }}</a>
+<a href="{{ url_for('admin.sessions_list') }}"{% if request.endpoint == 'admin.sessions_list' %} aria-current="page"{% endif %}>{{ _('Sitzungen') }}</a>
+<a href="{{ url_for('admin.captcha_settings') }}"{% if request.endpoint == 'admin.captcha_settings' %} aria-current="page"{% endif %}>{{ _('Captcha') }}</a>
+<a href="{{ url_for('admin.site_settings_page') }}"{% if request.endpoint == 'admin.site_settings_page' %} aria-current="page"{% endif %}>{{ _('Einstellungen') }}</a>
+<a href="{{ url_for('admin.plugins_list') }}"{% if request.endpoint == 'admin.plugins_list' %} aria-current="page"{% endif %}>{{ _('Plugins') }}</a>
+<a href="{{ url_for('admin.security') }}"{% if request.endpoint == 'admin.security' %} aria-current="page"{% endif %}>{{ _('Sicherheit') }}</a>
 {% endif %}
 <form method="post" action="{{ url_for('auth.logout') }}" style="display:inline">
-  <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+  {{ csrf_input() }}
   <button type="submit" class="btn btn--small">{{ _('Abmelden') }}</button>
 </form>
 {% endblock %}
 
 {% block content %}
 <div class="admin-container">
+  <div data-admin-feedback hidden role="status" aria-live="polite"></div>
   {% block admin_content %}{% endblock %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ vite_script('admin') }}
 {% endblock %}

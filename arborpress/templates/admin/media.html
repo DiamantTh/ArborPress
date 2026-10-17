@@ -3,8 +3,10 @@
 {% block admin_content %}
 <div class="admin-page-header">
   <h2>Medienbibliothek</h2>
-  <form method="POST" enctype="multipart/form-data" action="{{ url_for('api.media_upload') }}" class="upload-form">
-    <input type="file" name="file" accept="image/*,application/pdf,video/*">
+  <form method="POST" enctype="multipart/form-data" action="{{ url_for('api_admin.media_upload') }}" class="upload-form">
+    {{ csrf_input() }}
+    <label for="media-upload-file">Datei hochladen</label>
+    <input id="media-upload-file" type="file" name="file" accept="image/*,application/pdf,video/*" required>
     <button type="submit" class="btn btn-primary">Hochladen</button>
   </form>
 </div>
@@ -20,23 +22,18 @@
     {% endif %}
     <p class="media-name">{{ item.filename | e }}</p>
     <p class="media-size">{{ (item.size_bytes / 1024) | int }} KB</p>
+    <a class="media-url" href="{{ url_for('public.media', yyyy=item.uploaded_at.strftime('%Y'), mm=item.uploaded_at.strftime('%m'), filename=item.filename) }}">Datei öffnen</a>
     <button class="btn btn-sm copy-url"
+            type="button"
+            disabled
             data-url="{{ url_for('public.media', yyyy=item.uploaded_at.strftime('%Y'), mm=item.uploaded_at.strftime('%m'), filename=item.filename) }}">
       URL kopieren
     </button>
+    <span class="copy-url-status" aria-live="polite"></span>
   </div>
   {% else %}
   <p class="empty-state">Keine Medien vorhanden.</p>
   {% endfor %}
 </div>
 
-<script>
-document.querySelectorAll('.copy-url').forEach(btn => {
-  btn.addEventListener('click', () => {
-    navigator.clipboard.writeText(btn.dataset.url);
-    btn.textContent = 'Kopiert!';
-    setTimeout(() => btn.textContent = 'URL kopieren', 1500);
-  });
-});
-</script>
 {% endblock %}

@@ -60,7 +60,7 @@
           <summary>Break-Glass verwalten</summary>
 
           <form method="post" action="{{ url_for('admin.user_breakglass_password_set', user_id=user.id) }}" class="admin-form" data-stepup-action="set_breakglass_password" data-stepup-target="{{ user.id }}">
-            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            {{ csrf_input() }}
             <input type="hidden" name="mode" value="manual">
             <label>
               Neues Passwort
@@ -72,7 +72,7 @@
           </form>
 
           <form method="post" action="{{ url_for('admin.user_breakglass_password_set', user_id=user.id) }}" class="admin-form" data-stepup-action="set_breakglass_password" data-stepup-target="{{ user.id }}">
-            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            {{ csrf_input() }}
             <input type="hidden" name="mode" value="diceware">
             <label>
               Diceware-Woerter
@@ -88,7 +88,7 @@
           </form>
 
           <form method="post" action="{{ url_for('admin.user_breakglass_password_set', user_id=user.id) }}" class="admin-form" data-stepup-action="set_breakglass_password" data-stepup-target="{{ user.id }}">
-            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            {{ csrf_input() }}
             <input type="hidden" name="mode" value="random">
             <label>
               Laenge
@@ -101,7 +101,7 @@
 
           {% if user.legacy_password_enabled %}
           <form method="post" action="{{ url_for('admin.user_breakglass_password_disable', user_id=user.id) }}" class="admin-form" data-stepup-action="disable_password" data-stepup-target="{{ user.id }}">
-            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            {{ csrf_input() }}
             <div class="form-actions">
               <button type="submit" class="btn btn--warn btn--small">Break-Glass deaktivieren</button>
             </div>
@@ -112,7 +112,7 @@
           <form method="post" action="{{ url_for('admin.user_authenticator_reset', user_id=user.id) }}"
                 class="admin-form" data-stepup-action="admin_credential_reset"
                 data-stepup-target="{{ user.id }}">
-            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            {{ csrf_input() }}
             <p class="text-danger">
               Recovery für 24 Stunden autorisieren und bestehende Sitzungen beenden.
               Das Recovery-Ticket wird danach einmal angezeigt. Der Benutzer weist sich
@@ -137,5 +137,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="{{ url_for('static', filename='js/admin-security.js') }}"></script>
+{{ super() }}
 {% endblock %}
