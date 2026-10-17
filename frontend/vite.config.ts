@@ -13,8 +13,11 @@ export default defineConfig({
     manifest: '.vite/manifest.json',
     rollupOptions: {
       input: {
+        site: resolve(frontendRoot, 'src/entries/site.ts'),
         public: resolve(frontendRoot, 'src/entries/public.ts'),
         webauthn: resolve(frontendRoot, 'src/entries/webauthn.ts'),
+        admin: resolve(frontendRoot, 'src/entries/admin.ts'),
+        'editor-tiptap': resolve(frontendRoot, 'src/ap-editor/tiptap/index.ts'),
       },
     },
   },
