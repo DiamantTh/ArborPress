@@ -16,11 +16,14 @@ async def test_login_is_jinja_rendered_and_webauthn_is_only_an_enhancement(
     monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
 
     def resolve(entry: str) -> AssetBundle:
-        assert entry == "webauthn"
-        return AssetBundle(
-            javascript="dist/assets/webauthn-a1b2.js",
-            stylesheets=("dist/assets/webauthn-c3d4.css",),
-        )
+        if entry == "site":
+            return AssetBundle(javascript="dist/assets/site-1122.js", stylesheets=())
+        if entry == "webauthn":
+            return AssetBundle(
+                javascript="dist/assets/webauthn-a1b2.js",
+                stylesheets=("dist/assets/webauthn-c3d4.css",),
+            )
+        raise AssertionError(f"Unexpected browser entry: {entry}")
 
     monkeypatch.setitem(app.jinja_env.globals, "vite_asset", resolve)
 
@@ -50,8 +53,8 @@ async def test_public_navigation_logout_has_a_csrf_protected_html_form(
     monkeypatch.setitem(
         app.jinja_env.globals,
         "vite_asset",
-        lambda _entry: AssetBundle(
-            javascript="dist/assets/webauthn-a1b2.js", stylesheets=()
+        lambda entry: AssetBundle(
+            javascript=f"dist/assets/{entry}-1122.js", stylesheets=()
         ),
     )
     async with client.session_transaction() as browser_session:

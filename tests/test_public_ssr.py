@@ -61,6 +61,8 @@ def _install_asset_stub(app, monkeypatch) -> None:
     from arborpress.web.assets import AssetBundle
 
     def resolve(entry: str) -> AssetBundle:
+        if entry == "site":
+            return AssetBundle(javascript="dist/assets/site-a1b2.js", stylesheets=())
         if entry == "public":
             return AssetBundle(javascript="dist/assets/public-e5f6.js", stylesheets=())
         raise AssertionError(f"Unexpected browser entry: {entry}")
