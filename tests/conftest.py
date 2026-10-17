@@ -28,16 +28,14 @@ async def test_engine():
         echo=False,
         connect_args={"check_same_thread": False},
     )
-    # Alle Tabellen erstellen
+    # Test databases use the same packaged migration path as fresh installs.
     import arborpress.models  # noqa: F401
-    from arborpress.core.db import Base
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    from arborpress.core.migrations import upgrade_database
+
+    await upgrade_database(engine)
 
     yield engine
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
     os.unlink(db_path)
 
@@ -63,6 +61,7 @@ def app(test_engine):
     db_mod._session_factory = None
 
     from arborpress.web.app import create_app
+
     quart_app = create_app()
     quart_app.config["TESTING"] = True
     return quart_app
@@ -79,5 +78,5 @@ async def client(app: Quart):
 def settings():
     """Lädt die (Default-)Settings ohne config.toml."""
     from arborpress.core.config import Settings
-    return Settings()
 
+    return Settings()
