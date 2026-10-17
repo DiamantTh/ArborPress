@@ -11,5 +11,5 @@
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
-  "include": ["src/entries/**/*.ts", "src/lib/**/*.ts", "src/lib/**/*.svelte", "src/svelte.d.ts"]
+  "include": ["src/entries/**/*.ts", "src/lib/**/*.ts", "src/lib/**/*.svelte", "src/ap-editor/**/*.ts", "src/svelte.d.ts"]
 }

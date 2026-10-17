@@ -65,14 +65,14 @@ async def _resolve_body(form, db) -> tuple[str, str, dict | None]:
     """Gibt (body_md, body_html, body_json) für einen Save-Handler zurück.
 
     Unterstützt drei Modi (gesteuert durch das Hidden-Field _editor_type):
-      "markdown" (default / builtin + CodeMirror-Adapter):
+      "markdown" (default / built-in Markdown editor or plain textarea):
           body = Markdown-Text → render_md_async() → HTML
           body_json = None
-      "html" (WYSIWYG-Adapter, z.B. TipTap):
+      "html" (explicit HTML-form transport):
           body = HTML-String → sanitize_html() → body_html
                              → html_to_md()   → body_md (Export/Import)
           body_json = None
-      "editorjs" (Editor.js-Adapter):
+      "editorjs" (Editor.js document transport retained for compatibility):
           body = JSON-String (Editor.js-Dokument)
                              → editorjs_to_html() → body_html
                              → editorjs_to_md()   → body_md

@@ -15,7 +15,9 @@
     {% endif %}
   </p>
 
-  <form id="register-form" class="auth-form">
+  <form id="register-form" class="auth-form"
+        data-security-url="{{ url_for('auth.account_security_page') }}"
+        data-login-url="{{ url_for('auth.login_page', registered=1) }}">
     <p><strong>{{ _('Konto') }}:</strong> {{ prefill_username }}</p>
     <div class="form-group">
       <label for="key_label">{{ _('Schlüssel-Bezeichnung') }}</label>
@@ -23,13 +25,17 @@
              placeholder="{{ _('z. B. Arbeitsschlüssel') }}" maxlength="128">
       <small>{{ _('Hilft dir, mehrere Schlüssel zu unterscheiden (§2).') }}</small>
     </div>
-    <button type="submit" class="btn btn--primary" id="register-btn" value="security_key">
+    <button type="submit" class="btn btn--primary" id="register-btn" value="security_key" disabled>
       {{ _('FIDO2-Sicherheitsschlüssel hinzufügen (empfohlen)') }}
     </button>
-    <button type="submit" class="btn" id="passkey-register-btn" value="passkey">
+    <button type="submit" class="btn" id="passkey-register-btn" value="passkey" disabled>
       {{ _('Passkey / anderes Gerät hinzufügen') }}
     </button>
+    <p data-register-status role="status" aria-live="polite" hidden></p>
+    <p class="flash--error" data-register-error role="alert" aria-live="assertive" hidden></p>
   </form>
+
+  <noscript><p class="flash--error">{{ _('Für die Registrierung eines Sicherheitsschlüssels oder Passkeys ist Browser-JavaScript erforderlich.') }}</p></noscript>
 
   <p class="auth-box__alt">
     <a href="{{ url_for('auth.login_page') }}">{{ _('Zurück zum Login') }}</a>
@@ -38,5 +44,6 @@
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="{{ url_for('static', filename='js/webauthn-register.js') }}"></script>
+{% from "macros/assets.html" import vite_script with context %}
+{{ vite_script('webauthn-register') }}
 {% endblock %}

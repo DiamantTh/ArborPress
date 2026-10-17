@@ -483,6 +483,10 @@ class TestRecovery:
 
         security = await client.get("/auth/security")
         assert security.status_code == 200
+        security_html = await security.get_data(as_text=True)
+        assert "data-ap-auth-security" in security_html
+        assert "/static/dist/assets/auth-security-" in security_html
+        assert "auth-security.js" not in security_html
         assert (await client.get("/admin/users")).status_code == 403
         assert (await client.get("/")).status_code == 403
         async with app.test_client() as normal_client:

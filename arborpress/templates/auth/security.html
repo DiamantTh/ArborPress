@@ -4,7 +4,7 @@
 {% block body_class %}auth-page{% endblock %}
 
 {% block content %}
-<div class="auth-box auth-box--wide">
+<div class="auth-box auth-box--wide" data-ap-auth-security>
   <h1>{{ _('Kontosicherheit') }}</h1>
   <p>{{ user.display_name }} ({{ user.username }})</p>
   {% if recovery_only %}
@@ -18,7 +18,7 @@
       {{ _('Sicherheitsschlüssel hinzufügen') }}
     </a>
     {% else %}
-    <button class="btn btn--primary stepup-redirect" data-action="add_webauthn_credential"
+    <button class="btn btn--primary stepup-redirect" disabled data-action="add_webauthn_credential"
             data-target="{{ user.id }}" data-next="{{ url_for('auth.register_page') }}">
       {{ _('Sicherheitsschlüssel hinzufügen') }}
     </button>
@@ -41,7 +41,7 @@
       {% elif recovery_only %}
       <small>{{ _('Noch nicht für normale Anmeldungen freigegeben') }}</small>
       {% else %}
-      <button class="btn btn--small stepup-remove" data-action="remove_webauthn_credential"
+      <button class="btn btn--small stepup-remove" disabled data-action="remove_webauthn_credential"
               data-target="{{ credential.id }}" data-url="{{ url_for('auth.webauthn_credential_remove', credential_uuid=credential.id) }}">
         {{ _('Entfernen') }}
       </button>
@@ -52,7 +52,7 @@
 
   <section>
     <h2>{{ _('TOTP — FALLBACK') }}</h2>
-    <button class="btn" id="totp-add" data-action="add_totp_credential"
+    <button class="btn" id="totp-add" disabled data-action="add_totp_credential"
             data-target="{{ user.id }}" data-recovery-only="{{ 'true' if recovery_only else 'false' }}">
       {{ _('Authenticator hinzufügen') }}
     </button>
@@ -74,7 +74,7 @@
       {% elif recovery_only %}
       <small>{{ _('Noch nicht für normale Anmeldungen freigegeben') }}</small>
       {% else %}
-      <button class="btn btn--small stepup-remove" data-action="remove_totp_credential"
+      <button class="btn btn--small stepup-remove" disabled data-action="remove_totp_credential"
               data-target="{{ device.id }}" data-allow-totp="true"
               data-url="{{ url_for('auth.totp_remove', device_id=device.id) }}">
         {{ _('Entfernen') }}
@@ -88,7 +88,7 @@
     <h2>{{ _('Passwort / Recovery') }}</h2>
     {% if recovery_only %}
       {% if recovery_has_new_auth_path %}
-      <button class="btn btn--primary" id="recovery-complete">
+      <button class="btn btn--primary" id="recovery-complete" disabled>
         {{ _('Recovery abschließen und zur Anmeldung wechseln') }}
       </button>
       {% else %}
@@ -102,10 +102,12 @@
     <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
     <button class="btn btn--small" type="submit">{{ _('Abmelden') }}</button>
   </form>
-  <p id="security-error" class="flash--error" hidden></p>
+  <p id="security-error" class="flash--error" data-auth-error role="alert" aria-live="assertive" hidden></p>
+  <noscript><p class="flash--error">{{ _('Browser-JavaScript ist für Step-up, Credential-Verwaltung und TOTP-Einrichtung erforderlich. Ihre bestehenden Credentials bleiben unverändert.') }}</p></noscript>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="{{ url_for('static', filename='js/auth-security.js') }}"></script>
+{% from "macros/assets.html" import vite_script with context %}
+{{ vite_script('auth-security') }}
 {% endblock %}

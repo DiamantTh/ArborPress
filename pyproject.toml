@@ -67,8 +67,8 @@ sqlite = [
     "aiosqlite>=0.20,<1",
 ]
 
-# WYSIWYG-Editor HTML→Markdown (optionaler Konverter für den TipTap/Prosemirror
-# Adapter; wird nur genutzt wenn admin_editor != 'builtin')
+# WYSIWYG-Editor HTML→Markdown (optionaler Konverter für TipTap; nur für den
+# tatsächlich ausgewählten Editor erforderlich).
 wysiwyg = [
     "markdownify>=1.2,<2",
 ]

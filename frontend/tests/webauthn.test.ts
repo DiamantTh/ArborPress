@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { base64URLStringToBuffer, bufferToBase64URLString } from '@simplewebauthn/browser'
 
-import { getResponseError, parseAuthenticationOptions } from '../src/lib/webauthn.ts'
+import { getResponseError, parseAuthenticationOptions, parseRegistrationOptions } from '../src/lib/webauthn.ts'
 
 test('validates challenge and per-user credential identifiers', () => {
   const options = parseAuthenticationOptions({
@@ -38,6 +38,36 @@ test('rejects malformed challenges, credential IDs, and weaker verification', ()
   assert.throws(
     () => parseAuthenticationOptions({ challenge: 'AQID', userVerification: 'preferred' }),
     /Benutzerverifikation/,
+  )
+})
+
+test('validates registration identity, UV and excluded credentials', () => {
+  const options = parseRegistrationOptions({
+    challenge: 'AQID',
+    rp: { name: 'ArborPress', id: 'localhost' },
+    user: { id: 'BAUG', name: 'operator', displayName: 'Operator' },
+    pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+    authenticatorSelection: { userVerification: 'required' },
+    excludeCredentials: [{ id: 'BwgJ', type: 'public-key' }],
+  })
+  assert.equal(options.user.name, 'operator')
+  assert.equal(options.authenticatorSelection?.userVerification, 'required')
+  assert.throws(
+    () => parseRegistrationOptions({
+      challenge: 'AQID',
+      user: { id: 'BAUG', name: 'operator', displayName: 'Operator' },
+      authenticatorSelection: { userVerification: 'preferred' },
+    }),
+    /Benutzerverifikation/,
+  )
+  assert.throws(
+    () => parseRegistrationOptions({
+      challenge: 'AQID',
+      user: { id: 'BAUG', name: 'operator', displayName: 'Operator' },
+      authenticatorSelection: { userVerification: 'required' },
+      excludeCredentials: [{ id: 'bad/id', type: 'public-key' }],
+    }),
+    /Credentials/,
   )
 })
 

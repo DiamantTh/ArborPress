@@ -3,7 +3,6 @@
 {% set noindex = true %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
 {{ vite_styles('admin') }}
 {# JSON action requests use the same session-bound token as server-rendered forms. #}
 <meta name="csrf-token" content="{{ csrf_token() }}">

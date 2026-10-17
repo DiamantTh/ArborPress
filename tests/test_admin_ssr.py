@@ -3,11 +3,15 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
+from quart import Quart
+from quart.testing import QuartClient
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 
-async def _seed_admin(test_engine: object) -> tuple[str, str]:
+async def _seed_admin(test_engine: AsyncEngine) -> tuple[str, str]:
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     import arborpress.models  # noqa: F401
@@ -38,7 +42,7 @@ async def _seed_admin(test_engine: object) -> tuple[str, str]:
 
 
 async def _login_admin(
-    client: object, test_engine: object, monkeypatch: pytest.MonkeyPatch
+    client: QuartClient, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
     user_id, session_id = await _seed_admin(test_engine)
@@ -52,7 +56,10 @@ async def _login_admin(
 
 @pytest.mark.asyncio
 async def test_admin_pages_are_server_rendered_and_form_csrf_is_present(
-    client: object, test_engine: object, monkeypatch: pytest.MonkeyPatch
+    client: QuartClient,
+    app: Quart,
+    test_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     await _login_admin(client, test_engine, monkeypatch)
 
@@ -92,11 +99,36 @@ async def test_admin_pages_are_server_rendered_and_form_csrf_is_present(
     assert 'type="application/json"' in pages["/admin/captcha"]
     assert ".vite/manifest.json" not in pages["/admin/settings"]
     assert re.search(r"/static/dist/assets/admin-[^\" ]+\.js", pages["/admin/settings"])
+    assert re.search(r'href="/static/dist/assets/admin-[^\"]+\.css"', pages["/admin/settings"])
+    editor_html = pages["/admin/posts/new"]
+    assert 'name="body"' in editor_html
+    assert re.search(r'href="/static/dist/assets/editor-[^\"]+\.css"', editor_html)
+    assert re.search(r'src="/static/dist/assets/editor-[^\"]+\.js"', editor_html)
+    assert "editor-registry.js" not in editor_html
+    assert "editor-adapters/" not in editor_html
+
+    security_response = await client.get("/auth/security")
+    assert security_response.status_code == 200
+    security_html = await security_response.get_data(as_text=True)
+    assert "data-ap-auth-security" in security_html
+    assert "/static/dist/assets/auth-security-" in security_html
+    assert "auth-security.js" not in security_html
+
+    from arborpress.core.config import Settings
+
+    web_settings = cast(Settings, app.jinja_env.globals["config"]).web
+    monkeypatch.setattr(web_settings, "admin_editor", "easymde")
+    fallback_response = await client.get("/admin/posts/new")
+    fallback_html = await fallback_response.get_data(as_text=True)
+    assert fallback_response.status_code == 200
+    assert "Konfigurierter Editor nicht unterstützt" in fallback_html
+    assert 'name="body"' in fallback_html
+    assert "/static/dist/assets/editor-tiptap-" not in fallback_html
 
 
 @pytest.mark.asyncio
 async def test_admin_post_works_from_rendered_form_without_javascript(
-    client: object, test_engine: object, monkeypatch: pytest.MonkeyPatch
+    client: QuartClient, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     await _login_admin(client, test_engine, monkeypatch)
     response = await client.get("/admin/captcha")
@@ -113,7 +145,7 @@ async def test_admin_post_works_from_rendered_form_without_javascript(
 
 @pytest.mark.asyncio
 async def test_admin_state_change_rejects_missing_csrf_token(
-    client: object, test_engine: object, monkeypatch: pytest.MonkeyPatch
+    client: QuartClient, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     await _login_admin(client, test_engine, monkeypatch)
     response = await client.post("/admin/captcha", form={"q_0": "Question?", "a_0": "Answer"})

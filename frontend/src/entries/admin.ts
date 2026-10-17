@@ -1,3 +1,4 @@
+import '../../../arborpress/static/css/admin.css'
 import AdminCaptchaQuestions from '../lib/components/AdminCaptchaQuestions.svelte'
 import AdminPasswordTools from '../lib/components/AdminPasswordTools.svelte'
 import { parseCaptchaQuestions } from '../lib/admin-data.js'
