@@ -31,6 +31,7 @@ from quart import (
 )
 from slugify import slugify
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 
 from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
@@ -121,7 +122,10 @@ async def _render(template: str, **ctx):
 @public_bp.get("/")
 async def index():
     """Post-Liste (§6 / §9 server-rendered)."""
-    page = int(request.args.get("page", 1))
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except ValueError:
+        abort(400, "page must be a positive integer")
     lang = request.args.get("lang")
 
     from arborpress.models.content import Post, PostStatus
@@ -140,25 +144,33 @@ async def index():
             if lang:
                 stmt = stmt.where(Post.lang == lang)
 
-            total_stmt = select(Post).where(
+            total_stmt = select(func.count()).select_from(Post).where(
                 Post.status == PostStatus.PUBLISHED,
                 Post.visibility == PostVisibility.PUBLIC,
             )
+            if lang:
+                total_stmt = total_stmt.where(Post.lang == lang)
             total_result = await db.execute(total_stmt)
-            total = len(total_result.scalars().all())
+            total = total_result.scalar_one()
 
             stmt = stmt.offset((page - 1) * _PER_PAGE).limit(_PER_PAGE)
             result = await db.execute(stmt)
             posts = result.scalars().all()
 
-            class _Pagination:
-                pages = max(1, (total + _PER_PAGE - 1) // _PER_PAGE)
-                has_prev = page > 1
-                has_next = page < pages
-                prev_num = page - 1
-                next_num = page + 1
+            pages = max(1, (total + _PER_PAGE - 1) // _PER_PAGE)
+            from types import SimpleNamespace
 
-            return await _render("index.html", posts=posts, pagination=_Pagination())
+            pagination = SimpleNamespace(
+                page=page,
+                pages=pages,
+                has_prev=page > 1,
+                has_next=page < pages,
+                prev_num=page - 1,
+                next_num=page + 1,
+            )
+            return await _render(
+                "index.html", posts=posts, pagination=pagination, lang=lang
+            )
     except Exception as exc:
         log.warning("Index-Abfrage fehlgeschlagen: %s", exc)
         return await _render("index.html", posts=[], pagination=None)
@@ -178,13 +190,17 @@ async def post_detail(slug: str):
 
     from arborpress.core.captcha import get_captcha_challenge, get_effective_captcha_type
     from arborpress.core.site_settings import get_section
-    from arborpress.models.content import Post, PostStatus, PostVisibility
+    from arborpress.models.content import Comment, Post, PostStatus, PostVisibility
 
     async for db in get_db_session():
         # Load post (status=published is sufficient; visibility is checked separately)
+        comments_load = selectinload(Post.comments)  # type: ignore[attr-defined]
         stmt = select(Post).where(
             Post.slug == canonical,
             Post.status == PostStatus.PUBLISHED,
+        ).options(
+            selectinload(Post.author),
+            comments_load.selectinload(Comment.quoted),
         )
         result = await db.execute(stmt)
         post = result.scalar_one_or_none()

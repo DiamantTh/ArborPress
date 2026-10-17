@@ -6,7 +6,8 @@
 <h1>{{ _('Suchergebnisse für') }} <em>{{ q | e }}</em></h1>
 
 <form class="search-form" method="get" action="{{ url_for('public.search') }}">
-  <input type="search" name="q" value="{{ q | e }}" placeholder="{{ _('Suchen…') }}" autofocus>
+  <label for="search-query">{{ _('Suchbegriff') }}</label>
+  <input id="search-query" type="search" name="q" value="{{ q | e }}" placeholder="{{ _('Suchen…') }}" autofocus>
   <button type="submit">{{ _('Suchen') }}</button>
 </form>
 

@@ -24,6 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from arborpress.core.db import Base
+from arborpress.models.user import User
 
 # ---------------------------------------------------------------------------
 # Tags (§1, §6 /tag/{tag})
@@ -132,6 +133,11 @@ class Post(Base):
     )
 
     tags: Mapped[list[Tag]] = relationship(secondary=post_tags, lazy="selectin")
+    # Public rendering needs the author's public identity without issuing a
+    # lazy query after the request-scoped database session has closed.
+    author: Mapped[User | None] = relationship(
+        "User", foreign_keys=[author_id], lazy="selectin"
+    )
 
     @staticmethod
     def calc_reading_time(body_md: str, body_json: dict | None = None) -> int:

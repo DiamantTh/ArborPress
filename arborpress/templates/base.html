@@ -95,7 +95,7 @@
     <a class="site-title" href="{{ url_for('public.index') }}">
       {{ config.web.base_url | replace('https://', '') | replace('http://', '') }}
     </a>
-    <nav>
+    <nav aria-label="{{ _('Hauptnavigation') }}">
       {% block nav %}
       <a href="{{ url_for('public.index') }}">{{ _('Startseite') }}</a>
       {% if session.get('user_id') %}
@@ -121,7 +121,9 @@
 <main class="site-main container">
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, message in messages %}
-      <div class="flash flash--{{ category }}">{{ message }}</div>
+      <div class="flash flash--{{ category }}"
+           role="{{ 'alert' if category == 'error' else 'status' }}"
+           aria-live="{{ 'assertive' if category == 'error' else 'polite' }}">{{ message }}</div>
     {% endfor %}
   {% endwith %}
   {% block content %}{% endblock %}
