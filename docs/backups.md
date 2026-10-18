@@ -1,6 +1,7 @@
 # Local backup sets
 
-Phase 6A adds local backup creation and read-only verification. A backup is a
+Phase 6A adds local backup creation and read-only verification; Phase 6B adds
+verified restore planning and offline application. A backup is a
 directory containing separately described components, not one unbounded
 archive:
 
@@ -102,6 +103,12 @@ arborpress --prefix ~/ArborPress backup create --compression bz3 --threads auto
 arborpress --prefix ~/ArborPress backup list
 arborpress --prefix ~/ArborPress backup inspect 20261018-120000
 arborpress --prefix ~/ArborPress backup verify 20261018-120000
+arborpress --prefix ~/ArborPress restore plan 20261018-120000
+arborpress --prefix ~/ArborPress restore plan 20261018-120000 --component media --json
+arborpress --prefix ~/ArborPress restore apply 20261018-120000 --all --offline
+arborpress --prefix ~/ArborPress restore apply 20261018-120000 --component media --offline
+arborpress --prefix ~/ArborPress restore apply 20261018-120000 --all --offline --dry-run
+arborpress --prefix ~/ArborPress restore recover --offline
 ```
 
 `backup list` shows complete sets whose manifest is valid. `inspect` reports
@@ -110,8 +117,67 @@ inventory, checksums, compressed stream, PAX TAR members, media ordering, and
 database NDJSON records without extracting anything. JSON output is available
 with `--json` for read-only diagnostics.
 
-Phase 6A does not implement restore, encryption, retention/pruning, remote
-storage, scheduling, incremental backups, or plugin backup hooks. It never
+## Restore safety
+
+`restore plan` is read-only: it verifies the complete set, checks its format,
+database backend and exact Alembic revision compatibility, reports selected
+component targets and estimated staging space, and identifies partial config
+coverage. It does not apply anything. `restore apply --dry-run` additionally
+extracts and validates the selected contents in temporary staging, then removes
+that staging without changing live files or database rows. Apply always repeats
+full verification; there is no checksum bypass.
+
+Apply requires both an explicit component selection (or `--all`) and
+`--offline`. Stop every ArborPress web worker first. ArborPress cannot quiesce
+arbitrary ASGI workers itself. While applying, an instance maintenance marker
+makes any still-running worker return `503` with `Cache-Control: no-store`, and
+a newly starting worker refuses startup. Backup and restore operations share
+the instance lock at `instance/var/run/backup.lock`.
+
+Selected file components are extracted by a checked Python TAR reader into
+private staging under `instance/var/tmp/` (or a same-filesystem sibling under
+`instance/` when needed). Absolute paths, traversal, special files, escaping
+links, hardlinks, and conflicting members are rejected. Components are swapped
+as roots with rollback siblings and a journal under `instance/var/run/`.
+Multi-root filesystems do not provide a single transaction: ArborPress attempts
+rollback on failure and leaves maintenance enabled if recovery is required.
+Run `restore recover --offline` only while web workers remain stopped. The
+recovery path is rollback-first before a server-database commit; after a
+server-database commit, manual review may be required. Restore reports are
+stored in `instance/data/restore-history/`.
+
+Components can be restored selectively. Unselected roots are not removed. A
+selected directory root (`config`, `data`, `themes`, `plugins`, or `media`) is
+replaced as a whole. `data` does not include `var/` or the separately managed
+SQLite database. When a database file is inside `data` and the database
+component is not selected, its live file and sidecars are preserved. Media
+segments are reconstructed and verified in staging before the live media root
+is swapped.
+
+Phase 6A omits secret-bearing bootstrap config files from unencrypted sets.
+When `restore plan` reports partial configuration, apply preserves the current
+local config tree and overlays only files present in the backup. This is not a
+complete disaster-recovery configuration restore. No secrets are inferred or
+reconstructed.
+
+Database restores use the Phase 6A typed NDJSON format and known ArborPress
+tables only. The target and backup must use the same backend and exactly the
+same known Alembic revision. An empty SQLite target may be migrated in staging
+to this release's Alembic head before rows are imported; no live schema
+migration is run as a hidden restore side effect. SQLite is built and checked
+in a replacement file before it is swapped into place. PostgreSQL DML uses one
+transaction; MariaDB/MySQL must use InnoDB tables, with auto-increment DDL
+handled separately after the row transaction. Cross-backend restore is not
+supported. The journal records server-database commit intent before the
+transaction commits. If the connection fails at that boundary and the commit
+outcome is uncertain, ArborPress keeps maintenance enabled and refuses an
+automatic filesystem rollback; inspect the restore report and database while
+the service remains offline. `--safety-backup` optionally creates a complete
+backup of current state before applying; it is opt-in and uses the same lock
+without reacquiring it.
+
+Phase 6B does not implement encryption, retention/pruning, remote storage,
+scheduling, incremental backups, or plugin backup hooks. It never
 starts `tar`, `bzip2`, `pg_dump`, `mysqldump`, `sqlite3`, or another external
 backup utility; all export, compression, checksumming, and verification use
 Python/library APIs.

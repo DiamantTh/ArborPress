@@ -106,9 +106,13 @@ are not rewritten.
 `instance/backups/` stores local manifest-based backup sets. Backup creation
 uses `instance/var/run/backup.lock` for per-instance coordination and
 `instance/var/tmp/` for temporary stable-file staging and SQLite snapshots.
-These temporary files are not part of a backup. See
-[docs/backups.md](backups.md) for the format, component selection, and
-verification commands. This does not add a general-purpose PID/socket manager.
+Restore uses the same lock and a maintenance marker/journal in
+`instance/var/run/`, with private staging in `instance/var/tmp/` (or a safe
+same-filesystem sibling). It supports read-only planning, offline apply,
+selective components, and rollback-first recovery; it does not claim an atomic
+transaction across multiple filesystem roots. See [docs/backups.md](backups.md)
+for the format, component selection, verification, and restore commands. This
+does not add a general-purpose PID/socket manager.
 
 ## Development example
 
@@ -186,8 +190,9 @@ relocate the instance.
 
 `app/releases/<version>/` and `app/current` are reserved for a future release
 layout. No release download, pointer switching, update, or rollback behavior
-is implemented. `instance/backups/` is the local backup-set root. ArborPress can
-create, list, inspect, and verify backup sets, but cannot yet apply a restore.
+is implemented. `instance/backups/` is the local backup-set root. ArborPress
+can create, list, inspect, and verify backup sets, then plan and selectively
+apply an offline restore with a recovery journal.
 
 Existing source-checkout directories such as `config/`, `media/`, or
 `content/themes/` are not automatically copied or moved. Operators must place
