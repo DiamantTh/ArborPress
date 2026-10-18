@@ -1,0 +1,9 @@
+name = "ArborPress Admin"
+version = "1.0.0"
+type = "admin"
+author = "ArborPress"
+license = "AGPL-3.0-or-later"
+description = "Built-in administrative presentation theme."
+requires_arborpress = ">=0.1.0"
+tested_with = "0.1.0"
+capabilities = []

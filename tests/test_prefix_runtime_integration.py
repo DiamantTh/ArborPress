@@ -222,7 +222,7 @@ def test_web_factory_initializes_prefix_layout_before_runtime_services(
     foreign_theme = foreign_cwd / "content" / "themes" / "cwd-only"
     foreign_theme.mkdir(parents=True)
     (foreign_theme / "theme.toml").write_text(
-        '[theme]\nid = "cwd-only"\nname = "Wrong CWD theme"\n', encoding="utf-8"
+        'name = "Wrong CWD theme"\nversion = "1.0.0"\ntype = "public"\n', encoding="utf-8"
     )
     monkeypatch.chdir(foreign_cwd)
     reset_settings()
@@ -282,7 +282,7 @@ def test_theme_plugin_media_cache_and_logs_are_scoped_to_each_prefix(
         theme_dir = paths.themes / f"theme-{name}"
         theme_dir.mkdir()
         (theme_dir / "theme.toml").write_text(
-            f'[theme]\nid = "theme-{name}"\nname = "Theme {name}"\n',
+            f'name = "Theme {name}"\nversion = "1.0.0"\ntype = "public"\n',
             encoding="utf-8",
         )
         plugin_dir = paths.plugins / f"plugin-{name}"

@@ -1452,11 +1452,15 @@ async def site_settings_page():
         for sec in _SETTINGS_SECTIONS:
             sections[sec] = await get_section(sec, db)
 
-    # Available themes for selection list
+    # Separate selectors preserve the Public/Admin trust boundary.
     registry = get_theme_registry()
-    available_themes = [
+    available_public_themes = [
         {"id": t.theme.id, "name": t.theme.name}
-        for t in registry.all()
+        for t in registry.all("public")
+    ]
+    available_admin_themes = [
+        {"id": t.theme.id, "name": t.theme.name}
+        for t in registry.all("admin")
     ]
 
     # Available patterns for pattern picker
@@ -1468,7 +1472,8 @@ async def site_settings_page():
     return await render_template(
         "admin/settings.html",
         sections=sections,
-        available_themes=available_themes,
+        available_public_themes=available_public_themes,
+        available_admin_themes=available_admin_themes,
         available_patterns=available_patterns,
         noindex=True,
     )
@@ -1561,8 +1566,20 @@ async def site_settings_save():
             })
 
         elif section == "theme":
+            from arborpress.themes.manifest import get_theme_registry
+
+            registry = get_theme_registry()
+            public_id = (form.get("active") or "default").strip()
+            admin_id = (form.get("admin_active") or "arbor-admin").strip()
+            public_theme = registry.get(public_id)
+            admin_theme = registry.get(admin_id)
+            if public_theme is None or public_theme.type != "public":
+                abort(400, description="Selected public theme is unavailable or invalid.")
+            if admin_theme is None or admin_theme.type != "admin":
+                abort(400, description="Selected admin theme is unavailable or invalid.")
             current.update({
-                "active":              (form.get("active") or "default").strip(),
+                "active":              public_id,
+                "admin_active":        admin_id,
                 "auto_dark":           form.get("auto_dark") == "1",
                 "auto_dark_start":     int(form.get("auto_dark_start") or 19),
                 "auto_dark_end":       int(form.get("auto_dark_end") or 6),

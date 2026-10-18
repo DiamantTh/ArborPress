@@ -112,24 +112,54 @@ def create_app() -> Quart:
     from datetime import datetime as _dt
     app.jinja_env.globals["now"] = lambda: _dt.now(UTC)
 
-    # Config + session as Jinja2 globals (for templates)
-    app.jinja_env.globals["config"] = cfg
+    # Templates need only presentation-safe config values. Do not expose the
+    # complete Settings object here: it also contains database credentials,
+    # signing keys and other runtime secrets that themes must never receive.
+    app.jinja_env.globals["config"] = {
+        "web": {
+            "base_url": cfg.web.base_url,
+            "admin_editor": cfg.web.admin_editor,
+        },
+        "auth": {
+            "legacy_password_enabled": cfg.auth.legacy_password_enabled,
+        },
+    }
     app.jinja_env.globals["demo_mode"] = False  # Overridden by context processor per request
 
-    # Load active theme and provide as Jinja2 global
+    # Theme selection is resolved per request. Public/Admin are independent,
+    # and Jinja's loader uses the same type boundary for template overrides.
     from arborpress.core.site_settings import get_cached, get_defaults
-    from arborpress.themes.manifest import get_active_theme, get_theme_registry
-    active_theme = get_active_theme()
-    app.jinja_env.globals["theme"] = active_theme
+    from arborpress.themes.jinja import (
+        active_theme_for_request,
+        install_theme_template_loader,
+        template_theme_type,
+    )
+    from arborpress.themes.manifest import get_theme_registry
 
-    # Load dark companion (if configured) for client-side toggle
-    _theme_settings = get_cached("theme") or get_defaults("theme")
-    _dark_id = active_theme.theme.dark_companion
-    _theme_dark = get_theme_registry().get(_dark_id) if _dark_id else None
-    app.jinja_env.globals["theme_dark"] = _theme_dark
-    app.jinja_env.globals["theme_auto_dark"] = bool(_theme_settings.get("auto_dark", False))
-    app.jinja_env.globals["theme_auto_dark_start"] = int(_theme_settings.get("auto_dark_start", 19))
-    app.jinja_env.globals["theme_auto_dark_end"] = int(_theme_settings.get("auto_dark_end", 6))
+    theme_registry = get_theme_registry()
+    install_theme_template_loader(app.jinja_env, theme_registry)
+
+    @app.context_processor
+    async def _theme_context() -> dict[str, object]:
+        theme_type = template_theme_type()
+        theme_settings = get_cached("theme") or get_defaults("theme")
+        selected = active_theme_for_request(theme_registry)
+
+        dark = (
+            theme_registry.get(selected.dark_companion)
+            if theme_type == "public" and selected.dark_companion
+            else None
+        )
+        return {
+            "theme": selected,
+            "theme_dark": dark,
+            "theme_css_url": theme_registry.asset_url(selected.id),
+            "theme_dark_css_url": theme_registry.asset_url(dark.id) if dark else "",
+            "theme_auto_dark": bool(theme_settings.get("auto_dark", False))
+            if theme_type == "public" else False,
+            "theme_auto_dark_start": int(theme_settings.get("auto_dark_start", 19)),
+            "theme_auto_dark_end": int(theme_settings.get("auto_dark_end", 6)),
+        }
 
     # Background pattern override: read from cache per request
     @app.context_processor
@@ -159,37 +189,19 @@ def create_app() -> Quart:
         if not demo_enabled:
             return {"demo_mode": False}
 
-        reg = get_theme_registry()
-        all_t = reg.all()
+        reg = theme_registry
+        all_t = reg.all("public")
         # Main themes (no light_companion → excludes dark-only companions)
         demo_light = [t for t in all_t if t.theme.light_companion is None]
         demo_map   = {t.theme.id: t for t in all_t}
-
-        ctx: dict = {
+        demo_css_urls = {theme.id: reg.asset_url(theme.id) for theme in all_t}
+        return {
             "demo_mode":         True,
             "demo_show_banner":  bool(_demo_cfg.get("show_banner", True)),
             "demo_light_themes": demo_light,
             "demo_theme_map":    demo_map,
+            "demo_theme_css_urls": demo_css_urls,
         }
-
-        # Theme override via cookie (for SSR consistency)
-        from quart import request as _req
-        cookie_id = _req.cookies.get("ap-theme")
-        if cookie_id:
-            t_override = demo_map.get(cookie_id)
-            if t_override:
-                dark_id = t_override.theme.dark_companion
-                ctx["theme"]      = t_override
-                ctx["theme_dark"] = demo_map.get(dark_id) if dark_id else None
-        return ctx
-    # Theme templates (override core templates; §9)
-    if active_theme.template_dir:
-        from jinja2 import ChoiceLoader, FileSystemLoader
-        existing = app.jinja_env.loader
-        app.jinja_env.loader = ChoiceLoader([
-            FileSystemLoader(str(active_theme.template_dir)),
-            existing,
-        ])
 
     # §8 Admin-Blueprint dynamisch registrieren
     from arborpress.web.routes.admin import admin_bp
@@ -290,17 +302,20 @@ def create_app() -> Quart:
     # §15 Plugin-Blueprints
     _register_plugin_blueprints(app)
 
-    # §9 Theme-Static-Files (GET /static/themes/<id>/css/style.css)
+    # §9 Theme static files are served only when declared in a valid manifest.
     @app.route("/static/themes/<theme_id>/<path:filename>")
     async def theme_static(theme_id: str, filename: str):  # type: ignore[return]
         from quart import abort as _abort
-        from quart import send_from_directory
+        from quart import send_file
 
-        from arborpress.themes.manifest import get_theme_registry
-        t = get_theme_registry().get(theme_id)
-        if t is None or t.static_dir is None or not t.static_dir.exists():
+        try:
+            resolved = theme_registry.resolve_asset(theme_id, filename)
+        except ValueError:
             _abort(404)
-        return await send_from_directory(str(t.static_dir), filename)
+        if resolved is None:
+            _abort(404)
+        _theme, asset_path = resolved
+        return await send_file(asset_path)
 
     # §10 Security headers (inner middleware – executed first)
     app.asgi_app = SecurityHeadersMiddleware(app.asgi_app)  # type: ignore[assignment]

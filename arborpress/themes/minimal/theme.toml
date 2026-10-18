@@ -1,14 +1,23 @@
-[theme]
-id          = "minimal"
-name        = "ArborPress Minimal"
-version     = "1.0.0"
-author      = "ArborPress"
-description = "Zeitungsartiger Stil – maximale Lesbarkeit, Serif-Schrift, kein Ablenkungsschnickschnack."
-preview     = "preview.png"
-dark_companion = "minimal-dark"
+name = 'ArborPress Minimal'
+version = '1.0.0'
+type = "public"
+author = 'ArborPress'
+license = 'unknown'
+description = 'Zeitungsartiger Stil – maximale Lesbarkeit, Serif-Schrift, kein Ablenkungsschnickschnack.'
+requires_arborpress = ">=0.1.0"
+tested_with = "0.1.0"
+dark_companion = 'minimal-dark'
 
-[theme.features]
-dark_mode_toggle  = false
-code_highlight    = false
-reading_time      = true
+capabilities = ["styles"]
+
+[features]
+dark_mode_toggle = false
+code_highlight = false
+reading_time = true
 table_of_contents = false
+
+[assets]
+css = ['static/css/style.css']
+
+[entry_points]
+public_css = 'static/css/style.css'

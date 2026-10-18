@@ -87,6 +87,16 @@ async def test_packaged_public_and_webauthn_entries_are_served_by_quart(client):
 
 
 @pytest.mark.asyncio
+async def test_theme_static_route_serves_only_declared_assets(client):
+    css = await client.get("/static/themes/default/css/style.css")
+    assert css.status_code == 200
+    assert b"--color-bg" in await css.get_data()
+
+    undeclared = await client.get("/static/themes/default/secret.txt")
+    assert undeclared.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_public_index_is_server_rendered_and_preserves_filtered_pagination(
     test_engine, client, app, monkeypatch
 ):

@@ -80,9 +80,10 @@ def test_external_themes_use_instance_themes_and_builtins_remain_package_resourc
     (operator_theme / "theme.toml").write_text(
         textwrap.dedent(
             """
-            [theme]
-            id = "operator"
             name = "Operator Theme"
+version = "1.0.0"
+type = "public"
+requires_arborpress = ">=0.1.0"
             """
         ),
         encoding="utf-8",
@@ -90,13 +91,13 @@ def test_external_themes_use_instance_themes_and_builtins_remain_package_resourc
     colliding_theme = paths.themes / "default"
     colliding_theme.mkdir()
     (colliding_theme / "theme.toml").write_text(
-        "[theme]\nid = \"default\"\nname = \"External Override\"\n",
+        'name = "External Override"\nversion = "1.0.0"\ntype = "public"\n',
         encoding="utf-8",
     )
     foreign = tmp_path / "foreign" / "content" / "themes" / "cwd-theme"
     foreign.mkdir(parents=True)
     (foreign / "theme.toml").write_text(
-        "[theme]\nid = \"cwd-theme\"\nname = \"CWD Theme\"\n",
+        'name = "CWD Theme"\nversion = "1.0.0"\ntype = "public"\n',
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path / "foreign")
@@ -106,6 +107,11 @@ def test_external_themes_use_instance_themes_and_builtins_remain_package_resourc
     assert registry.get("operator") is not None
     assert registry.get("default") is not None
     assert registry.get("default").theme.name == "ArborPress Default"
+    assert registry.record("default").status == "valid"
+    assert any(
+        record.id == "default" and record.status == "duplicate_id"
+        for record in registry.records()
+    )
     assert registry.get("cwd-theme") is None
     assert registry.get("operator").theme_dir == operator_theme
 

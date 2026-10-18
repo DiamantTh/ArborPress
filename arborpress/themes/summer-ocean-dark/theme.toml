@@ -1,14 +1,23 @@
-[theme]
-id          = "summer-ocean-dark"
-name        = "Summer Ocean Dark"
-version     = "1.0.0"
-author      = "ArborPress"
-description = "Dunkle Variante von Summer Ocean – tiefes Meerblau für Nacht und Abend."
-preview     = "preview.png"
-light_companion = "summer-ocean"
+name = 'Summer Ocean Dark'
+version = '1.0.0'
+type = "public"
+author = 'ArborPress'
+license = 'unknown'
+description = 'Dunkle Variante von Summer Ocean – tiefes Meerblau für Nacht und Abend.'
+requires_arborpress = ">=0.1.0"
+tested_with = "0.1.0"
+light_companion = 'summer-ocean'
 
-[theme.features]
+capabilities = ["styles"]
+
+[features]
 dark_mode_toggle = false
-code_highlight   = true
-reading_time     = true
+code_highlight = true
+reading_time = true
 table_of_contents = true
+
+[assets]
+css = ['static/style.css']
+
+[entry_points]
+public_css = 'static/style.css'

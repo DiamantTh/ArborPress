@@ -1,14 +1,23 @@
-[theme]
-id          = "dark"
-name        = "ArborPress Dark"
-version     = "1.0.0"
-author      = "ArborPress"
-description = "Dunkles Layout mit hohem Kontrast – augenschonend für Nachtarbeit."
-preview     = "preview.png"
-light_companion = "default"
+name = 'ArborPress Dark'
+version = '1.0.0'
+type = "public"
+author = 'ArborPress'
+license = 'unknown'
+description = 'Dunkles Layout mit hohem Kontrast – augenschonend für Nachtarbeit.'
+requires_arborpress = ">=0.1.0"
+tested_with = "0.1.0"
+light_companion = 'default'
 
-[theme.features]
+capabilities = ["styles"]
+
+[features]
 dark_mode_toggle = false
-code_highlight   = true
-reading_time     = true
+code_highlight = true
+reading_time = true
 table_of_contents = true
+
+[assets]
+css = ['static/css/style.css']
+
+[entry_points]
+public_css = 'static/css/style.css'

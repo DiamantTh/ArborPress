@@ -413,7 +413,7 @@
     <label>
       Aktives Theme
       <select name="active">
-        {% for theme in available_themes %}
+      {% for theme in available_public_themes %}
           <option value="{{ theme.id }}"
                   {{ 'selected' if sections.theme.get('active','default') == theme.id }}>
             {{ theme.name }} ({{ theme.id }})
@@ -424,10 +424,25 @@
       </select>
     </label>
 
+    <label>
+      Admin-Theme
+      <select name="admin_active">
+        {% for theme in available_admin_themes %}
+          <option value="{{ theme.id }}"
+                  {{ 'selected' if sections.theme.get('admin_active','arbor-admin') == theme.id }}>
+            {{ theme.name }} ({{ theme.id }})
+          </option>
+        {% else %}
+          <option value="arbor-admin" selected>Standard (arbor-admin)</option>
+        {% endfor %}
+      </select>
+    </label>
+
     <p class="hint">
       Eigene Themes können im Instanzverzeichnis <code>instance/themes/</code> abgelegt werden.<br>
-      Jedes Theme benötigt einen Unterordner mit einer <code>theme.toml</code> und optionalen Ordnern
-      <code>static/</code> und <code>templates/</code>.
+      Public- und Admin-Themes werden getrennt unter <code>instance/themes/</code> verwaltet.
+      Jedes Theme benötigt eine gültige <code>theme.toml</code>; erlaubte Seitenvorlagen sind dort
+      ausdrücklich aufgeführt.
     </p>
 
     <h4>Hintergrundmuster</h4>

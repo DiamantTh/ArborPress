@@ -1,14 +1,23 @@
-[theme]
-id = "spring-mint"
-name = "Spring Mint"
-version = "1.0.0"
-author = "ArborPress"
-description = "Frühlingspalette in Minzgrün und Salbei."
-preview = "preview.png"
-dark_companion = "spring-mint-dark"
+name = 'Spring Mint'
+version = '1.0.0'
+type = "public"
+author = 'ArborPress'
+license = 'unknown'
+description = 'Frühlingspalette in Minzgrün und Salbei.'
+requires_arborpress = ">=0.1.0"
+tested_with = "0.1.0"
+dark_companion = 'spring-mint-dark'
 
-[theme.features]
+capabilities = ["styles"]
+
+[features]
 dark_mode_toggle = false
 code_highlight = true
 reading_time = true
 table_of_contents = true
+
+[assets]
+css = ['static/style.css']
+
+[entry_points]
+public_css = 'static/style.css'

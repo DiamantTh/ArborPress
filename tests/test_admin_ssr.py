@@ -92,6 +92,7 @@ async def test_admin_pages_are_server_rendered_and_form_csrf_is_present(
     assert 'name="body"' in pages["/admin/posts/new"]
     assert 'name="_csrf"' in pages["/admin/posts/new"]
     assert 'name="_csrf"' in pages["/admin/settings"]
+    assert 'name="admin_active"' in pages["/admin/settings"]
     assert 'name="_csrf"' in pages["/admin/captcha"]
     assert 'aria-current="page"' in pages["/admin/settings"]
     assert 'data-ap-admin-mount="password-tools"' in pages["/admin/security"]
@@ -114,16 +115,25 @@ async def test_admin_pages_are_server_rendered_and_form_csrf_is_present(
     assert "/static/dist/assets/auth-security-" in security_html
     assert "auth-security.js" not in security_html
 
-    from arborpress.core.config import Settings
-
-    web_settings = cast(Settings, app.jinja_env.globals["config"]).web
-    monkeypatch.setattr(web_settings, "admin_editor", "easymde")
+    template_config = cast(dict[str, dict[str, object]], app.jinja_env.globals["config"])
+    monkeypatch.setitem(template_config["web"], "admin_editor", "easymde")
     fallback_response = await client.get("/admin/posts/new")
     fallback_html = await fallback_response.get_data(as_text=True)
     assert fallback_response.status_code == 200
     assert "Konfigurierter Editor nicht unterstützt" in fallback_html
     assert 'name="body"' in fallback_html
     assert "/static/dist/assets/editor-tiptap-" not in fallback_html
+
+
+def test_jinja_receives_only_presentation_safe_config(app: Quart) -> None:
+    template_config = app.jinja_env.globals["config"]
+
+    assert template_config["web"]["base_url"]
+    assert "admin_editor" in template_config["web"]
+    assert "legacy_password_enabled" in template_config["auth"]
+    assert "db" not in template_config
+    assert "secret_key" not in template_config["web"]
+    assert "actor_key_enc_key" not in template_config["auth"]
 
 
 @pytest.mark.asyncio
@@ -150,3 +160,37 @@ async def test_admin_state_change_rejects_missing_csrf_token(
     await _login_admin(client, test_engine, monkeypatch)
     response = await client.post("/admin/captcha", form={"q_0": "Question?", "a_0": "Answer"})
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_theme_settings_keep_public_and_admin_selection_types_separate(
+    client: QuartClient, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _login_admin(client, test_engine, monkeypatch)
+    response = await client.get("/admin/settings")
+    html = await response.get_data(as_text=True)
+    token_match = re.search(r'<input type="hidden" name="_csrf" value="([0-9a-f]+)">', html)
+    assert token_match is not None
+    token = token_match.group(1)
+
+    saved = await client.post(
+        "/admin/settings",
+        form={
+            "_csrf": token,
+            "section": "theme",
+            "active": "default",
+            "admin_active": "arbor-admin",
+        },
+    )
+    assert saved.status_code == 302
+
+    rejected = await client.post(
+        "/admin/settings",
+        form={
+            "_csrf": token,
+            "section": "theme",
+            "active": "arbor-admin",
+            "admin_active": "default",
+        },
+    )
+    assert rejected.status_code == 400

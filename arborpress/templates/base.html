@@ -12,14 +12,14 @@
   {# Kern-CSS immer laden (Layout, Utility-Klassen); Full-Themes überschreiben via
      eigene Selektoren, Saison-Themes ergänzen nur :root-Variablen oben drauf #}
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ _cv }}">
-  {% if theme %}
-  <link id="ap-theme-css" rel="stylesheet" href="{{ theme.css_url }}?v={{ _cv }}">
+  {% if theme_css_url %}
+  <link id="ap-theme-css" rel="stylesheet" href="{{ theme_css_url }}?v={{ _cv }}">
   {% else %}
   {# kein explizites Theme – Fallback schon geladen, Dummy-ID für JS #}
   <link id="ap-theme-css" rel="stylesheet" href="" disabled>
   {% endif %}
   {% if theme_dark %}
-  <link id="ap-theme-dark-css" rel="stylesheet" href="{{ theme_dark.css_url }}?v={{ theme_dark.theme.version }}" disabled>
+  <link id="ap-theme-dark-css" rel="stylesheet" href="{{ theme_dark_css_url }}?v={{ theme_dark.theme.version }}" disabled>
   {% endif %}
   <link rel="alternate" type="application/rss+xml"  title="RSS-Feed"  href="{{ url_for('public.rss_feed') }}">
   <link rel="alternate" type="application/atom+xml" title="Atom-Feed" href="{{ url_for('public.atom_feed') }}">
@@ -154,9 +154,9 @@
       {% set _td = demo_theme_map.get(t.theme.dark_companion) if t.theme.dark_companion else None %}
       <button class="ap-demo-panel__item{{ ' is-active' if theme and theme.theme.id == t.theme.id }}"
               data-id="{{ t.theme.id }}"
-              data-light="{{ t.css_url }}?v={{ t.theme.version }}"
+              data-light="{{ demo_theme_css_urls.get(t.theme.id, '') }}?v={{ t.theme.version }}"
               data-dark-id="{{ t.theme.dark_companion or '' }}"
-              data-dark="{{ (_td.css_url + '?v=' + _td.theme.version) if _td else '' }}">
+              data-dark="{{ (demo_theme_css_urls.get(_td.theme.id, '') + '?v=' + _td.theme.version) if _td else '' }}">
         <span class="ap-demo-panel__swatch" style="background:#888"></span>
         {{ t.theme.name }}
       </button>

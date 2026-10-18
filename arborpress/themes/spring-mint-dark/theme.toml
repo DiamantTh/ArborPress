@@ -1,14 +1,23 @@
-[theme]
-id          = "spring-mint-dark"
-name        = "Spring Mint Dark"
-version     = "1.0.0"
-author      = "ArborPress"
-description = "Dunkle Variante von Spring Mint – tiefes Waldgrün als Nachtmodus."
-preview     = "preview.png"
-light_companion = "spring-mint"
+name = 'Spring Mint Dark'
+version = '1.0.0'
+type = "public"
+author = 'ArborPress'
+license = 'unknown'
+description = 'Dunkle Variante von Spring Mint – tiefes Waldgrün als Nachtmodus.'
+requires_arborpress = ">=0.1.0"
+tested_with = "0.1.0"
+light_companion = 'spring-mint'
 
-[theme.features]
+capabilities = ["styles"]
+
+[features]
 dark_mode_toggle = false
-code_highlight   = true
-reading_time     = true
+code_highlight = true
+reading_time = true
 table_of_contents = true
+
+[assets]
+css = ['static/style.css']
+
+[entry_points]
+public_css = 'static/style.css'
