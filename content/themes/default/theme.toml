@@ -1,16 +1,9 @@
-# Default-Theme für ArborPress (§9)
-# Minimaltheme – kein CDN, nur lokale Assets
-
-[theme]
-id             = "default"
-name           = "ArborPress Default"
-version        = "1.0.0"
-description    = "Schlichtes Standard-Theme ohne externe Abhängigkeiten (§10 no remote HTML includes)"
-author         = "ArborPress Core Team"
-dark_companion = "dark"
-
-[theme.features]
-dark_mode_toggle  = false
-code_highlight    = true
-reading_time      = true
-table_of_contents = true
+name = 'ArborPress Default'
+version = "1.0.0"
+type = "public"
+author = "Example Author"
+license = "MIT"
+description = "Example theme manifest for installation under instance/themes."
+requires_arborpress = ">=0.1.0"
+tested_with = "0.1.0"
+capabilities = []

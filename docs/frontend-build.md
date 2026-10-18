@@ -81,10 +81,10 @@ and copies only compiled assets into the Python package before packaging. The
 final runtime image remains Python-only.
 
 The Admin stylesheet and editor styles are included through Vite rather than
-hard-coded static `<link>` paths or page-inline editor CSS. Theme manifests may
-still contain a legacy `assets.js` field, but ArborPress does not automatically
-execute theme or plugin scripts in Admin pages; the supported theme contract
-remains a later architecture phase.
+hard-coded static `<link>` paths or page-inline editor CSS. Themes use the
+validated `theme.toml` contract in [themes.md](themes.md): local CSS/assets
+must be declared, and there is no theme JavaScript entry point. ArborPress
+never automatically executes theme or plugin scripts in Admin pages.
 
 ## Extending the browser build
 

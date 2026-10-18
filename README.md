@@ -47,7 +47,7 @@ arborpress/               Python package (backend)
   models/                 SQLAlchemy ORM: User, Content, Mail
   plugins/                Plugin registry and manifest validation
   mail/                   SMTP backend + async queue (§13)
-  themes/                 Theme manifest schema (§9)
+  themes/                 Theme manifests, registry, Jinja loader (§9)
   logging/                Logging configuration (stdout/file)
   runtime/                Prefix-scoped program and instance paths
   web/                    Quart app, routes, middleware
@@ -73,6 +73,11 @@ tests/                    Automated tests
 
 The frontend build model and local commands are documented in
 [docs/frontend-build.md](docs/frontend-build.md).
+
+Theme runtime and theme.toml conventions are documented in
+[docs/themes.md](docs/themes.md). Runtime themes are package built-ins or
+operator themes under the active prefix's instance/themes/; source-checkout
+examples in content/themes/ are not discovered automatically.
 
 ## CLI Reference (§14)
 
