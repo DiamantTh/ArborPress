@@ -5,8 +5,11 @@ from __future__ import annotations
 import logging
 from datetime import UTC
 from pathlib import Path
+from typing import Any, cast
 
-from quart import Quart
+from quart import Quart, Response
+from quart.templating import Environment as QuartEnvironment
+from quart.typing import ResponseReturnValue
 
 from arborpress.core.config import get_settings
 from arborpress.logging.config import setup_logging
@@ -46,7 +49,7 @@ def create_app() -> Quart:
     )
     from arborpress.themes.sandbox import ArborPressSandboxedEnvironment
 
-    app.jinja_environment = ArborPressSandboxedEnvironment
+    app.jinja_environment = cast(type[QuartEnvironment], ArborPressSandboxedEnvironment)
     # Vite assets are resolved lazily when a Jinja template requests an entry.
     # This keeps application startup usable in a source checkout before a local
     # frontend build, while installed releases ship the manifest and bundles.
@@ -110,13 +113,14 @@ def create_app() -> Quart:
     # from_json filter: parse JSON string in templates (used by admin RDAP block)
     import json as _json
 
-    def _from_json(value: str | None) -> dict:
+    def _from_json(value: str | None) -> dict[str, Any]:
         if not value:
             return {}
         try:
-            return _json.loads(value)
+            parsed = _json.loads(value)
         except ValueError, TypeError:
             return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     app.jinja_env.filters["from_json"] = _from_json
 
@@ -219,13 +223,15 @@ def create_app() -> Quart:
                     "theme_static", theme_id=selected.id, filename=relative
                 )
 
-            theme_asset_url.__arborpress_safe_template_callable__ = True
+            setattr(  # noqa: B010 - the sandbox reads this explicit callable marker.
+                theme_asset_url, "__arborpress_safe_template_callable__", True
+            )
             theme_context["theme_asset_url"] = theme_asset_url
         return theme_context
 
     # Background pattern override: read from cache per request
     @app.context_processor
-    async def _pattern_context() -> dict:
+    async def _pattern_context() -> dict[str, Any]:
         from arborpress.core.site_settings import get_cached, get_defaults
         from arborpress.themes.patterns import make_pattern_url
 
@@ -238,7 +244,7 @@ def create_app() -> Quart:
 
     # Federation – per-request context processor (value from DB/cache)
     @app.context_processor
-    async def _federation_context() -> dict:
+    async def _federation_context() -> dict[str, Any]:
         from arborpress.core.site_settings import get_cached, get_defaults
 
         fed = get_cached("federation") or get_defaults("federation")
@@ -247,7 +253,7 @@ def create_app() -> Quart:
     # Demo mode – per-request context processor reads cache dynamically
     # (takes effect immediately after admin change without restart)
     @app.context_processor
-    async def _demo_context() -> dict:
+    async def _demo_context() -> dict[str, Any]:
         _demo_cfg = get_cached("demo") or get_defaults("demo")
         demo_enabled = bool(_demo_cfg.get("enabled", False))
         if not demo_enabled:
@@ -270,7 +276,7 @@ def create_app() -> Quart:
         }
 
     @app.after_request
-    async def _theme_preview_headers(response):
+    async def _theme_preview_headers(response: Response) -> Response:
         from quart import session as quart_session
 
         if quart_session.get("_theme_preview"):
@@ -289,7 +295,7 @@ def create_app() -> Quart:
     # §14 Install gate: redirect all requests to /install while .installed is missing
     # Exceptions: /install itself, /static/, /health
     @app.before_request
-    async def _install_gate():
+    async def _install_gate() -> ResponseReturnValue | None:
         from arborpress.core.config import is_installed
 
         if is_installed():
@@ -316,7 +322,7 @@ def create_app() -> Quart:
         return _redir(_uf("install.install_page"))
 
     @app.before_request
-    async def _recovery_session_gate():
+    async def _recovery_session_gate() -> None:
         """Limit recovery sessions to the account's own recovery surface."""
         from quart import abort as _abort
         from quart import request as _req
@@ -400,7 +406,7 @@ def create_app() -> Quart:
 
     # §9 Theme static files are served only when declared in a valid manifest.
     @app.route("/static/themes/<theme_id>/<path:filename>")
-    async def theme_static(theme_id: str, filename: str):  # type: ignore[return]
+    async def theme_static(theme_id: str, filename: str) -> Response:
         from quart import abort as _abort
         from quart import send_file
 

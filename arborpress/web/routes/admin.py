@@ -15,6 +15,8 @@ import hashlib
 import json
 import logging
 import secrets
+from collections.abc import Mapping
+from typing import Any, Literal, cast
 
 from jinja2 import TemplateError
 from quart import (
@@ -28,7 +30,9 @@ from quart import (
     session,
     url_for,
 )
+from quart.typing import ResponseReturnValue
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from arborpress.auth.password_tools import (
     assess_password_strength,
@@ -117,7 +121,7 @@ async def _resolve_body(form, db) -> tuple[str, str, dict | None]:
     return body_md, body_html, body_json
 
 
-def _require_session():
+def _require_session() -> None:
     if not session.get("user_id"):
         abort(redirect(url_for("auth.login_page")))
     if session.get("recovery_only"):
@@ -156,7 +160,7 @@ async def _role_context() -> dict:
 
 
 @admin_bp.errorhandler(TemplateError)
-async def _theme_preview_failure(error: TemplateError):
+async def _theme_preview_failure(error: TemplateError) -> ResponseReturnValue:
     """Recover to the package Admin theme after any Admin render failure."""
     preview = session.get("_theme_preview")
     if session.get("user_role") != "admin":
@@ -1797,7 +1801,7 @@ async def site_settings_save():
 # ---------------------------------------------------------------------------
 
 
-async def _theme_settings() -> dict:
+async def _theme_settings() -> dict[str, Any]:
     from arborpress.core.site_settings import get_section_uncached
 
     async for db in get_db_session():
@@ -1805,7 +1809,7 @@ async def _theme_settings() -> dict:
     return {}
 
 
-async def _locked_theme_settings(db) -> dict:
+async def _locked_theme_settings(db: AsyncSession) -> dict[str, Any]:
     """Read the persisted theme JSON under a row lock for optimistic edits."""
     from sqlalchemy import select
 
@@ -1846,7 +1850,7 @@ async def _theme_audit(event: str, theme_id: str, detail: str) -> None:
         break
 
 
-def _theme_effective_ids(registry, settings: dict) -> dict[str, str]:
+def _theme_effective_ids(registry: Any, settings: Mapping[str, Any]) -> dict[str, str]:
     return {
         "public": registry.get_or_default(str(settings.get("active", "default")), "public").id,
         "admin": registry.get_or_default(
@@ -1855,7 +1859,9 @@ def _theme_effective_ids(registry, settings: dict) -> dict[str, str]:
     }
 
 
-def _theme_fallback_reasons(registry, settings: dict) -> dict[str, str | None]:
+def _theme_fallback_reasons(
+    registry: Any, settings: Mapping[str, Any]
+) -> dict[str, str | None]:
     reasons: dict[str, str | None] = {}
     for kind, key, default_id in (
         ("public", "active", "default"),
@@ -1875,7 +1881,7 @@ def _theme_fallback_reasons(registry, settings: dict) -> dict[str, str | None]:
 
 
 @admin_bp.get("/themes")
-async def themes_overview():
+async def themes_overview() -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from arborpress.themes.management import parent_children
@@ -1891,8 +1897,8 @@ async def themes_overview():
     fallback_reasons = _theme_fallback_reasons(registry, settings)
     trusted = settings.get("trusted_themes", [])
     trusted_ids = set(trusted) if isinstance(trusted, list) else set()
-    rows: dict[str, list[dict]] = {"public": [], "admin": []}
-    invalid_themes: list[dict] = []
+    rows: dict[str, list[dict[str, Any]]] = {"public": [], "admin": []}
+    invalid_themes: list[dict[str, Any]] = []
     for record in registry.records():
         if record.type not in rows:
             if record.status != "valid":
@@ -1943,7 +1949,7 @@ async def themes_overview():
 
 
 @admin_bp.get("/themes/<theme_id>")
-async def theme_detail(theme_id: str):
+async def theme_detail(theme_id: str) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from arborpress.themes.management import (
@@ -2009,7 +2015,7 @@ async def theme_detail(theme_id: str):
 
 
 @admin_bp.post("/themes/<theme_id>/activate")
-async def theme_activate(theme_id: str):
+async def theme_activate(theme_id: str) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from quart import flash
@@ -2043,7 +2049,7 @@ async def theme_activate(theme_id: str):
 
 
 @admin_bp.post("/themes/<theme_id>/trust")
-async def theme_trust(theme_id: str):
+async def theme_trust(theme_id: str) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from quart import flash
@@ -2055,7 +2061,7 @@ async def theme_trust(theme_id: str):
     if theme is None or theme.source != "instance":
         abort(400, description="Only a valid instance theme can receive local trust.")
     actor_id = str(session.get("user_id", ""))
-    await assert_stepup(session, actor_id, "trust_theme", target=theme_id)
+    await assert_stepup(cast(dict[str, Any], session), actor_id, "trust_theme", target=theme_id)
     grant = (await request.form).get("grant") == "1"
     async for db in get_db_session():
         current = await _locked_theme_settings(db)
@@ -2074,7 +2080,7 @@ async def theme_trust(theme_id: str):
 
 
 @admin_bp.post("/themes/<theme_id>/options")
-async def theme_options_save(theme_id: str):
+async def theme_options_save(theme_id: str) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from quart import flash
@@ -2132,7 +2138,7 @@ async def theme_options_save(theme_id: str):
 
 
 @admin_bp.post("/themes/<theme_id>/options/reset")
-async def theme_options_reset(theme_id: str):
+async def theme_options_reset(theme_id: str) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from quart import flash
@@ -2145,7 +2151,7 @@ async def theme_options_reset(theme_id: str):
         abort(404)
     form = await request.form
     actor_id = str(session.get("user_id", ""))
-    previous: dict = {}
+    previous: dict[str, Any] = {}
     async for db in get_db_session():
         current = await _locked_theme_settings(db)
         all_values = current.get("option_values", {})
@@ -2173,7 +2179,7 @@ async def theme_options_reset(theme_id: str):
 
 
 @admin_bp.post("/themes/<theme_id>/preview")
-async def theme_preview(theme_id: str):
+async def theme_preview(theme_id: str) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from time import time
@@ -2210,7 +2216,7 @@ async def theme_preview(theme_id: str):
 
 
 @admin_bp.post("/themes/preview/stop")
-async def theme_preview_stop():
+async def theme_preview_stop() -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from quart import flash
@@ -2221,7 +2227,9 @@ async def theme_preview_stop():
 
 
 @admin_bp.get("/themes/<theme_id>/edit/<kind>/<path:relative>")
-async def theme_file_edit(theme_id: str, kind: str, relative: str):
+async def theme_file_edit(
+    theme_id: str, kind: str, relative: str
+) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from arborpress.themes.management import (
@@ -2233,8 +2241,11 @@ async def theme_file_edit(theme_id: str, kind: str, relative: str):
 
     if kind not in ("template", "css"):
         abort(404)
+    editable_kind = cast(Literal["template", "css"], kind)
     try:
-        content, expected_hash = load_editable_file(get_theme_registry(), theme_id, relative, kind)
+        content, expected_hash = load_editable_file(
+            get_theme_registry(), theme_id, relative, editable_kind
+        )
     except ThemeManagementError:
         abort(404)
     derived_theme = local_derived_theme(get_theme_registry(), theme_id)
@@ -2264,7 +2275,9 @@ async def theme_file_edit(theme_id: str, kind: str, relative: str):
 
 
 @admin_bp.post("/themes/<theme_id>/edit/<kind>/<path:relative>")
-async def theme_file_save(theme_id: str, kind: str, relative: str):
+async def theme_file_save(
+    theme_id: str, kind: str, relative: str
+) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from quart import flash
@@ -2279,6 +2292,7 @@ async def theme_file_save(theme_id: str, kind: str, relative: str):
 
     if kind not in ("template", "css"):
         abort(404)
+    editable_kind = cast(Literal["template", "css"], kind)
     registry = get_theme_registry()
     source_theme = registry.get(theme_id)
     had_derived = local_derived_theme(registry, theme_id) is not None
@@ -2288,7 +2302,7 @@ async def theme_file_save(theme_id: str, kind: str, relative: str):
             registry,
             theme_id,
             relative,
-            kind,
+            editable_kind,
             str(form.get("content", "")),
             str(form.get("expected_hash", "")),
             actor_id=str(session.get("user_id", "")),
@@ -2309,7 +2323,9 @@ async def theme_file_save(theme_id: str, kind: str, relative: str):
 
 
 @admin_bp.post("/themes/<theme_id>/override/reset/<kind>/<path:relative>")
-async def theme_override_reset(theme_id: str, kind: str, relative: str):
+async def theme_override_reset(
+    theme_id: str, kind: str, relative: str
+) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from quart import flash
@@ -2319,13 +2335,14 @@ async def theme_override_reset(theme_id: str, kind: str, relative: str):
 
     if kind not in ("template", "css"):
         abort(404)
+    editable_kind = cast(Literal["template", "css"], kind)
     form = await request.form
     try:
         revision = reset_override(
             get_theme_registry(),
             theme_id,
             relative,
-            kind,
+            editable_kind,
             str(form.get("expected_hash", "")),
             actor_id=str(session.get("user_id", "")),
             actor_name=str(session.get("user_name", "")),
@@ -2338,7 +2355,7 @@ async def theme_override_reset(theme_id: str, kind: str, relative: str):
 
 
 @admin_bp.get("/themes/<theme_id>/manifest")
-async def theme_manifest_edit(theme_id: str):
+async def theme_manifest_edit(theme_id: str) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from arborpress.themes.management import ThemeManagementError, derived_manifest_source
@@ -2362,7 +2379,7 @@ async def theme_manifest_edit(theme_id: str):
 
 
 @admin_bp.post("/themes/<theme_id>/manifest")
-async def theme_manifest_save(theme_id: str):
+async def theme_manifest_save(theme_id: str) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from quart import flash
@@ -2401,7 +2418,9 @@ async def theme_manifest_save(theme_id: str):
 
 
 @admin_bp.post("/themes/<theme_id>/revisions/<revision_id>/restore")
-async def theme_revision_restore(theme_id: str, revision_id: str):
+async def theme_revision_restore(
+    theme_id: str, revision_id: str
+) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from quart import flash
@@ -2443,7 +2462,7 @@ async def theme_revision_restore(theme_id: str, revision_id: str):
         elif kind in ("template", "css", "template-reset", "css-reset") and isinstance(
             relative, str
         ):
-            file_kind = kind.removesuffix("-reset")
+            file_kind = cast(Literal["template", "css"], kind.removesuffix("-reset"))
             _content, expected_hash = load_editable_file(registry, theme_id, relative, file_kind)
             if before is None:
                 from arborpress.themes.management import reset_override
@@ -2474,7 +2493,7 @@ async def theme_revision_restore(theme_id: str, revision_id: str):
                 abort(400)
             if before_values:
                 before_values = validate_option_values(registry, theme_id, before_values)
-            current_values: dict = {}
+            current_values: dict[str, Any] = {}
             async for db in get_db_session():
                 from arborpress.core.site_settings import get_section, save_section
 
@@ -2509,7 +2528,9 @@ async def theme_revision_restore(theme_id: str, revision_id: str):
 
 
 @admin_bp.post("/themes/<theme_id>/revision-reset/<kind>/<path:relative>")
-async def theme_revision_override_reset(theme_id: str, kind: str, relative: str):
+async def theme_revision_override_reset(
+    theme_id: str, kind: str, relative: str
+) -> ResponseReturnValue:
     # Kept as a separate HTML action for an explicit, CSRF-protected reset.
     return await theme_override_reset(theme_id, kind, relative)
 
