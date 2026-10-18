@@ -92,6 +92,16 @@ parameters (for passphrases), and the fixed `manifest.auth` path. The
 Retention state is stored separately and never modifies the authenticated
 manifest.
 
+The current archive/export adapters first create a compressed component
+intermediate in a private owner-only `instance/var/tmp/backup-payload-*`
+workspace, then stream that file through AES-GCM into the incomplete backup
+set. The workspace is removed on ordinary success and handled failure; it is
+not part of the published set. An abrupt process termination can leave this
+private scratch directory behind, and `backup cleanup-incomplete` does not
+remove it. Operators should inspect and remove only recognized stale
+`backup-payload-*` workspaces while no backup is running. Python does not
+promise secure erasure of temporary storage blocks.
+
 The binary component envelope is, in order: 8-byte magic (hex
 `41 50 45 4e 43 0d 0a 1a`),
 1-byte envelope version, 1-byte algorithm ID (`1` = AES-256-GCM), 12-byte
