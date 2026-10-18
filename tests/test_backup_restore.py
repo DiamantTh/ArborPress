@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from arborpress.backups.encryption import BackupKey
 from arborpress.backups.manifest import BackupFile, BackupVerificationError
 from arborpress.backups.restore import (
     RestoreError,
@@ -57,6 +58,81 @@ async def test_plan_is_read_only_and_apply_restores_selected_file_root(tmp_path:
     assert not restore_journal_path(paths).exists()
     history = paths.data / "restore-history" / f"{report['restore_id']}.json"
     assert json.loads(history.read_text(encoding="utf-8"))["result"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_full_encrypted_sqlite_restore_includes_secret_config_and_files(
+    tmp_path: Path,
+) -> None:
+    paths = ArborPressPaths.from_prefix(tmp_path / "encrypted-restore")
+    ensure_instance_layout(paths)
+    (paths.config / "config.toml").write_text('secret = "saved secret"\n', encoding="utf-8")
+    (paths.media / "cover.txt").write_text("saved media", encoding="utf-8")
+    database_path = paths.data / "arborpress.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
+    import arborpress.models  # noqa: F401
+    from arborpress.core.db import Base
+    from arborpress.core.migrations import upgrade_database
+
+    await upgrade_database(engine)
+    tags = Base.metadata.tables["tags"]
+    async with engine.begin() as connection:
+        await connection.execute(insert(tags).values(id=987_654, slug="saved", label="Saved"))
+    key = BackupKey("passphrase", b"full restore recovery phrase")
+    try:
+        backup = await create_backup(
+            paths=paths,
+            engine=engine,
+            key=key,
+            include_secrets=True,
+            created_at=datetime(2026, 10, 18, 12, tzinfo=UTC),
+        )
+        async with engine.begin() as connection:
+            await connection.execute(tags.delete())
+            await connection.execute(insert(tags).values(id=1, slug="changed", label="Changed"))
+        (paths.config / "config.toml").write_text('secret = "changed"\n', encoding="utf-8")
+        (paths.media / "cover.txt").write_text("changed media", encoding="utf-8")
+
+        plan = await plan_restore(backup.backup_id, paths=paths, engine=engine, key=key)
+        assert plan.compatible
+        assert plan.config_coverage == "complete"
+        structural_plan = await plan_restore(backup.backup_id, paths=paths, engine=engine)
+        assert any(
+            "structural-only verification" in warning for warning in structural_plan.warnings
+        )
+        with pytest.raises(RestoreError, match="requires its passphrase or keyfile"):
+            await apply_restore(
+                backup.backup_id,
+                paths=paths,
+                engine=engine,
+                offline=True,
+            )
+        assert (paths.media / "cover.txt").read_text(encoding="utf-8") == "changed media"
+        report = await apply_restore(
+            backup.backup_id,
+            paths=paths,
+            engine=engine,
+            offline=True,
+            key=key,
+        )
+        assert report["result"] == "success"
+        assert (paths.config / "config.toml").read_text(encoding="utf-8") == (
+            'secret = "saved secret"\n'
+        )
+        assert (paths.media / "cover.txt").read_text(encoding="utf-8") == "saved media"
+        async with engine.begin() as connection:
+            restored = (
+                await connection.execute(
+                    select(tags.c.id, tags.c.slug).where(tags.c.slug == "saved")
+                )
+            ).one()
+            assert restored == (987_654, "saved")
+            inserted = await connection.execute(
+                insert(tags).values(slug="after-encrypted-restore", label="After restore")
+            )
+            assert inserted.inserted_primary_key[0] > 987_654
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -324,9 +400,7 @@ async def test_empty_sqlite_target_is_migrated_in_staging_before_import(tmp_path
         assert report["result"] == "success"
         assert report["database"]["revision_after"]
         async with target_engine.connect() as connection:
-            restored = (
-                await connection.execute(select(tags.c.id, tags.c.slug))
-            ).one()
+            restored = (await connection.execute(select(tags.c.id, tags.c.slug))).one()
             assert restored == (71, "restored")
             integrity = await connection.exec_driver_sql("PRAGMA integrity_check")
             assert integrity.scalar_one() == "ok"

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, fields
 from datetime import UTC, datetime
@@ -32,6 +33,7 @@ from arborpress.runtime.paths import (
 if TYPE_CHECKING:
     from cryptography.fernet import Fernet
 
+    from arborpress.backups.encryption import BackupKey
     from arborpress.themes.manifest import ThemeRecord, ThemeRegistry
 
 # ---------------------------------------------------------------------------
@@ -56,6 +58,7 @@ plugin_app = typer.Typer(help="Plugin management (§15)", no_args_is_help=True)
 webauthn_app = typer.Typer(help="WebAuthn / Passkey recovery (§17)", no_args_is_help=True)
 themes_app = typer.Typer(help="Theme diagnostics (read-only)", no_args_is_help=True)
 backup_app = typer.Typer(help="Local backup set operations", no_args_is_help=True)
+backup_key_app = typer.Typer(help="Backup encryption keyfiles", no_args_is_help=True)
 restore_app = typer.Typer(help="Offline local restore operations", no_args_is_help=True)
 
 app.add_typer(db_app, name="db")
@@ -70,6 +73,7 @@ app.add_typer(plugin_app, name="plugin")
 app.add_typer(webauthn_app, name="webauthn")
 app.add_typer(themes_app, name="themes")
 app.add_typer(backup_app, name="backup")
+backup_app.add_typer(backup_key_app, name="key")
 app.add_typer(restore_app, name="restore")
 
 
@@ -241,8 +245,58 @@ def _backup_json(summary: Any) -> dict[str, Any]:
         "path": str(summary.directory),
         "verified": summary.verification_ok,
         "verification_error": summary.verification_error,
+        "verification_level": summary.verification_level,
+        "sensitive_data_warning": (
+            "This unencrypted set contains sensitive application data."
+            if summary.manifest.encryption == "none"
+            and any(component.name == "database" for component in summary.manifest.components)
+            else None
+        ),
         "manifest": asdict(summary.manifest),
     }
+
+
+def _backup_key_from_options(
+    *, backup_id: str | None = None, keyfile: Path | None = None, confirm: bool = False
+) -> BackupKey | None:
+    from getpass import getpass
+
+    from arborpress.backups.encryption import BackupKey, load_keyfile
+
+    if keyfile is not None:
+        return load_keyfile(keyfile)
+    if backup_id is not None:
+        from arborpress.backups.service import inspect_backup
+
+        manifest = inspect_backup(backup_id).manifest
+        if manifest.encryption == "none":
+            return None
+        if not sys.stdin.isatty():
+            return None
+    elif not sys.stdin.isatty():
+        raise ValueError("Encryption requires an interactive passphrase or --keyfile")
+    passphrase = getpass("Backup passphrase: ").encode("utf-8")
+    if confirm:
+        repeated = getpass("Repeat backup passphrase: ").encode("utf-8")
+        if not passphrase or passphrase != repeated:
+            raise ValueError("Backup passphrases are empty or do not match")
+    return BackupKey("passphrase", passphrase)
+
+
+@backup_key_app.command("generate")
+def backup_key_generate(
+    path: Path,
+    force: bool = typer.Option(False, "--force", help="Replace an existing keyfile"),
+) -> None:
+    """Generate a random ArborPress 256-bit backup keyfile."""
+    from arborpress.backups.encryption import generate_keyfile
+
+    try:
+        generate_keyfile(path, overwrite=force)
+    except (OSError, ValueError) as exc:
+        typer.echo(f"Backup key generation failed: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Backup keyfile generated: {path}")
 
 
 def _parse_backup_threads(value: str) -> int | None:
@@ -278,19 +332,33 @@ def backup_create(
         help="Developer diagnostic: retain a failed .incomplete set",
     ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+    encrypt: bool = typer.Option(
+        False, "--encrypt", help="Encrypt each component with AES-256-GCM"
+    ),
+    include_secrets: bool = typer.Option(
+        False, "--include-secrets", help="Include secret-bearing config (requires encryption)"
+    ),
+    keyfile: Path | None = typer.Option(  # noqa: B008
+        None, "--keyfile", help="Use a protected ArborPress keyfile"
+    ),
 ) -> None:
-    """Create and internally verify an unencrypted local backup set."""
+    """Create and internally verify a local backup set."""
     from arborpress.backups.compression import (
         CompressionSettings,
         CompressionUnavailableError,
     )
     from arborpress.backups.service import BackupError, create_backup
 
-    typer.echo(
-        "WARNING: this backup set is unencrypted and contains sensitive database and user data.",
-        err=True,
-    )
+    if not encrypt:
+        typer.echo(
+            "WARNING: this backup set is unencrypted and contains sensitive database "
+            "and user data.",
+            err=True,
+        )
     try:
+        if include_secrets and not encrypt:
+            raise ValueError("--include-secrets requires --encrypt")
+        key = _backup_key_from_options(keyfile=keyfile, confirm=encrypt) if encrypt else None
         backend = compression.lower()
         selected_profile = profile.lower()
         thread_count = _parse_backup_threads(threads)
@@ -328,6 +396,9 @@ def backup_create(
                     compression=settings,
                     media_segment_size=media_segment_size,
                     keep_incomplete=keep_incomplete,
+                    key=key,
+                    include_secrets=include_secrets,
+                    keyfile_path=keyfile,
                 )
             finally:
                 if engine is not None:
@@ -379,13 +450,17 @@ def backup_list(
 def backup_inspect(
     backup_id: str,
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+    keyfile: Path | None = typer.Option(  # noqa: B008
+        None, "--keyfile", help="Use a protected ArborPress keyfile"
+    ),
 ) -> None:
     """Display backup metadata and a read-only verification result."""
     from arborpress.backups.compression import CompressionUnavailableError
     from arborpress.backups.service import BackupError, inspect_backup
 
     try:
-        summary = inspect_backup(backup_id)
+        key = _backup_key_from_options(backup_id=backup_id, keyfile=keyfile)
+        summary = inspect_backup(backup_id, key=key)
     except (BackupError, OSError, ValueError, CompressionUnavailableError) as exc:
         typer.echo(f"Backup inspection failed: {exc}", err=True)
         raise typer.Exit(code=2) from None
@@ -402,8 +477,14 @@ def backup_inspect(
         f"{summary.manifest.compression_backend}/{summary.manifest.compression_profile}"
     )
     typer.echo(f"Encryption: {summary.manifest.encryption}")
+    if summary.manifest.encryption == "none" and any(
+        component.name == "database" for component in summary.manifest.components
+    ):
+        typer.echo("Security warning: this unencrypted set contains sensitive application data.")
     typer.echo(f"Components: {', '.join(comp.name for comp in summary.manifest.components)}")
     typer.echo(f"Verification: {'passed' if summary.verification_ok else 'FAILED'}")
+    if summary.verification_level:
+        typer.echo(f"Verification level: {summary.verification_level}")
     if summary.verification_error:
         typer.echo(f"Reason: {summary.verification_error}")
     for item in summary.manifest.omitted_sensitive:
@@ -414,13 +495,17 @@ def backup_inspect(
 def backup_verify(
     backup_id: str,
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+    keyfile: Path | None = typer.Option(  # noqa: B008
+        None, "--keyfile", help="Use a protected ArborPress keyfile"
+    ),
 ) -> None:
     """Verify checksums and archive structure without extracting."""
     from arborpress.backups.compression import CompressionUnavailableError
     from arborpress.backups.service import BackupError, verify_backup
 
     try:
-        report = verify_backup(backup_id)
+        key = _backup_key_from_options(backup_id=backup_id, keyfile=keyfile)
+        report = verify_backup(backup_id, key=key)
     except (BackupError, OSError, ValueError, CompressionUnavailableError) as exc:
         typer.echo(f"Backup verification failed: {exc}", err=True)
         raise typer.Exit(code=1) from None
@@ -430,8 +515,120 @@ def backup_verify(
     else:
         typer.echo(
             f"Verified {report.backup_id}: {report.checked_files} files, "
-            f"{report.checked_bytes} bytes, {report.database_rows} database rows"
+            f"{report.checked_bytes} bytes, {report.database_rows} database rows "
+            f"({report.verification_level})"
         )
+
+
+@backup_app.command("pin")
+def backup_pin(
+    backup_id: str,
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """Protect a local backup set from prune operations."""
+    from arborpress.backups.retention import pin_backup
+    from arborpress.backups.service import BackupError
+
+    try:
+        pin_backup(backup_id)
+    except (BackupError, OSError, ValueError) as exc:
+        typer.echo(f"Backup pin failed: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(
+        json.dumps({"backup_id": backup_id, "pinned": True}) if as_json else f"Pinned {backup_id}"
+    )
+
+
+@backup_app.command("unpin")
+def backup_unpin(
+    backup_id: str,
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """Remove a local pin from a backup set."""
+    from arborpress.backups.retention import pin_backup
+    from arborpress.backups.service import BackupError
+
+    try:
+        pin_backup(backup_id, pinned=False)
+    except (BackupError, OSError, ValueError) as exc:
+        typer.echo(f"Backup unpin failed: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(
+        json.dumps({"backup_id": backup_id, "pinned": False})
+        if as_json
+        else f"Unpinned {backup_id}"
+    )
+
+
+@backup_app.command("prune")
+def backup_prune(
+    keep_last: int | None = typer.Option(None, "--keep-last", min=0),
+    keep_days: int | None = typer.Option(None, "--keep-days", min=0),
+    apply: bool = typer.Option(False, "--apply", help="Delete the listed unpinned sets"),
+    yes: bool = typer.Option(False, "--yes", help="Do not prompt before deletion"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """Plan or apply local backup retention; the default is read-only."""
+    from arborpress.backups.retention import prune_backups
+    from arborpress.backups.service import BackupError
+
+    try:
+        plan = prune_backups(keep_last=keep_last, keep_days=keep_days, dry_run=True)
+    except (BackupError, OSError, ValueError) as exc:
+        typer.echo(f"Backup prune failed: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    if apply and plan.backup_ids:
+        if not yes:
+            typer.confirm(
+                f"Delete {len(plan.backup_ids)} unpinned backup set(s)?",
+                abort=True,
+            )
+        try:
+            plan = prune_backups(keep_last=keep_last, keep_days=keep_days, dry_run=False)
+        except (BackupError, OSError, ValueError) as exc:
+            typer.echo(f"Backup prune failed: {exc}", err=True)
+            raise typer.Exit(code=1) from None
+    elif apply:
+        plan = plan.__class__(plan.backup_ids, plan.kept_ids, plan.pinned_ids, False)
+    payload = asdict(plan)
+    if as_json:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo("Dry run; no backup sets deleted." if plan.dry_run else "Prune complete.")
+        typer.echo(f"Delete: {', '.join(plan.backup_ids) or 'none'}")
+        typer.echo(f"Keep: {', '.join(plan.kept_ids) or 'none'}")
+        if plan.pinned_ids:
+            typer.echo(f"Pinned: {', '.join(plan.pinned_ids)}")
+
+
+@backup_app.command("cleanup-incomplete")
+def backup_cleanup_incomplete(
+    older_than_hours: int = typer.Option(24, "--older-than-hours", min=24),
+    apply: bool = typer.Option(False, "--apply", help="Delete the listed incomplete sets"),
+    yes: bool = typer.Option(False, "--yes", help="Do not prompt before deletion"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """Find or remove old ArborPress-owned incomplete backup staging sets."""
+    from datetime import timedelta
+
+    from arborpress.backups.retention import cleanup_incomplete
+    from arborpress.backups.service import BackupError
+
+    try:
+        values = cleanup_incomplete(older_than=timedelta(hours=older_than_hours), dry_run=True)
+        if apply and values:
+            if not yes:
+                typer.confirm(f"Delete {len(values)} incomplete backup staging set(s)?", abort=True)
+            values = cleanup_incomplete(older_than=timedelta(hours=older_than_hours), dry_run=False)
+    except (BackupError, OSError, ValueError) as exc:
+        typer.echo(f"Incomplete backup cleanup failed: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    if as_json:
+        typer.echo(json.dumps({"removed_or_listed": list(values), "dry_run": not apply}, indent=2))
+    else:
+        typer.echo("Dry run; no incomplete sets deleted." if not apply else "Cleanup complete.")
+        for value in values:
+            typer.echo(value)
 
 
 @restore_app.command("plan")
@@ -441,14 +638,18 @@ def restore_plan_command(
         None, "--component", help="Select a component; repeatable"
     ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+    keyfile: Path | None = typer.Option(  # noqa: B008
+        None, "--keyfile", help="Use a protected ArborPress keyfile"
+    ),
 ) -> None:
     """Verify a backup and print a read-only compatibility/apply plan."""
     from arborpress.backups.restore import RestoreError, plan_restore
     from arborpress.backups.service import BackupError
 
     try:
+        key = _backup_key_from_options(backup_id=backup_id, keyfile=keyfile)
         plan = asyncio.run(
-            plan_restore(backup_id, components=tuple(component) if component else None)
+            plan_restore(backup_id, components=tuple(component) if component else None, key=key)
         )
     except (BackupError, RestoreError, OSError, ValueError) as exc:
         typer.echo(f"Restore planning failed: {exc}", err=True)
@@ -498,6 +699,9 @@ def restore_apply_command(
         False, "--safety-backup", help="Create a complete backup of the current instance first"
     ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+    keyfile: Path | None = typer.Option(  # noqa: B008
+        None, "--keyfile", help="Use a protected ArborPress keyfile"
+    ),
 ) -> None:
     """Apply a verified restore while ArborPress is offline."""
     from arborpress.backups.restore import (
@@ -516,11 +720,12 @@ def restore_apply_command(
         raise typer.Exit(code=2)
     selected = tuple(component) if component else None
     try:
+        key = _backup_key_from_options(backup_id=backup_id, keyfile=keyfile)
         if dry_run:
-            plan = asyncio.run(plan_restore(backup_id, components=selected))
+            plan = asyncio.run(plan_restore(backup_id, components=selected, key=key))
             staging_warnings: tuple[str, ...] = ()
             if plan.compatible:
-                staging_warnings = asyncio.run(validate_restore_staging(plan))
+                staging_warnings = asyncio.run(validate_restore_staging(plan, key=key))
             if as_json:
                 typer.echo(
                     json.dumps(
@@ -563,6 +768,7 @@ def restore_apply_command(
                 components=selected,
                 offline=offline,
                 safety_backup=safety_backup,
+                key=key,
             )
         )
     except typer.Exit:

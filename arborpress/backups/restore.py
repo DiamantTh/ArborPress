@@ -26,6 +26,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 from sqlalchemy.pool import NullPool
 
 from arborpress.backups.compression import CompressionBackend, open_compressed_reader
+from arborpress.backups.encryption import (
+    BackupKey,
+    EncryptionContext,
+    context_from_manifest,
+    decrypt_file_to_path,
+    decrypted_component_file,
+)
 from arborpress.backups.manifest import (
     BACKUP_ID_RE,
     MANIFEST_NAME,
@@ -130,12 +137,13 @@ async def plan_restore(
     paths: ArborPressPaths | None = None,
     components: tuple[str, ...] | None = None,
     engine: AsyncEngine | None = None,
+    key: BackupKey | None = None,
 ) -> RestorePlan:
     """Build a fully verified, read-only restore plan for one instance."""
     selected_paths = paths or get_runtime_paths()
     if not BACKUP_ID_RE.fullmatch(backup_id):
         raise ValueError(f"Invalid backup ID: {backup_id!r}")
-    summary = inspect_backup(backup_id, selected_paths)
+    summary = inspect_backup(backup_id, selected_paths, key=key)
     if not summary.verification_ok:
         raise BackupVerificationError(
             f"Backup set {backup_id} failed verification: {summary.verification_error}"
@@ -153,6 +161,11 @@ async def plan_restore(
 
     blockers: list[str] = []
     warnings: list[str] = list(manifest.warnings)
+    if manifest.encryption != "none" and key is None:
+        warnings.append(
+            "Encrypted backup has structural-only verification; provide its key for full "
+            "cryptographic verification before apply."
+        )
     target_paths = {
         component: str(getattr(selected_paths, target))
         for component, target in COMPONENT_TARGETS.items()
@@ -293,6 +306,7 @@ async def stage_restore(
     paths: ArborPressPaths | None = None,
     engine: AsyncEngine | None = None,
     restore_id: str | None = None,
+    key: BackupKey | None = None,
 ) -> StagedRestore:
     """Verify again, then extract selected file components only into private staging."""
     selected_paths = paths or get_runtime_paths()
@@ -300,7 +314,14 @@ async def stage_restore(
         raise RestoreCompatibilityError("Restore plan is blocked: " + "; ".join(plan.blockers))
     backup_dir = _backup_directory(plan.backup_id, selected_paths)
     manifest = BackupManifest.from_toml((backup_dir / MANIFEST_NAME).read_bytes())
-    verify_backup_set(backup_dir)
+    verify_backup_set(backup_dir, key=key)
+    encryption_context = (
+        context_from_manifest(key, manifest.encryption_parameters.as_parameters())
+        if key is not None and manifest.encryption_parameters is not None
+        else None
+    )
+    if manifest.encryption != "none" and encryption_context is None:
+        raise RestoreError("Encrypted backup apply requires its passphrase or keyfile.")
     selected_restore_id = restore_id or uuid.uuid4().hex
     staging_root = _create_staging_root(selected_paths, plan.backup_id, selected_restore_id)
     component_roots: dict[str, Path] = {}
@@ -319,7 +340,11 @@ async def stage_restore(
                         "Database component must contain exactly one logical stream."
                     )
                 database_stream = await _stage_database_stream(
-                    backup_dir, staging_root, component.files[0]
+                    backup_dir,
+                    staging_root,
+                    component.files[0],
+                    encryption_context=encryption_context,
+                    manifest=manifest,
                 )
                 _validate_database_header(
                     database_stream,
@@ -343,13 +368,29 @@ async def stage_restore(
             seen: set[str] = set()
             for file in component.files:
                 archive_path = _safe_backup_file(backup_dir, file.path)
-                _extract_archive(
-                    archive_path,
-                    target_root,
-                    file,
-                    cast(CompressionBackend, manifest.compression_backend),
-                    seen,
-                )
+                if encryption_context is not None:
+                    with decrypted_component_file(
+                        archive_path,
+                        context=encryption_context,
+                        backup_id=manifest.backup_id,
+                        relative_path=file.path,
+                        manifest_version=manifest.format_version,
+                    ) as decrypted_path:
+                        _extract_archive(
+                            decrypted_path,
+                            target_root,
+                            file,
+                            cast(CompressionBackend, manifest.compression_backend),
+                            seen,
+                        )
+                else:
+                    _extract_archive(
+                        archive_path,
+                        target_root,
+                        file,
+                        cast(CompressionBackend, manifest.compression_backend),
+                        seen,
+                    )
                 digest, size = sha256_file(archive_path)
                 if digest != file.sha256 or size != file.size_bytes:
                     raise BackupVerificationError(
@@ -406,6 +447,7 @@ async def validate_restore_staging(
     *,
     paths: ArborPressPaths | None = None,
     engine: AsyncEngine | None = None,
+    key: BackupKey | None = None,
 ) -> tuple[str, ...]:
     """Exercise safe extraction and staged DB preparation, then discard staging.
 
@@ -420,7 +462,7 @@ async def validate_restore_staging(
             raise RestoreRecoveryRequired(
                 "An incomplete restore is present; run restore recover before dry-run staging."
             )
-        staged = await stage_restore(plan, paths=selected_paths, engine=engine)
+        staged = await stage_restore(plan, paths=selected_paths, engine=engine, key=key)
         try:
             return staged.warnings
         finally:
@@ -787,11 +829,29 @@ def _staged_member_paths(root: Path) -> set[str]:
     return paths
 
 
-async def _stage_database_stream(backup_dir: Path, staging_root: Path, file: BackupFile) -> Path:
+async def _stage_database_stream(
+    backup_dir: Path,
+    staging_root: Path,
+    file: BackupFile,
+    *,
+    encryption_context: EncryptionContext | None = None,
+    manifest: BackupManifest | None = None,
+) -> Path:
     source = _safe_backup_file(backup_dir, file.path)
     target_root = staging_root / "database"
     target_root.mkdir(mode=0o700)
-    target = target_root / PurePosixPath(file.path).name
+    filename = PurePosixPath(file.path).name.removesuffix(".apenc")
+    target = target_root / filename
+    if encryption_context is not None and manifest is not None:
+        decrypt_file_to_path(
+            source,
+            target,
+            context=encryption_context,
+            backup_id=manifest.backup_id,
+            relative_path=file.path,
+            manifest_version=manifest.format_version,
+        )
+        return target
     digest = hashlib.sha256()
     size = 0
     with source.open("rb") as input_stream, target.open("xb") as output_stream:
@@ -1563,6 +1623,7 @@ async def apply_restore(
     engine: AsyncEngine | None = None,
     offline: bool = False,
     safety_backup: bool = False,
+    key: BackupKey | None = None,
 ) -> dict[str, Any]:
     """Verify, stage and apply a restore while holding the per-instance lock.
 
@@ -1611,6 +1672,7 @@ async def apply_restore(
                 paths=selected_paths,
                 components=components,
                 engine=engine,
+                key=key,
             )
             report["components"] = list(plan.selected_components)
             report["verify"] = {"ok": plan.verification_ok}
@@ -1629,6 +1691,7 @@ async def apply_restore(
                 paths=selected_paths,
                 engine=engine,
                 restore_id=restore_id,
+                key=key,
             )
             report["warnings"] = list(plan.warnings) + list(staged.warnings)
             report["last_safe_phase"] = "staged-and-validated"
@@ -1732,6 +1795,7 @@ async def apply_restore(
 
                         database_engine = create_engine_for_cli()
                         owns_database_engine = True
+
                     def _mark_database_commit_started() -> None:
                         journal["database_commit_started"] = True
                         journal["phase"] = "database-commit-started"
