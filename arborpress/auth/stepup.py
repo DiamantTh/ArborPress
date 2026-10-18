@@ -27,6 +27,7 @@ STEPUP_POLICIES: dict[str, str] = {
     "install_plugin": "target",
     "enable_plugin": "target",
     "disable_plugin": "target",
+    "trust_theme": "target",
     "generate_export": "instance",
     "rotate_key": "target",
     "change_security_settings": "instance",
@@ -142,9 +143,7 @@ async def is_stepup_active(
 
     if db is None:
         async for owned_db in _open_db_session():
-            return await is_stepup_active(
-                session, user_id, action, target, db=owned_db
-            )
+            return await is_stepup_active(session, user_id, action, target, db=owned_db)
         return False
 
     from sqlalchemy import select
@@ -152,7 +151,8 @@ async def is_stepup_active(
     from arborpress.models.user import StepUpGrant
 
     row = await db.execute(
-        select(StepUpGrant.id).where(
+        select(StepUpGrant.id)
+        .where(
             StepUpGrant.id.in_(ids),
             StepUpGrant.user_id == str(user_id),
             StepUpGrant.session_id == session_id,
@@ -160,7 +160,8 @@ async def is_stepup_active(
             StepUpGrant.target == _target_key(target),
             StepUpGrant.consumed_at.is_(None),
             StepUpGrant.expires_at > datetime.now(UTC).replace(tzinfo=None),
-        ).limit(1)
+        )
+        .limit(1)
     )
     return row.scalar_one_or_none() is not None
 
@@ -187,7 +188,10 @@ async def grant_stepup(
     if db is None:
         async for owned_db in _open_db_session():
             await grant_stepup(
-                session, user_id, action, target,
+                session,
+                user_id,
+                action,
+                target,
                 auth_method=auth_method,
                 assurance_level=assurance_level,
                 confirming_credential_id=confirming_credential_id,
@@ -228,15 +232,22 @@ async def grant_stepup(
     ids.append(grant.id)
     session[_GRANTS_KEY] = ids[-12:]
     await _audit_stepup(
-        db, event_type="sensitive_stepup_granted", outcome="success",
-        user_id=str(user_id), action=action, target=_target_key(target),
-        auth_method=auth_method, assurance_level=assurance_level,
+        db,
+        event_type="sensitive_stepup_granted",
+        outcome="success",
+        user_id=str(user_id),
+        action=action,
+        target=_target_key(target),
+        auth_method=auth_method,
+        assurance_level=assurance_level,
         confirming_credential_id=confirming_credential_id,
         confirming_mfa_device_id=confirming_mfa_device_id,
     )
     audit.info(
         "STEP-UP granted | user=%s action=%s target=%s",
-        user_id, action, _target_key(target),
+        user_id,
+        action,
+        _target_key(target),
     )
 
 
@@ -271,8 +282,13 @@ async def assert_stepup(
         async for owned_db in _open_db_session():
             try:
                 evidence = await assert_stepup(
-                    session, user_id, operation, target, consume=consume,
-                    required_evidence=required_evidence, db=owned_db
+                    session,
+                    user_id,
+                    operation,
+                    target,
+                    consume=consume,
+                    required_evidence=required_evidence,
+                    db=owned_db,
                 )
             except PermissionError:
                 await owned_db.commit()
@@ -320,29 +336,25 @@ async def assert_stepup(
             if evidence_filter is not None:
                 scope.append(evidence_filter)
             if consume:
-                result = await db.execute(
-                    update(StepUpGrant)
-                    .where(*scope)
-                    .values(consumed_at=now)
-                )
+                result = await db.execute(update(StepUpGrant).where(*scope).values(consumed_at=now))
                 matched = result.rowcount == 1
             else:
-                result = await db.execute(
-                    select(StepUpGrant).where(*scope)
-                )
+                result = await db.execute(select(StepUpGrant).where(*scope))
                 grant = result.scalar_one_or_none()
                 matched = grant is not None
             if matched:
                 if consume:
-                    result = await db.execute(
-                        select(StepUpGrant).where(StepUpGrant.id == grant_id)
-                    )
+                    result = await db.execute(select(StepUpGrant).where(StepUpGrant.id == grant_id))
                     grant = result.scalar_one()
                 if consume:
                     session[_GRANTS_KEY] = [item for item in ids if item != grant_id]
                     await _audit_stepup(
-                        db, event_type="sensitive_stepup_consumed", outcome="success",
-                        user_id=user_id, action=operation, target=expected_target,
+                        db,
+                        event_type="sensitive_stepup_consumed",
+                        outcome="success",
+                        user_id=user_id,
+                        action=operation,
+                        target=expected_target,
                         auth_method=grant.auth_method,
                         assurance_level=grant.assurance_level,
                         confirming_credential_id=grant.confirming_credential_id,
@@ -350,7 +362,9 @@ async def assert_stepup(
                     )
                     audit.info(
                         "STEP-UP consumed | user=%s action=%s target=%s",
-                        user_id, operation, expected_target,
+                        user_id,
+                        operation,
+                        expected_target,
                     )
                 return StepUpEvidence(
                     auth_method=grant.auth_method,
@@ -360,20 +374,24 @@ async def assert_stepup(
                 )
 
     await _audit_stepup(
-        db, event_type="sensitive_stepup_failed", outcome="failure",
-        user_id=user_id, action=operation, target=expected_target,
+        db,
+        event_type="sensitive_stepup_failed",
+        outcome="failure",
+        user_id=user_id,
+        action=operation,
+        target=expected_target,
         auth_method=(",".join(required_evidence) if required_evidence else None),
     )
     audit.warning(
         "STEP-UP failed | user=%s action=%s target=%s",
-        user_id, operation, expected_target,
+        user_id,
+        operation,
+        expected_target,
     )
     raise PermissionError(f"step-up authentication required for operation: {operation}")
 
 
-async def revoke_stepup(
-    session: dict[str, Any], user_id: str, *, db: Any = None
-) -> None:
+async def revoke_stepup(session: dict[str, Any], user_id: str, *, db: Any = None) -> None:
     """Revoke every step-up grant for a user in this browser session."""
     if db is None:
         async for owned_db in _open_db_session():

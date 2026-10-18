@@ -338,6 +338,7 @@ class TestStepup:
     def test_stepup_required_operations_set(self):
         required = {
             "change_roles",
+            "trust_theme",
             "modify_auth_policy",
             "toggle_federation",
             "install_plugin",

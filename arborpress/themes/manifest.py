@@ -9,12 +9,13 @@ Python, database, shell, network, or admin-script capabilities.
 from __future__ import annotations
 
 import logging
+import math
 import re
 import tomllib
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePosixPath
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
@@ -24,22 +25,40 @@ log = logging.getLogger("arborpress.themes")
 
 ThemeType = Literal["public", "admin"]
 ThemeStatus = Literal[
-    "valid", "invalid", "incompatible", "missing_parent", "cyclic_parent",
+    "valid",
+    "invalid",
+    "incompatible",
+    "missing_parent",
+    "cyclic_parent",
     "duplicate_id",
 ]
 THEME_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MAX_PARENT_DEPTH = 8
 ALLOWED_CAPABILITIES = frozenset({"templates", "styles", "public_assets"})
 _BUILTIN_THEMES_DIR = Path(__file__).parent
-_PUBLIC_TEMPLATE_OVERRIDES = frozenset({
-    "index.html", "post.html", "page.html", "tag.html", "search.html",
-    "comment_confirmed.html",
-})
-_ADMIN_TEMPLATE_OVERRIDES = frozenset({
-    "admin/dashboard.html", "admin/posts.html", "admin/post_edit.html",
-    "admin/pages.html", "admin/media.html", "admin/comments.html",
-    "admin/plugins.html", "admin/settings.html", "admin/captcha.html",
-})
+_PUBLIC_TEMPLATE_OVERRIDES = frozenset(
+    {
+        "index.html",
+        "post.html",
+        "page.html",
+        "tag.html",
+        "search.html",
+        "comment_confirmed.html",
+    }
+)
+_ADMIN_TEMPLATE_OVERRIDES = frozenset(
+    {
+        "admin/dashboard.html",
+        "admin/posts.html",
+        "admin/post_edit.html",
+        "admin/pages.html",
+        "admin/media.html",
+        "admin/comments.html",
+        "admin/plugins.html",
+        "admin/settings.html",
+        "admin/captcha.html",
+    }
+)
 
 
 class ThemeFeatures(BaseModel):
@@ -72,6 +91,91 @@ class ThemeAssets(BaseModel):
         return frozenset(self.css + self.fonts + self.images + self.icons)
 
 
+class ThemeOptionDefinition(BaseModel):
+    """Small declarative option contract; values never execute as code."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal[
+        "string", "text", "boolean", "integer", "number", "select", "color", "url", "asset"
+    ]
+    label: str
+    description: str = ""
+    default: Any = None
+    required: bool = False
+    choices: list[str] = Field(default_factory=list)
+    minimum: float | None = None
+    maximum: float | None = None
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("option label must not be empty")
+        return value.strip()
+
+    @model_validator(mode="after")
+    def validate_option_contract(self) -> ThemeOptionDefinition:
+        if self.minimum is not None and self.maximum is not None and self.minimum > self.maximum:
+            raise ValueError("option minimum must not exceed maximum")
+        if (self.minimum is not None or self.maximum is not None) and self.type not in {
+            "integer",
+            "number",
+        }:
+            raise ValueError("minimum and maximum are only valid for numeric options")
+        if self.type == "select":
+            if not self.choices or len(self.choices) != len(set(self.choices)):
+                raise ValueError("select options require unique choices")
+        elif self.choices:
+            raise ValueError("choices are only valid for select options")
+        if self.default is not None:
+            self.validate_value(self.default)
+        return self
+
+    def validate_value(self, value: Any) -> Any:
+        """Return a validated value using strict type checks."""
+        valid = True
+        if self.type in {"string", "text", "url", "asset"}:
+            valid = isinstance(value, str)
+        elif self.type == "boolean":
+            valid = type(value) is bool
+        elif self.type == "integer":
+            valid = type(value) is int
+        elif self.type == "number":
+            valid = type(value) in {int, float} and math.isfinite(value)
+        elif self.type == "select":
+            valid = isinstance(value, str) and value in self.choices
+        elif self.type == "color":
+            valid = isinstance(value, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", value) is not None
+        if not valid:
+            raise ValueError(f"value does not match theme option type {self.type!r}")
+        if isinstance(value, str):
+            limits = {"string": 4096, "text": 65536, "url": 2048, "asset": 512}
+            if len(value) > limits.get(self.type, 65536):
+                raise ValueError("theme option value exceeds its size limit")
+            if any(ord(character) < 0x20 and character not in "\n\r\t" for character in value):
+                raise ValueError("theme option strings must not contain control characters")
+        if self.type == "url" and value:
+            from urllib.parse import urlsplit
+
+            parsed_url = urlsplit(value)
+            if (
+                parsed_url.scheme not in {"http", "https"}
+                or not parsed_url.hostname
+                or parsed_url.username is not None
+                or parsed_url.password is not None
+            ):
+                raise ValueError("theme option URLs must use http or https")
+        if self.type == "asset" and value:
+            _validate_theme_relative_path(value, prefix="static/")
+        if self.type in {"integer", "number"}:
+            if self.minimum is not None and value < self.minimum:
+                raise ValueError("theme option value is below its minimum")
+            if self.maximum is not None and value > self.maximum:
+                raise ValueError("theme option value is above its maximum")
+        return value
+
+
 class ThemeManifest(BaseModel):
     """Validated ``theme.toml`` contents plus its trusted filesystem root."""
 
@@ -94,6 +198,9 @@ class ThemeManifest(BaseModel):
     assets: ThemeAssets = Field(default_factory=ThemeAssets)
     entry_points: dict[str, str] = Field(default_factory=dict)
     templates: list[str] = Field(default_factory=list)
+    options: dict[str, ThemeOptionDefinition] = Field(default_factory=dict)
+    # Informational marker only. It grants no trust or runtime capability.
+    derived: bool = False
 
     _path: Path = PrivateAttr()
     _id: str = PrivateAttr()
@@ -208,6 +315,17 @@ class ThemeManifest(BaseModel):
             raise ValueError("font, image, and icon assets require 'public_assets'")
         if self.preview and self.preview not in self.assets.images + self.assets.icons:
             raise ValueError("preview must be declared in assets.images or assets.icons")
+        for key, option in self.options.items():
+            if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", key):
+                raise ValueError("theme option keys must be lowercase identifiers")
+            if (
+                option.type == "asset"
+                and option.default
+                and option.default not in self.assets.all_paths()
+            ):
+                raise ValueError(
+                    f"default asset for theme option {key!r} must be declared in assets"
+                )
         for entry_point, expected_type in (
             ("public_css", "public"),
             ("admin_css", "admin"),
@@ -219,9 +337,7 @@ class ThemeManifest(BaseModel):
                     f"{entry_point} entry points are only valid for {expected_type} themes"
                 )
             if self.entry_points[entry_point] not in self.assets.css:
-                raise ValueError(
-                    f"{entry_point} entry point must be declared in assets.css"
-                )
+                raise ValueError(f"{entry_point} entry point must be declared in assets.css")
         return self
 
     @classmethod
@@ -342,9 +458,7 @@ def _validate_theme_relative_path(value: str, *, prefix: str | None = None) -> N
 def _resolve_inside(root: Path, relative: str, *, must_exist: bool = True) -> Path:
     _validate_theme_relative_path(relative)
     resolved_root = root.resolve(strict=True)
-    candidate = (resolved_root / Path(*PurePosixPath(relative).parts)).resolve(
-        strict=must_exist
-    )
+    candidate = (resolved_root / Path(*PurePosixPath(relative).parts)).resolve(strict=must_exist)
     try:
         candidate.relative_to(resolved_root)
     except ValueError as exc:
@@ -362,7 +476,7 @@ def _asset_url(theme_id: str, path: str) -> str:
 def _running_version() -> Version:
     try:
         return Version(version("arborpress"))
-    except (PackageNotFoundError, InvalidVersion):
+    except PackageNotFoundError, InvalidVersion:
         return Version("0.1.0")
 
 
@@ -388,15 +502,44 @@ class ThemeRegistry:
         self._records: list[ThemeRecord] = []
         self._primary: dict[str, ThemeRecord] = {}
         self._loaded = False
+        self._filesystem_stamp: tuple[tuple[str, int, int, int], ...] | None = None
+
+    def _current_filesystem_stamp(
+        self, extra_dirs: list[Path] | None = None
+    ) -> tuple[tuple[str, int, int, int], ...]:
+        stamps: list[tuple[str, int, int, int]] = []
+        for root in (self._builtin_dir, *self._instance_dirs(extra_dirs)):
+            try:
+                root_stat = root.stat()
+                stamps.append(
+                    (str(root), root_stat.st_ino, root_stat.st_mtime_ns, root_stat.st_size)
+                )
+                for theme_root in sorted(root.iterdir(), key=lambda path: path.name):
+                    manifest = theme_root / "theme.toml"
+                    if not theme_root.is_dir() or not manifest.exists():
+                        continue
+                    directory_stat = theme_root.stat()
+                    manifest_stat = manifest.stat()
+                    stamps.append(
+                        (
+                            str(manifest),
+                            directory_stat.st_ino ^ manifest_stat.st_ino,
+                            manifest_stat.st_mtime_ns,
+                            manifest_stat.st_size,
+                        )
+                    )
+            except OSError:
+                stamps.append((str(root), 0, 0, 0))
+        return tuple(stamps)
 
     def load(self, extra_dirs: list[Path] | None = None) -> None:
+        if extra_dirs is not None:
+            self._extra_dirs = extra_dirs
         dirs = self._instance_dirs(extra_dirs)
         records: list[ThemeRecord] = []
         builtin_records = self._read_directory(self._builtin_dir, "builtin")
         instance_records = [
-            record
-            for directory in dirs
-            for record in self._read_directory(directory, "instance")
+            record for directory in dirs for record in self._read_directory(directory, "instance")
         ]
 
         primary: dict[str, ThemeRecord] = {}
@@ -412,9 +555,7 @@ class ThemeRegistry:
             if record.id in primary:
                 record.status = "duplicate_id"
                 record.duplicate_of = primary[record.id].source
-                record.diagnostics.append(
-                    f"theme ID collides with {record.duplicate_of} theme"
-                )
+                record.diagnostics.append(f"theme ID collides with {record.duplicate_of} theme")
             elif record.id in {item.id for item in records if item.source == "instance"}:
                 record.status = "duplicate_id"
                 record.diagnostics.append("duplicate instance theme ID")
@@ -426,6 +567,7 @@ class ThemeRegistry:
         self._records = records
         self._validate_graph()
         self._loaded = True
+        self._filesystem_stamp = self._current_filesystem_stamp(dirs)
         log.debug("Theme registry loaded: %s", sorted(self._primary))
 
     def _instance_dirs(self, extra_dirs: list[Path] | None) -> list[Path]:
@@ -446,8 +588,17 @@ class ThemeRegistry:
         try:
             root = directory.resolve(strict=True)
         except OSError as exc:
-            return [ThemeRecord(directory.name or "themes", str(directory), None, None,
-                                source, "invalid", [f"theme root unavailable: {exc}"])]
+            return [
+                ThemeRecord(
+                    directory.name or "themes",
+                    str(directory),
+                    None,
+                    None,
+                    source,
+                    "invalid",
+                    [f"theme root unavailable: {exc}"],
+                )
+            ]
         records: list[ThemeRecord] = []
         for theme_root in sorted(root.iterdir(), key=lambda path: path.name):
             if not theme_root.is_dir() or theme_root.name.startswith("."):
@@ -460,27 +611,31 @@ class ThemeRegistry:
                 resolved_root = theme_root.resolve(strict=True)
                 resolved_root.relative_to(root)
                 manifest = ThemeManifest.from_file(manifest_path, source=source)
-                records.append(ThemeRecord(
-                    id=theme_id,
-                    name=manifest.name,
-                    version=manifest.version,
-                    type=manifest.type,
-                    source=source,
-                    status="valid",
-                    manifest=manifest,
-                ))
+                records.append(
+                    ThemeRecord(
+                        id=theme_id,
+                        name=manifest.name,
+                        version=manifest.version,
+                        type=manifest.type,
+                        source=source,
+                        status="valid",
+                        manifest=manifest,
+                    )
+                )
             except Exception as exc:
                 # Keep broken manifests visible to diagnostics, but never make
                 # them eligible for activation or rendering.
-                records.append(ThemeRecord(
-                    id=theme_id,
-                    name=theme_id,
-                    version=None,
-                    type=None,
-                    source=source,
-                    status="invalid",
-                    diagnostics=[_safe_diagnostic(exc)],
-                ))
+                records.append(
+                    ThemeRecord(
+                        id=theme_id,
+                        name=theme_id,
+                        version=None,
+                        type=None,
+                        source=source,
+                        status="invalid",
+                        diagnostics=[_safe_diagnostic(exc)],
+                    )
+                )
         return records
 
     def _validate_graph(self) -> None:
@@ -576,9 +731,7 @@ class ThemeRegistry:
                 companion = self._primary.get(companion_id)
                 if companion is None or companion.manifest is None:
                     record.status = "incompatible"
-                    record.diagnostics.append(
-                        f"companion theme {companion_id!r} is unavailable"
-                    )
+                    record.diagnostics.append(f"companion theme {companion_id!r} is unavailable")
                     break
                 if companion.manifest.type != manifest.type:
                     record.status = "incompatible"
@@ -603,7 +756,7 @@ class ThemeRegistry:
         return None
 
     def _ensure_loaded(self) -> None:
-        if not self._loaded:
+        if not self._loaded or self._filesystem_stamp != self._current_filesystem_stamp():
             self.load()
 
     def records(self) -> list[ThemeRecord]:
@@ -644,9 +797,7 @@ class ThemeRegistry:
             current = self.get(current.parent) if current.parent else None
         return result
 
-    def get_or_default(
-        self, theme_id: str, theme_type: ThemeType = "public"
-    ) -> ThemeManifest:
+    def get_or_default(self, theme_id: str, theme_type: ThemeType = "public") -> ThemeManifest:
         theme = self.get(theme_id)
         if theme is None or theme.type != theme_type:
             log.warning(
@@ -662,7 +813,15 @@ class ThemeRegistry:
     def active(self, theme_type: ThemeType = "public") -> ThemeManifest:
         from arborpress.core.site_settings import get_cached, get_defaults
 
-        settings = get_cached("theme") or get_defaults("theme")
+        settings = None
+        try:
+            from quart import g
+
+            settings = getattr(g, "_theme_runtime_settings", None)
+        except RuntimeError:
+            pass
+        if not isinstance(settings, dict):
+            settings = get_cached("theme") or get_defaults("theme")
         key = "active" if theme_type == "public" else "admin_active"
         default_id = "default" if theme_type == "public" else "arbor-admin"
         selected = str(settings.get(key, default_id) or default_id)
@@ -677,7 +836,9 @@ class ThemeRegistry:
         for theme in self.chain(theme_id):
             path = theme.entry_points.get(entry_point)
             if path:
-                return _asset_url(theme.id, path)
+                # Keep the selected child ID in the URL so relative assets
+                # within inherited CSS can also resolve child overrides.
+                return _asset_url(selected.id, path)
         return ""
 
     def resolve_asset(self, theme_id: str, filename: str) -> tuple[ThemeManifest, Path] | None:
@@ -689,7 +850,7 @@ class ThemeRegistry:
                 continue
             try:
                 return theme, _resolve_inside(theme.theme_dir, relative)
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 return None
         return None
 

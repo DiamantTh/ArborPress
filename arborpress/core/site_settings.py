@@ -36,139 +36,139 @@ log = logging.getLogger("arborpress.site_settings")
 
 _DEFAULTS: dict[str, dict[str, Any]] = {
     "general": {
-        "site_title":       "ArborPress Blog",
+        "site_title": "ArborPress Blog",
         "site_description": "",
-        "site_language":    "de",
-        "posts_per_page":   10,
+        "site_language": "de",
+        "posts_per_page": 10,
     },
     "theme": {
-        "active":          "default",
-        "admin_active":    "arbor-admin",
-        "auto_dark":       False,          # automatically activate dark companion between hours
-        "auto_dark_start": 19,             # hour (0–23) from which dark theme applies
-        "auto_dark_end":   6,              # hour (0–23) until which dark theme applies
+        "active": "default",
+        "admin_active": "arbor-admin",
+        "auto_dark": False,  # automatically activate dark companion between hours
+        "auto_dark_start": 19,  # hour (0–23) from which dark theme applies
+        "auto_dark_end": 6,  # hour (0–23) until which dark theme applies
         # Background pattern override ("auto" = theme's own --bg-pattern variable)
-        "bg_pattern":       "auto",        # none | auto | hexagon | diamond | triangle | ...
-        "bg_pattern_color": "",            # hex color, empty = theme accent color
-        "bg_pattern_opacity": 0.07,        # 0–1
+        "bg_pattern": "auto",  # none | auto | hexagon | diamond | triangle | ...
+        "bg_pattern_color": "",  # hex color, empty = theme accent color
+        "bg_pattern_opacity": 0.07,  # 0–1
     },
     "mail": {
-        "backend":          "none",   # smtp | console | none
-        "smtp_host":        "localhost",
-        "smtp_port":        587,
-        "smtp_user":        "",
-        "smtp_password":    "",       # NOT displayed in the browser
-        "smtp_tls":         False,    # real TLS (port 465)
-        "smtp_starttls":    True,     # STARTTLS upgrade (port 587)
-        "from_address":     "noreply@example.com",
-        "from_name":        "ArborPress",
+        "backend": "none",  # smtp | console | none
+        "smtp_host": "localhost",
+        "smtp_port": 587,
+        "smtp_user": "",
+        "smtp_password": "",  # NOT displayed in the browser
+        "smtp_tls": False,  # real TLS (port 465)
+        "smtp_starttls": True,  # STARTTLS upgrade (port 587)
+        "from_address": "noreply@example.com",
+        "from_name": "ArborPress",
         "pgp_sign_enabled": False,
         "pgp_signing_key_id": "",
-        "max_retries":      5,
+        "max_retries": 5,
         "retry_backoff_base": 60,
     },
     "comments": {
-        "enabled":                   True,
+        "enabled": True,
         "require_email_confirmation": True,
-        "require_admin_approval":     True,
-        "notify_admin_email":         "",
-        "rate_limit_per_hour":        10,
-        "blocklist":                  "",   # newline-separated keywords / emails / IPs
+        "require_admin_approval": True,
+        "notify_admin_email": "",
+        "rate_limit_per_hour": 10,
+        "blocklist": "",  # newline-separated keywords / emails / IPs
     },
     "comment_filter": {
         # IP whitelist / blocklist (CIDR or exact IP, one per line)
         # Whitelist takes priority over blocklist.
-        "ip_whitelist":         "",
-        "ip_blocklist":         "",
+        "ip_whitelist": "",
+        "ip_blocklist": "",
         # Country filter – ISO 3166-1 alpha-2 codes, comma-separated.
         # country_whitelist: only listed countries allowed (empty = all)
         # country_blocklist: listed countries blocked (empty = none)
-        "country_whitelist":    "",
-        "country_blocklist":    "",
+        "country_whitelist": "",
+        "country_blocklist": "",
         # Block when GeoIP returns no result (e.g. private IPs → no geo data)
         "country_block_unknown": False,
         # Path to MaxMind GeoLite2-Country.mmdb (leave empty to disable)
-        "geoip_db_path":        "",
+        "geoip_db_path": "",
         # RBL / DNSBL
-        "rbl_enabled":          False,
-        "rbl_zones":            "zen.spamhaus.org\nbl.spamcop.net",
+        "rbl_enabled": False,
+        "rbl_zones": "zen.spamhaus.org\nbl.spamcop.net",
         # rbl_action: block = reject comment; flag = mark as SPAM silently
-        "rbl_action":           "block",
+        "rbl_action": "block",
     },
     "captcha": {
-        "default_type": "custom",   # none|math|custom|hcaptcha|friendly_captcha|…
+        "default_type": "custom",  # none|math|custom|hcaptcha|friendly_captcha|…
         "custom_questions": [
-            {"q": "What is this CMS called?",        "a": "arborpress"},
-            {"q": "What color is grass?",             "a": "green"},
-            {"q": "How many legs does a cat have?",   "a": "4"},
-            {"q": "What is the opposite of black?",   "a": "white"},
-            {"q": "How many days does a week have?",  "a": "7"},
+            {"q": "What is this CMS called?", "a": "arborpress"},
+            {"q": "What color is grass?", "a": "green"},
+            {"q": "How many legs does a cat have?", "a": "4"},
+            {"q": "What is the opposite of black?", "a": "white"},
+            {"q": "How many days does a week have?", "a": "7"},
         ],
         # hCaptcha
-        "hcaptcha_site_key":   "",
-        "hcaptcha_secret":     "",
+        "hcaptcha_site_key": "",
+        "hcaptcha_secret": "",
         "hcaptcha_verify_url": "https://api.hcaptcha.com/siteverify",
         # Friendly Captcha
-        "friendly_sitekey":   "",
-        "friendly_api_key":   "",
+        "friendly_sitekey": "",
+        "friendly_api_key": "",
         "friendly_verify_url": "https://global.frcapi.com/api/v2/captcha/siteverify",
         # ALTCHA (self-hosted, no external service)
-        "altcha_hmac_key":    "",
-        "altcha_max_number":  1_000_000,
-        "altcha_algorithm":   "SHA-256",
+        "altcha_hmac_key": "",
+        "altcha_max_number": 1_000_000,
+        "altcha_algorithm": "SHA-256",
         # mCaptcha
-        "mcaptcha_site_key":  "",
-        "mcaptcha_secret":    "",
-        "mcaptcha_url":       "",
+        "mcaptcha_site_key": "",
+        "mcaptcha_secret": "",
+        "mcaptcha_url": "",
         # mosparo
-        "mosparo_url":         "",
-        "mosparo_public_key":  "",
+        "mosparo_url": "",
+        "mosparo_public_key": "",
         "mosparo_private_key": "",
         # Cloudflare Turnstile
-        "turnstile_site_key":  "",
-        "turnstile_secret":    "",
+        "turnstile_site_key": "",
+        "turnstile_secret": "",
         "turnstile_verify_url": "https://challenges.cloudflare.com/turnstile/v0/siteverify",
     },
     "federation": {
-        "mode":                 "disabled",   # full|outgoing_only|inbox_only|disabled
-        "instance_name":        "ArborPress",
+        "mode": "disabled",  # full|outgoing_only|inbox_only|disabled
+        "instance_name": "ArborPress",
         "instance_description": "",
-        "contact_email":        "",
+        "contact_email": "",
         # Visibility
-        "followers_visible":           True,   # followers list publicly visible
-        "following_visible":           True,   # following list publicly visible
+        "followers_visible": True,  # followers list publicly visible
+        "following_visible": True,  # following list publicly visible
         "allow_per_account_federation": True,  # accounts can opt out of fediverse
         # Follow control
-        "require_approval_to_follow":  False,  # confirm follow requests manually
+        "require_approval_to_follow": False,  # confirm follow requests manually
         # Content
-        "federate_tags":               True,   # federate hashtag activities
-        "federate_media":              False,  # send media attachments in AP objects
-        "max_note_length":             500,    # character limit for AP notes/replies
+        "federate_tags": True,  # federate hashtag activities
+        "federate_media": False,  # send media attachments in AP objects
+        "max_note_length": 500,  # character limit for AP notes/replies
         # Security
-        "require_http_signature":      True,   # reject unsigned inbox requests
-        "authorized_fetch":            False,  # outbox/actor only retrievable with signature
-        "inbox_blocklist_domains":     [],     # domains from which no inbox is accepted
-        "allowlist_mode":              False,  # only allowlisted domains accepted
+        "require_http_signature": True,  # reject unsigned inbox requests
+        "authorized_fetch": False,  # outbox/actor only retrievable with signature
+        "inbox_blocklist_domains": [],  # domains from which no inbox is accepted
+        "allowlist_mode": False,  # only allowlisted domains accepted
     },
     "search": {
         # Provider: auto|pg_fts|mariadb_fulltext|sqlite_fts5
         #   |meilisearch|typesense|elasticsearch|manticore|fallback
         "provider": "auto",
         # Meilisearch
-        "meilisearch_url":     "http://localhost:7700",
+        "meilisearch_url": "http://localhost:7700",
         "meilisearch_api_key": "",
         # Typesense
-        "typesense_host":    "localhost",
-        "typesense_port":    8108,
+        "typesense_host": "localhost",
+        "typesense_port": 8108,
         "typesense_api_key": "",
         # Elasticsearch / OpenSearch
         "elasticsearch_url": "http://localhost:9200",
         # ManticoreSearch (MySQL-Protokoll)
-        "manticore_url":     "mysql://localhost:9306",
+        "manticore_url": "mysql://localhost:9306",
     },
     "demo": {
-        "enabled":        False,   # demo mode: visitors can switch themes
-        "show_banner":    True,    # show info banner at the top
+        "enabled": False,  # demo mode: visitors can switch themes
+        "show_banner": True,  # show info banner at the top
         "allow_all_themes": True,  # show all themes (including dark-only)
     },
     # ---------------------------------------------------------------------
@@ -181,12 +181,12 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         # Break-Glass policy
         "legacy_password_min_length": 16,
         "legacy_password_max_length": 128,
-        "legacy_password_min_score":  3,    # zxcvbn 0–4
+        "legacy_password_min_score": 3,  # zxcvbn 0–4
         # HIBP k-Anonymity check
-        "hibp_enabled":   False,
-        "hibp_max_count": 0,    # 0 = reject any breach hit
-        "hibp_timeout":   3.0,  # seconds
-        "hibp_fail_open": True, # do not block on network errors
+        "hibp_enabled": False,
+        "hibp_max_count": 0,  # 0 = reject any breach hit
+        "hibp_timeout": 3.0,  # seconds
+        "hibp_fail_open": True,  # do not block on network errors
         "totp_credential_limit": 5,
         "hotp_credential_limit": 10,
         "plugin_mfa_limit": 20,
@@ -250,22 +250,22 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
     # ---------------------------------------------------------------------
     "webauthn": {
         # UV is required for passwordless login, MFA, and step-up.
-        "user_verification":         "required",
-        "resident_key":              "preferred",
-        "attestation":               "none",
-        "authenticator_attachment":  "",       # "" | "platform" | "cross-platform"
-        "algorithms":                [-7, -257],
-        "timeout_ms":                60_000,
-        "challenge_ttl_seconds":     300,
+        "user_verification": "required",
+        "resident_key": "preferred",
+        "attestation": "none",
+        "authenticator_attachment": "",  # "" | "platform" | "cross-platform"
+        "algorithms": [-7, -257],
+        "timeout_ms": 60_000,
+        "challenge_ttl_seconds": 300,
         "webauthn_credential_limit": 10,
-        "conditional_ui_enabled":    True,
-        "signal_api_enabled":        True,
+        "conditional_ui_enabled": True,
+        "signal_api_enabled": True,
         "require_2fa_after_passkey": False,
-        "require_mfa_after_sso":     False,
-        "counter_strict":            False,
+        "require_mfa_after_sso": False,
+        "counter_strict": False,
         # Domain-change guard
-        "rp_id_locked":              True,
-        "rp_id_last_known":          "",       # empty until first successful resolve
+        "rp_id_locked": True,
+        "rp_id_last_known": "",  # empty until first successful resolve
     },
 }
 
@@ -298,6 +298,7 @@ def invalidate_cache(section: str | None = None) -> None:
 # Async DB operations
 # ---------------------------------------------------------------------------
 
+
 async def get_section(section: str, db: Any) -> dict[str, Any]:
     """Read a settings section from the DB.
 
@@ -307,6 +308,13 @@ async def get_section(section: str, db: Any) -> dict[str, Any]:
     if section in _cache:
         return dict(_cache[section])
 
+    merged = await get_section_uncached(section, db)
+    _cache[section] = merged
+    return dict(merged)
+
+
+async def get_section_uncached(section: str, db: Any) -> dict[str, Any]:
+    """Read a settings section directly, bypassing process-local cache state."""
     merged = dict(_DEFAULTS.get(section, {}))
 
     try:
@@ -314,18 +322,19 @@ async def get_section(section: str, db: Any) -> dict[str, Any]:
 
         from arborpress.models.settings import SiteSetting
 
-        result = await db.execute(
-            select(SiteSetting).where(SiteSetting.key == section)
-        )
+        result = await db.execute(select(SiteSetting).where(SiteSetting.key == section))
         row = result.scalar_one_or_none()
         if row and row.value:
             stored = json.loads(row.value)
-            merged.update(stored)
+            if isinstance(stored, dict):
+                merged.update(stored)
     except Exception as exc:
-        log.warning("SiteSettings.get_section(%r) DB error (using defaults): %s", section, exc)
-
-    _cache[section] = merged
-    return dict(merged)
+        log.warning(
+            "SiteSettings.get_section_uncached(%r) DB error (using defaults): %s",
+            section,
+            exc,
+        )
+    return merged
 
 
 async def save_section(
@@ -344,14 +353,12 @@ async def save_section(
     from arborpress.models.settings import SiteSetting
 
     try:
-        result = await db.execute(
-            select(SiteSetting).where(SiteSetting.key == section)
-        )
+        result = await db.execute(select(SiteSetting).where(SiteSetting.key == section))
         row = result.scalar_one_or_none()
         payload = json.dumps(data, ensure_ascii=False, indent=None)
 
         if row:
-            row.value      = payload
+            row.value = payload
             row.updated_by = updated_by or None
         else:
             db.add(SiteSetting(key=section, value=payload, updated_by=updated_by or None))
@@ -377,10 +384,10 @@ async def save_section(
 _SECURITY_FIELDS: dict[str, type] = {
     "legacy_password_min_length": int,
     "legacy_password_max_length": int,
-    "legacy_password_min_score":  int,
-    "hibp_enabled":   bool,
+    "legacy_password_min_score": int,
+    "hibp_enabled": bool,
     "hibp_max_count": int,
-    "hibp_timeout":   float,
+    "hibp_timeout": float,
     "hibp_fail_open": bool,
     "totp_credential_limit": int,
     "hotp_credential_limit": int,
@@ -390,9 +397,9 @@ _SECURITY_FIELDS: dict[str, type] = {
 _SECURITY_BOUNDS: dict[str, tuple[float, float]] = {
     "legacy_password_min_length": (8, 256),
     "legacy_password_max_length": (16, 1024),
-    "legacy_password_min_score":  (0, 4),
+    "legacy_password_min_score": (0, 4),
     "hibp_max_count": (0, 10_000_000),
-    "hibp_timeout":   (0.5, 30.0),
+    "hibp_timeout": (0.5, 30.0),
     "totp_credential_limit": (1, 50),
     "hotp_credential_limit": (1, 50),
     "plugin_mfa_limit": (1, 50),
@@ -411,10 +418,10 @@ async def get_security_settings(db: Any) -> dict[str, Any]:
     bootstrap = {
         "legacy_password_min_length": cfg.auth.legacy_password_min_length,
         "legacy_password_max_length": cfg.auth.legacy_password_max_length,
-        "legacy_password_min_score":  cfg.auth.legacy_password_min_score,
-        "hibp_enabled":   cfg.auth.hibp_enabled,
+        "legacy_password_min_score": cfg.auth.legacy_password_min_score,
+        "hibp_enabled": cfg.auth.hibp_enabled,
         "hibp_max_count": cfg.auth.hibp_max_count,
-        "hibp_timeout":   cfg.auth.hibp_timeout,
+        "hibp_timeout": cfg.auth.hibp_timeout,
         "hibp_fail_open": cfg.auth.hibp_fail_open,
     }
 
@@ -455,9 +462,7 @@ def coerce_security_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if key in _SECURITY_BOUNDS:
             lo, hi = _SECURITY_BOUNDS[key]
             if value < lo or value > hi:
-                raise ValueError(
-                    f"{key!r} must be between {lo} and {hi} (got {value})"
-                )
+                raise ValueError(f"{key!r} must be between {lo} and {hi} (got {value})")
         cleaned[key] = value
 
     # Cross-field invariant
@@ -467,8 +472,7 @@ def coerce_security_payload(payload: dict[str, Any]) -> dict[str, Any]:
         and cleaned["legacy_password_max_length"] < cleaned["legacy_password_min_length"]
     ):
         raise ValueError(
-            "legacy_password_max_length must be greater than or equal to "
-            "legacy_password_min_length"
+            "legacy_password_max_length must be greater than or equal to legacy_password_min_length"
         )
     return cleaned
 
@@ -488,37 +492,37 @@ def coerce_security_payload(payload: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 _WEBAUTHN_FIELDS: dict[str, type] = {
-    "user_verification":         str,
-    "resident_key":              str,
-    "attestation":               str,
-    "authenticator_attachment":  str,
-    "algorithms":                list,
-    "timeout_ms":                int,
-    "challenge_ttl_seconds":     int,
+    "user_verification": str,
+    "resident_key": str,
+    "attestation": str,
+    "authenticator_attachment": str,
+    "algorithms": list,
+    "timeout_ms": int,
+    "challenge_ttl_seconds": int,
     "webauthn_credential_limit": int,
-    "conditional_ui_enabled":    bool,
-    "signal_api_enabled":        bool,
+    "conditional_ui_enabled": bool,
+    "signal_api_enabled": bool,
     "require_2fa_after_passkey": bool,
-    "require_mfa_after_sso":     bool,
-    "counter_strict":            bool,
-    "rp_id_locked":              bool,
-    "rp_id_last_known":          str,
+    "require_mfa_after_sso": bool,
+    "counter_strict": bool,
+    "rp_id_locked": bool,
+    "rp_id_last_known": str,
 }
 
 _WEBAUTHN_ENUMS: dict[str, set[str]] = {
     # W3C WebAuthn L3 §5.4.6
-    "user_verification":        {"required", "preferred", "discouraged"},
+    "user_verification": {"required", "preferred", "discouraged"},
     # W3C WebAuthn L3 §5.4.7
-    "resident_key":             {"required", "preferred", "discouraged"},
+    "resident_key": {"required", "preferred", "discouraged"},
     # W3C WebAuthn L3 §5.4
-    "attestation":              {"none", "indirect", "direct", "enterprise"},
+    "attestation": {"none", "indirect", "direct", "enterprise"},
     # W3C WebAuthn L3 §5.4.5 ("" = unset)
     "authenticator_attachment": {"", "platform", "cross-platform"},
 }
 
 _WEBAUTHN_BOUNDS: dict[str, tuple[float, float]] = {
     # W3C WebAuthn L3 §5.4 / §5.5 RECOMMENDED upper bound 600 000 ms
-    "timeout_ms":            (30_000, 600_000),
+    "timeout_ms": (30_000, 600_000),
     "challenge_ttl_seconds": (60, 900),
     "webauthn_credential_limit": (1, 100),
 }
@@ -540,12 +544,12 @@ async def get_webauthn_settings(db: Any) -> dict[str, Any]:
     merged["user_verification"] = "required"
     try:
         ttl = int(merged.get("challenge_ttl_seconds", 300))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         ttl = 300
     merged["challenge_ttl_seconds"] = min(900, max(60, ttl))
     try:
         credential_limit = int(merged.get("webauthn_credential_limit", 10))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         credential_limit = 10
     merged["webauthn_credential_limit"] = min(100, max(1, credential_limit))
     return merged

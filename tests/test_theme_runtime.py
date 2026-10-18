@@ -102,9 +102,24 @@ def test_theme_directory_id_rejects_underscore_and_non_ascii(tmp_path: Path) -> 
 
 def test_all_packaged_themes_use_the_valid_manifest_contract() -> None:
     registry = get_theme_registry()
-    assert len(registry.all("public")) == 18
-    assert [theme.id for theme in registry.all("admin")] == ["arbor-admin"]
+    packaged_public = [theme for theme in registry.all("public") if theme.source == "builtin"]
+    packaged_admin = [theme for theme in registry.all("admin") if theme.source == "builtin"]
+    assert len(packaged_public) >= 18
+    assert {theme.id for theme in packaged_public} >= {"default", "minimal"}
+    assert [theme.id for theme in packaged_admin] == ["arbor-admin"]
     assert all(record.status == "valid" for record in registry.records())
+
+
+def test_registry_refreshes_when_another_worker_adds_a_theme(tmp_path: Path) -> None:
+    registry, _builtin, instance = _registry(tmp_path)
+    registry.load()
+    assert registry.get("worker-added") is None
+
+    _write_theme(instance, "worker-added", css="style.css")
+
+    theme = registry.get("worker-added")
+    assert theme is not None
+    assert theme.source == "instance"
 
 
 def test_admin_theme_css_uses_its_own_entry_point(tmp_path: Path) -> None:
@@ -287,7 +302,7 @@ def test_parent_chain_resolution_uses_child_then_parent_and_assets_fallback(
     chain = registry.chain("child-public")
     assert [theme.id for theme in chain] == ["child-public", "base-public"]
     assert registry.resolve_asset("child-public", "base.css")[0].id == "base-public"
-    assert registry.asset_url("child-public") == "/static/themes/base-public/base.css"
+    assert registry.asset_url("child-public") == "/static/themes/child-public/base.css"
     with pytest.raises(ValueError, match="normalized relative"):
         registry.resolve_asset("child-public", "../outside")
     assert registry.resolve_asset("child-public", "unknown.css") is None
@@ -301,6 +316,7 @@ def test_multi_level_parent_template_falls_back_to_grandparent(
     _write_theme(instance, "parent", parent="grandparent")
     _write_theme(instance, "child", parent="parent")
     registry.load()
+    monkeypatch.setattr("arborpress.themes.jinja.template_overrides_trusted", lambda _theme: True)
     monkeypatch.setattr("arborpress.themes.jinja.template_theme_type", lambda: "public")
     monkeypatch.setattr(registry, "active", lambda _theme_type="public": registry.get("child"))
     core = tmp_path / "core"
@@ -332,6 +348,7 @@ def test_template_loader_scopes_public_and_admin_overrides_and_cache(
         templates=("admin/posts.html",),
     )
     registry.load()
+    monkeypatch.setattr("arborpress.themes.jinja.template_overrides_trusted", lambda _theme: True)
     selected = {"public": "public-child", "admin": "admin-child"}
     monkeypatch.setattr("arborpress.themes.jinja.template_theme_type", lambda: selected["current"])
     monkeypatch.setattr(

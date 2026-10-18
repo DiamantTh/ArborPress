@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from arborpress.web.security import SecurityHeadersMiddleware
 
 # Package root = arborpress/
 _PKG_ROOT = Path(__file__).parent.parent
+log = logging.getLogger("arborpress.web")
 
 
 def create_app() -> Quart:
@@ -42,6 +44,9 @@ def create_app() -> Quart:
         static_folder=str(_PKG_ROOT / "static"),
         static_url_path="/static",
     )
+    from arborpress.themes.sandbox import ArborPressSandboxedEnvironment
+
+    app.jinja_environment = ArborPressSandboxedEnvironment
     # Vite assets are resolved lazily when a Jinja template requests an entry.
     # This keeps application startup usable in a source checkout before a local
     # frontend build, while installed releases ship the manifest and bundles.
@@ -65,14 +70,21 @@ def create_app() -> Quart:
 
     # §7 I18N
     from arborpress.core.i18n import register_i18n
+
     register_i18n(app)
 
     # §10 CSRF token function as Jinja2 global
     from arborpress.auth.roles import has_min_role
     from arborpress.web.security import csrf_input, get_csrf_token
+
     app.jinja_env.globals["csrf_token"] = get_csrf_token
     app.jinja_env.globals["csrf_input"] = csrf_input
     app.jinja_env.globals["has_role"] = has_min_role
+    # Themes receive a deliberately small per-request view of these values in
+    # _theme_context below; remove Quart's unrestricted proxies from globals.
+    app.jinja_env.globals.pop("g", None)
+    app.jinja_env.globals.pop("request", None)
+    app.jinja_env.globals.pop("session", None)
 
     # nl2br filter (for comment display: \n → <br>)
     import markupsafe as _mu
@@ -90,7 +102,7 @@ def create_app() -> Quart:
             return ""
         try:
             return "".join(chr(0x1F1E6 + ord(c) - ord("A")) for c in code.upper()[:2])
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return ""
 
     app.jinja_env.filters["country_flag"] = _country_flag
@@ -103,13 +115,14 @@ def create_app() -> Quart:
             return {}
         try:
             return _json.loads(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return {}
 
     app.jinja_env.filters["from_json"] = _from_json
 
     # Helper for template time comparisons (e.g. expiry check in sessions.html)
     from datetime import datetime as _dt
+
     app.jinja_env.globals["now"] = lambda: _dt.now(UTC)
 
     # Templates need only presentation-safe config values. Do not expose the
@@ -132,6 +145,7 @@ def create_app() -> Quart:
     from arborpress.themes.jinja import (
         active_theme_for_request,
         install_theme_template_loader,
+        template_overrides_trusted,
         template_theme_type,
     )
     from arborpress.themes.manifest import get_theme_registry
@@ -141,34 +155,83 @@ def create_app() -> Quart:
 
     @app.context_processor
     async def _theme_context() -> dict[str, object]:
+        from quart import g
+        from quart import request as quart_request
+        from quart import session as quart_session
+
+        from arborpress.themes.jinja import theme_context_view
+        from arborpress.themes.management import resolve_option_values
+
         theme_type = template_theme_type()
-        theme_settings = get_cached("theme") or get_defaults("theme")
+        theme_settings = getattr(g, "_theme_runtime_settings", None)
+        if not isinstance(theme_settings, dict):
+            theme_settings = get_cached("theme") or get_defaults("theme")
         selected = active_theme_for_request(theme_registry)
+        trusted = template_overrides_trusted(selected)
+        stored_options = theme_settings.get("option_values", {})
+        theme_options = resolve_option_values(
+            theme_registry,
+            selected.id,
+            stored_options if isinstance(stored_options, dict) else {},
+        )
 
         dark = (
             theme_registry.get(selected.dark_companion)
             if theme_type == "public" and selected.dark_companion
             else None
         )
-        return {
-            "theme": selected,
-            "theme_dark": dark,
+        theme_context: dict[str, object] = {
+            "theme": theme_context_view(selected),
+            "theme_options": theme_options,
+            "theme_trusted": trusted,
+            "theme_trust_tier": "trusted" if trusted else "normal",
+            "theme_dark": theme_context_view(dark) if dark else None,
             "theme_css_url": theme_registry.asset_url(selected.id),
             "theme_dark_css_url": theme_registry.asset_url(dark.id) if dark else "",
             "theme_auto_dark": bool(theme_settings.get("auto_dark", False))
-            if theme_type == "public" else False,
+            if theme_type == "public"
+            else False,
             "theme_auto_dark_start": int(theme_settings.get("auto_dark_start", 19)),
             "theme_auto_dark_end": int(theme_settings.get("auto_dark_end", 6)),
+            # Do not expose the full signed session or Quart request proxy to
+            # theme templates. Core templates use only these presentation-safe
+            # fields; authentication state remains server-side.
+            "session": {
+                "user_id": quart_session.get("user_id"),
+                "user_name": quart_session.get("user_name"),
+            },
+            "request": {"endpoint": quart_request.endpoint},
         }
+        if trusted:
+            def theme_asset_url(filename: str) -> str:
+                """Resolve a same-origin URL for a manifest-declared local asset."""
+                try:
+                    resolved = theme_registry.resolve_asset(selected.id, filename)
+                except ValueError:
+                    return ""
+                if resolved is None:
+                    return ""
+                owner, asset_path = resolved
+                relative = asset_path.relative_to(owner.static_dir.resolve()).as_posix()
+                from quart import url_for as quart_url_for
+
+                return quart_url_for(
+                    "theme_static", theme_id=selected.id, filename=relative
+                )
+
+            theme_asset_url.__arborpress_safe_template_callable__ = True
+            theme_context["theme_asset_url"] = theme_asset_url
+        return theme_context
 
     # Background pattern override: read from cache per request
     @app.context_processor
     async def _pattern_context() -> dict:
         from arborpress.core.site_settings import get_cached, get_defaults
         from arborpress.themes.patterns import make_pattern_url
+
         _ts = get_cached("theme") or get_defaults("theme")
-        _pid     = _ts.get("bg_pattern", "auto")
-        _color   = _ts.get("bg_pattern_color", "") or "#818cf8"
+        _pid = _ts.get("bg_pattern", "auto")
+        _color = _ts.get("bg_pattern_color", "") or "#818cf8"
         _opacity = float(_ts.get("bg_pattern_opacity", 0.07))
         _css_val = make_pattern_url(_pid, _color, _opacity)
         return {"theme_bg_pattern": _pid, "theme_bg_pattern_css": _css_val}
@@ -177,6 +240,7 @@ def create_app() -> Quart:
     @app.context_processor
     async def _federation_context() -> dict:
         from arborpress.core.site_settings import get_cached, get_defaults
+
         fed = get_cached("federation") or get_defaults("federation")
         return {"federation_settings": fed}
 
@@ -191,20 +255,32 @@ def create_app() -> Quart:
 
         reg = theme_registry
         all_t = reg.all("public")
+        from arborpress.themes.jinja import theme_context_view
+
         # Main themes (no light_companion → excludes dark-only companions)
-        demo_light = [t for t in all_t if t.theme.light_companion is None]
-        demo_map   = {t.theme.id: t for t in all_t}
+        demo_light = [theme_context_view(t) for t in all_t if t.light_companion is None]
+        demo_map = {t.id: theme_context_view(t) for t in all_t}
         demo_css_urls = {theme.id: reg.asset_url(theme.id) for theme in all_t}
         return {
-            "demo_mode":         True,
-            "demo_show_banner":  bool(_demo_cfg.get("show_banner", True)),
+            "demo_mode": True,
+            "demo_show_banner": bool(_demo_cfg.get("show_banner", True)),
             "demo_light_themes": demo_light,
-            "demo_theme_map":    demo_map,
+            "demo_theme_map": demo_map,
             "demo_theme_css_urls": demo_css_urls,
         }
 
+    @app.after_request
+    async def _theme_preview_headers(response):
+        from quart import session as quart_session
+
+        if quart_session.get("_theme_preview"):
+            response.headers["Cache-Control"] = "private, no-store"
+            response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+        return response
+
     # §8 Admin-Blueprint dynamisch registrieren
     from arborpress.web.routes.admin import admin_bp
+
     admin_prefix = cfg.web.admin_path.rstrip("/")
 
     # §14 Install-Wizard (vor allen anderen Blueprints registrieren)
@@ -215,12 +291,14 @@ def create_app() -> Quart:
     @app.before_request
     async def _install_gate():
         from arborpress.core.config import is_installed
+
         if is_installed():
             return None
         from quart import redirect as _redir
         from quart import request as _req
         from quart import session as _session
         from quart import url_for as _uf
+
         path = _req.path
         install_enrollment_routes = {
             "/auth/register",
@@ -229,10 +307,7 @@ def create_app() -> Quart:
         }
         if (
             path == "/install"
-            or (
-                path in install_enrollment_routes
-                and _session.get("install_enrollment")
-            )
+            or (path in install_enrollment_routes and _session.get("install_enrollment"))
             or path.startswith("/static/")
             or path == "/_health"
             or path == "/favicon.ico"
@@ -277,6 +352,27 @@ def create_app() -> Quart:
             await db.commit()
             break
 
+    @app.before_request
+    async def _load_theme_runtime_settings() -> None:
+        """Refresh theme selection and trust from the prefix DB per worker request."""
+        from quart import g, request
+
+        if request.endpoint in {"static", "health.health", "theme_static"}:
+            return
+        from arborpress.core.db import get_db_session
+        from arborpress.core.site_settings import get_defaults, get_section_uncached
+
+        selected = get_defaults("theme")
+        try:
+            async for db in get_db_session():
+                selected = await get_section_uncached("theme", db)
+                break
+        except Exception as exc:
+            # Static built-in fallbacks keep pages renderable while the DB is
+            # unavailable; authorization and writes still fail in their routes.
+            log.debug("Could not refresh per-request theme settings.", exc_info=exc)
+        g._theme_runtime_settings = selected
+
     # §1 / §6 Public routes
     app.register_blueprint(public_bp)
 
@@ -315,7 +411,9 @@ def create_app() -> Quart:
         if resolved is None:
             _abort(404)
         _theme, asset_path = resolved
-        return await send_file(asset_path)
+        response = await send_file(asset_path)
+        response.headers["Cache-Control"] = "public, no-cache"
+        return response
 
     # §10 Security headers (inner middleware – executed first)
     app.asgi_app = SecurityHeadersMiddleware(app.asgi_app)  # type: ignore[assignment]
@@ -337,6 +435,7 @@ def create_app() -> Quart:
         from arborpress.core.db import get_engine
         from arborpress.core.db_capabilities import detect_capabilities, set_capabilities
         from arborpress.core.scheduler import run_scheduler
+
         # §14 Installations-Token generieren wenn noch nicht installiert
         if not is_installed():
             token_file = install_token_path()
@@ -354,7 +453,8 @@ def create_app() -> Quart:
                     "                                                      \n"
                     "  Or read it from: %s                                 \n"
                     "══════════════════════════════════════════════════════",
-                    token, token_file.resolve(),
+                    token,
+                    token_file.resolve(),
                 )
             else:
                 _log.getLogger("arborpress").warning(
@@ -387,6 +487,7 @@ def create_app() -> Quart:
 
             # Mail-Queue-Worker starten
             from arborpress.mail.queue import run_queue_worker
+
             asyncio.ensure_future(run_queue_worker())
 
     return app
