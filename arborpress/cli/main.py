@@ -56,6 +56,7 @@ plugin_app = typer.Typer(help="Plugin management (§15)", no_args_is_help=True)
 webauthn_app = typer.Typer(help="WebAuthn / Passkey recovery (§17)", no_args_is_help=True)
 themes_app = typer.Typer(help="Theme diagnostics (read-only)", no_args_is_help=True)
 backup_app = typer.Typer(help="Local backup set operations", no_args_is_help=True)
+restore_app = typer.Typer(help="Offline local restore operations", no_args_is_help=True)
 
 app.add_typer(db_app, name="db")
 app.add_typer(user_app, name="user")
@@ -69,6 +70,7 @@ app.add_typer(plugin_app, name="plugin")
 app.add_typer(webauthn_app, name="webauthn")
 app.add_typer(themes_app, name="themes")
 app.add_typer(backup_app, name="backup")
+app.add_typer(restore_app, name="restore")
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +432,182 @@ def backup_verify(
             f"Verified {report.backup_id}: {report.checked_files} files, "
             f"{report.checked_bytes} bytes, {report.database_rows} database rows"
         )
+
+
+@restore_app.command("plan")
+def restore_plan_command(
+    backup_id: str,
+    component: list[str] | None = typer.Option(  # noqa: B008
+        None, "--component", help="Select a component; repeatable"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """Verify a backup and print a read-only compatibility/apply plan."""
+    from arborpress.backups.restore import RestoreError, plan_restore
+    from arborpress.backups.service import BackupError
+
+    try:
+        plan = asyncio.run(
+            plan_restore(backup_id, components=tuple(component) if component else None)
+        )
+    except (BackupError, RestoreError, OSError, ValueError) as exc:
+        typer.echo(f"Restore planning failed: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    if as_json:
+        typer.echo(json.dumps(plan.as_json(), indent=2, sort_keys=True))
+        return
+    typer.echo(f"Backup: {plan.backup_id} ({plan.created_at})")
+    typer.echo(f"Format: {plan.format_version}; ArborPress: {plan.arborpress_version}")
+    typer.echo(
+        "Database: "
+        f"{plan.backup_database_system or 'not selected'} → "
+        f"{plan.target_database_system or 'not selected'}"
+    )
+    typer.echo(
+        "Alembic revisions: backup="
+        f"{', '.join(plan.backup_alembic_revisions) or 'none'}; "
+        f"target={', '.join(plan.target_alembic_revisions) or 'none'}"
+    )
+    typer.echo(f"Components: {', '.join(plan.selected_components)}")
+    typer.echo(f"Configuration coverage: {plan.config_coverage}")
+    if plan.omitted_sensitive:
+        typer.echo(f"Omitted sensitive configuration entries: {', '.join(plan.omitted_sensitive)}")
+    typer.echo(f"Estimated staging space: {plan.estimated_uncompressed_bytes} bytes")
+    for name, path in sorted(plan.target_paths.items()):
+        typer.echo(f"Target {name}: {path}")
+    typer.echo(f"Compatibility: {'ready' if plan.compatible else 'BLOCKED'}")
+    for item in plan.warnings:
+        typer.echo(f"Warning: {item}")
+    for item in plan.blockers:
+        typer.echo(f"Blocker: {item}")
+
+
+@restore_app.command("apply")
+def restore_apply_command(
+    backup_id: str,
+    all_components: bool = typer.Option(False, "--all", help="Restore all available components"),
+    component: list[str] | None = typer.Option(  # noqa: B008
+        None, "--component", help="Select a component; repeatable"
+    ),
+    offline: bool = typer.Option(False, "--offline", help="Confirm all web workers are stopped"),
+    yes: bool = typer.Option(False, "--yes", help="Do not prompt for confirmation"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Verify and print the plan without mutation"
+    ),
+    safety_backup: bool = typer.Option(
+        False, "--safety-backup", help="Create a complete backup of the current instance first"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """Apply a verified restore while ArborPress is offline."""
+    from arborpress.backups.restore import (
+        RestoreError,
+        apply_restore,
+        plan_restore,
+        validate_restore_staging,
+    )
+    from arborpress.backups.service import BackupError
+
+    if all_components and component:
+        typer.echo("Use either --all or --component, not both.", err=True)
+        raise typer.Exit(code=2)
+    if not all_components and not component and not dry_run:
+        typer.echo("Choose --all or at least one --component before applying.", err=True)
+        raise typer.Exit(code=2)
+    selected = tuple(component) if component else None
+    try:
+        if dry_run:
+            plan = asyncio.run(plan_restore(backup_id, components=selected))
+            staging_warnings: tuple[str, ...] = ()
+            if plan.compatible:
+                staging_warnings = asyncio.run(validate_restore_staging(plan))
+            if as_json:
+                typer.echo(
+                    json.dumps(
+                        {
+                            "plan": plan.as_json(),
+                            "staging_validated": plan.compatible,
+                            "staging_warnings": list(staging_warnings),
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+            else:
+                typer.echo("Dry run only; no files or database were changed.")
+                typer.echo(f"Compatibility: {'ready' if plan.compatible else 'BLOCKED'}")
+                typer.echo(f"Components: {', '.join(plan.selected_components)}")
+                typer.echo(
+                    "Staging validation: "
+                    f"{'passed' if plan.compatible else 'not run (plan is blocked)'}"
+                )
+                for item in (*plan.warnings, *staging_warnings, *plan.blockers):
+                    typer.echo(item)
+            if not plan.compatible:
+                raise typer.Exit(code=1)
+            return
+        if not offline:
+            typer.echo(
+                "Apply requires --offline after stopping every ArborPress web worker.", err=True
+            )
+            raise typer.Exit(code=2)
+        if not yes:
+            typer.confirm(
+                f"Apply backup {backup_id}; selected live roots and/or database rows "
+                "will be replaced?",
+                abort=True,
+            )
+        report = asyncio.run(
+            apply_restore(
+                backup_id,
+                components=selected,
+                offline=offline,
+                safety_backup=safety_backup,
+            )
+        )
+    except typer.Exit:
+        raise
+    except (BackupError, RestoreError, OSError, ValueError) as exc:
+        typer.echo(f"Restore failed: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    except Exception as exc:
+        typer.echo(
+            f"Restore failed due to {type(exc).__name__}; inspect the restore history.", err=True
+        )
+        raise typer.Exit(code=1) from None
+    if as_json:
+        typer.echo(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"Restore {report['restore_id']}: {report['result']}")
+        typer.echo(f"Backup: {report['backup_id']}; report: {report['restore_id']}.json")
+
+
+@restore_app.command("recover")
+def restore_recover_command(
+    offline: bool = typer.Option(False, "--offline", help="Confirm all web workers remain stopped"),
+    yes: bool = typer.Option(False, "--yes", help="Do not prompt for confirmation"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """Roll back an interrupted, pre-database-commit restore."""
+    from arborpress.backups.restore import RestoreError, recover_restore
+    from arborpress.backups.service import BackupError
+
+    if not offline:
+        typer.echo(
+            "Recovery requires --offline after stopping every ArborPress web worker.", err=True
+        )
+        raise typer.Exit(code=2)
+    if not yes:
+        typer.confirm("Attempt rollback-first recovery of the incomplete restore?", abort=True)
+    try:
+        report = recover_restore()
+    except (BackupError, RestoreError, OSError, ValueError) as exc:
+        typer.echo(f"Restore recovery failed: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    if as_json:
+        typer.echo(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"Restore recovery {report['restore_id']}: {report['result']}")
 
 
 # ---------------------------------------------------------------------------
