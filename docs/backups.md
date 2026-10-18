@@ -17,14 +17,16 @@ PREFIX/instance/backups/YYYYMMDD-HHMMSS[-NN]/
 └── media/media-<id>-0001.tar.bz2
 ```
 
-The manifest is format version 1. It records the UTC backup ID and exact
+Manifest format version 1 remains readable for existing sets; new sets use
+format version 2. The manifest records the UTC backup ID and exact
 ISO-8601 UTC creation time, ArborPress and Python versions, database engine
 and Alembic heads when included, consistency mode, compression backend and
-profile, encryption state (`none`), component-relative paths, sizes, SHA-256
+profile, encryption state, component-relative paths, sizes, SHA-256
 digests, archive format, member inventory, media segment numbers, omitted
-sensitive paths, warnings, and the final `complete` status. It contains no
-connection URL, password, token, master secret, or key. `checksums.sha256` is
-also emitted in the conventional `SHA256  relative/path` format.
+sensitive paths, `secrets_included`, warnings, and the final `complete`
+status. It contains no connection URL, password, token, master secret, or key.
+`checksums.sha256` uses the conventional `SHA256  relative/path` format and
+covers final component bytes (ciphertext for encrypted sets).
 
 Creation writes to a private `.incomplete-*` directory, verifies the finished
 components, manifest, and checksums, then renames the set into its final name.
@@ -79,16 +81,63 @@ level selects a block size, not a BZip2 level. If the optional binding is
 absent, a BZip3 request fails clearly. No external compression or archive
 executable is used as a fallback.
 
-## Sensitive configuration
+## Encryption and key handling
 
-These sets are unencrypted in Phase 6A and may contain sensitive database and
-user data. The CLI prints a warning before creation. To avoid silently
-publishing credentials, configuration files in the bootstrap `config`
-component are omitted in full; their relative paths are listed under
-`omitted_sensitive`, and the manifest warns that the set is not a complete
-configuration restore. Other components remain unencrypted and should be
-stored with appropriate local access controls. Encryption and full-secret
-backup are later work; this format does not claim either.
+Each compressed component file is encrypted independently; each media segment
+therefore has its own envelope and nonce. Encrypted names end in `.apenc`,
+while the manifest remains readable. Format 2 declares AES-256-GCM envelope
+version 1 and records the key source, a random 16-byte KDF salt, Scrypt
+parameters (for passphrases), and the fixed `manifest.auth` path. The
+`manifest.auth` sidecar is an HMAC-SHA-256 over the exact final manifest bytes.
+Retention state is stored separately and never modifies the authenticated
+manifest.
+
+The binary component envelope is, in order: 8-byte magic (hex
+`41 50 45 4e 43 0d 0a 1a`),
+1-byte envelope version, 1-byte algorithm ID (`1` = AES-256-GCM), 12-byte
+random nonce, ciphertext of the compressed component, then the 16-byte GCM
+authentication tag. Associated data binds the backup ID, manifest-relative
+component path, envelope version, and manifest format version. HKDF-SHA-256
+derives distinct per-component and manifest-authentication keys from the
+backup master material. Passphrases use Scrypt (N=32768, r=8, p=1, 16-byte
+random salt, 32-byte output); keyfiles contain independent random 256-bit
+material. The instance master secret is never used as a backup key.
+
+Generate an automation keyfile outside the instance/config tree:
+
+```sh
+arborpress backup key generate /secure/location/arborpress-backup.apkey
+arborpress backup create --encrypt --keyfile /secure/location/arborpress-backup.apkey
+```
+
+On POSIX, keyfiles are created mode 0600, must be regular non-symlink files,
+and are rejected if group/other permission bits are set. The generated format
+is the ASCII bytes `APKEY01` plus a line feed, followed by Base64 of exactly
+32 bytes and a final line feed.
+The CLI refuses to overwrite an existing file unless `--force` is given.
+Alternatively, `backup create --encrypt` prompts twice for a passphrase using
+`getpass`; passphrases are not accepted as command-line values or saved in
+configuration. Keep the key separately from the backup and instance. Losing
+it makes encrypted data unrecoverable. ArborPress never derives a backup key
+from the instance master secret.
+
+Use `--include-secrets` with `--encrypt` to include the complete config tree,
+including secret-bearing bootstrap files. `--include-secrets` without
+encryption is rejected. Without that option, all files in the bootstrap
+`config` component are omitted (both encrypted and unencrypted); the manifest
+reports only `secrets_included = false` and omitted paths, never secret
+values. A keyfile inside the included config tree is rejected. Even without
+bootstrap secrets, an unencrypted database backup contains sensitive
+application and user data and must be protected.
+
+Verification has two explicit levels. Without a key, ArborPress performs
+`structural-only` verification: it parses the manifest and envelope headers,
+checks ciphertext checksums and set inventory, but cannot authenticate or
+inspect compressed plaintext. With a key, `backup verify` checks the manifest
+HMAC, every AEAD tag, decompression, and TAR/DB stream structure
+(`full-cryptographic`). Encrypted restore always requires the key and repeats
+full verification before staging or applying. Authentication failures use a
+generic error and do not expose plaintext.
 
 ## Commands
 
@@ -100,22 +149,32 @@ arborpress --prefix ~/ArborPress backup create
 arborpress --prefix ~/ArborPress backup create --component database --component media
 arborpress --prefix ~/ArborPress backup create --compression bz2 --profile strong
 arborpress --prefix ~/ArborPress backup create --compression bz3 --threads auto
+arborpress --prefix ~/ArborPress backup create --encrypt
+arborpress --prefix ~/ArborPress backup create --encrypt --include-secrets --keyfile /secure/location/arborpress-backup.apkey
 arborpress --prefix ~/ArborPress backup list
 arborpress --prefix ~/ArborPress backup inspect 20261018-120000
 arborpress --prefix ~/ArborPress backup verify 20261018-120000
+arborpress --prefix ~/ArborPress backup verify 20261018-120000 --keyfile /secure/location/arborpress-backup.apkey
+arborpress --prefix ~/ArborPress backup pin 20261018-120000
+arborpress --prefix ~/ArborPress backup unpin 20261018-120000
+arborpress --prefix ~/ArborPress backup prune --keep-last 10 --keep-days 30
+arborpress --prefix ~/ArborPress backup prune --keep-last 10 --apply
+arborpress --prefix ~/ArborPress backup cleanup-incomplete
 arborpress --prefix ~/ArborPress restore plan 20261018-120000
 arborpress --prefix ~/ArborPress restore plan 20261018-120000 --component media --json
-arborpress --prefix ~/ArborPress restore apply 20261018-120000 --all --offline
+arborpress --prefix ~/ArborPress restore plan 20261018-120000 --keyfile /secure/location/arborpress-backup.apkey
+arborpress --prefix ~/ArborPress restore apply 20261018-120000 --all --offline --keyfile /secure/location/arborpress-backup.apkey
 arborpress --prefix ~/ArborPress restore apply 20261018-120000 --component media --offline
 arborpress --prefix ~/ArborPress restore apply 20261018-120000 --all --offline --dry-run
 arborpress --prefix ~/ArborPress restore recover --offline
 ```
 
 `backup list` shows complete sets whose manifest is valid. `inspect` reports
-metadata and a verification result; `verify` checks the manifest, exact set
+metadata and the verification level. `verify` checks the manifest, exact set
 inventory, checksums, compressed stream, PAX TAR members, media ordering, and
-database NDJSON records without extracting anything. JSON output is available
-with `--json` for read-only diagnostics.
+database NDJSON records without extracting anything when a key is supplied;
+otherwise encrypted sets are reported as `structural-only`. JSON output is
+available with `--json` for read-only diagnostics.
 
 ## Restore safety
 
@@ -154,8 +213,9 @@ component is not selected, its live file and sidecars are preserved. Media
 segments are reconstructed and verified in staging before the live media root
 is swapped.
 
-Phase 6A omits secret-bearing bootstrap config files from unencrypted sets.
-When `restore plan` reports partial configuration, apply preserves the current
+Sets omit all bootstrap config files unless encrypted creation explicitly used
+`--include-secrets`. When
+`restore plan` reports partial configuration, apply preserves the current
 local config tree and overlays only files present in the backup. This is not a
 complete disaster-recovery configuration restore. No secrets are inferred or
 reconstructed.
@@ -176,8 +236,27 @@ the service remains offline. `--safety-backup` optionally creates a complete
 backup of current state before applying; it is opt-in and uses the same lock
 without reacquiring it.
 
-Phase 6B does not implement encryption, retention/pruning, remote storage,
-scheduling, incremental backups, or plugin backup hooks. It never
-starts `tar`, `bzip2`, `pg_dump`, `mysqldump`, `sqlite3`, or another external
-backup utility; all export, compression, checksumming, and verification use
-Python/library APIs.
+Retention is local and explicit. `backup pin` protects a set; `unpin` removes
+that protection. `backup prune --keep-last N` and/or `--keep-days D` first
+print a dry-run plan; deletion requires `--apply` and confirmation (or
+`--yes`). Keep rules combine as a union, pinned sets are always kept, and the
+newest valid complete set is protected. Unknown directories, symlinks, and
+`.incomplete-*` directories are not ordinary prune candidates.
+`backup cleanup-incomplete` is a separate age-gated operation (minimum 24
+hours) for ArborPress-owned incomplete staging sets; it also defaults to a
+read-only listing. Retention sidecars live below
+`instance/var/backup-local-state/`, outside authenticated backup manifests.
+
+The supported database restore path remains same-backend and exact known
+Alembic revision. SQLite replacement is staged and integrity-checked;
+PostgreSQL and MariaDB/MySQL use their Phase 6B transactional import paths.
+Cross-backend restore is not supported. Snapshot guarantees remain backend
+specific and file components are stable per-file reads rather than a globally
+atomic filesystem snapshot. Restore requires offline operation; ArborPress
+does not promise a global database-plus-filesystem transaction.
+
+The system uses Python and library APIs only. It never starts `tar`, `bzip2`,
+`pg_dump`, `mysqldump`, `sqlite3`, or another external backup utility; export,
+compression, encryption, checksumming, verification, and restoration use
+Python/library APIs. Remote storage, schedules, incrementals, and plugin
+backup hooks are not implemented.

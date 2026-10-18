@@ -61,6 +61,7 @@ def test_manifest_toml_roundtrip_includes_component_file_metadata() -> None:
     assert loaded == manifest
     assert loaded.components[0].files[0].segment == 1
     assert "[[components.files]]" in manifest.to_toml()
+    assert "secrets_included" not in manifest.to_toml()
 
 
 def test_bz3_manifest_records_python_thread_and_block_configuration() -> None:

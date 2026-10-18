@@ -353,18 +353,33 @@ def generate_keyfile(path: Path, *, overwrite: bool = False) -> None:
     if path.exists() and not overwrite:
         raise FileExistsError(f"Refusing to overwrite existing backup keyfile: {path}")
     material = os.urandom(KEY_BYTES)
-    flags = os.O_CREAT | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
-    flags |= os.O_TRUNC if overwrite else os.O_EXCL
-    descriptor = os.open(path, flags, 0o600)
+    temporary: Path | None = None
+    if overwrite:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".part", dir=path.parent
+        )
+        temporary = Path(temporary_name)
+    else:
+        descriptor = os.open(
+            path,
+            os.O_CREAT
+            | os.O_EXCL
+            | os.O_WRONLY
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
     try:
         with os.fdopen(descriptor, "wb") as output:
             output.write(encode_keyfile(material))
             output.flush()
             os.fsync(output.fileno())
-        if os.name == "posix":
-            path.chmod(0o600)
+        if temporary is not None:
+            os.replace(temporary, path)
     except Exception:
-        path.unlink(missing_ok=True)
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        else:
+            path.unlink(missing_ok=True)
         raise
 
 

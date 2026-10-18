@@ -259,11 +259,12 @@ class BackupManifest:
             f"compression_backend = {_toml_string(self.compression_backend)}",
             f"compression_profile = {_toml_string(self.compression_profile)}",
             f"encryption = {_toml_string(self.encryption)}",
-            f"secrets_included = {str(self.secrets_included).lower()}",
             f"status = {_toml_string(self.status)}",
             f"omitted_sensitive = {_toml_array(self.omitted_sensitive)}",
             f"warnings = {_toml_array(self.warnings)}",
         ]
+        if self.format_version >= CURRENT_FORMAT_VERSION:
+            lines.insert(11, f"secrets_included = {str(self.secrets_included).lower()}")
         for key, value in (
             ("compression_level", self.compression_level),
             ("compression_threads", self.compression_threads),

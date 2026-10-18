@@ -124,6 +124,9 @@ def test_keyfile_generation_format_permissions_and_collision(tmp_path: Path) -> 
         assert path.stat().st_mode & 0o777 == 0o600
     with pytest.raises(FileExistsError):
         generate_keyfile(path)
+    previous = loaded.material
+    generate_keyfile(path, overwrite=True)
+    assert load_keyfile(path).material != previous
     source = tmp_path / "payload"
     source.write_bytes(b"keyfile encrypted stream")
     encrypted = tmp_path / "payload.apenc"
