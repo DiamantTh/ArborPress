@@ -91,7 +91,7 @@ def theme_preview_fingerprint(registry: ThemeRegistry, theme_id: str) -> str:
             (theme.template_dir / name, True, MAX_TEMPLATE_BYTES) for name in theme.templates
         )
         resources.extend(
-            (theme.theme_dir / name, False, MAX_CSS_BYTES) for name in theme.assets.css
+            (theme.theme_dir / name, True, MAX_CSS_BYTES) for name in theme.assets.css
         )
         for resource, hash_content, size_limit in resources:
             try:

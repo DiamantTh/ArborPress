@@ -496,3 +496,31 @@ def test_preview_fingerprint_changes_with_local_theme_override(tmp_path: Path) -
     registry.load()
     after = theme_preview_fingerprint(registry, child.id)
     assert before != after
+
+
+def test_preview_fingerprint_binds_css_content_not_only_file_metadata(tmp_path: Path) -> None:
+    import os
+
+    from arborpress.runtime.paths import initialize_runtime
+    from arborpress.themes.management import theme_preview_fingerprint
+
+    ensure_instance_layout(initialize_runtime(tmp_path / "prefix", override=True))
+    registry = get_theme_registry()
+    child = ensure_derived_theme(registry, "default")
+    style = child.theme_dir / "static/style.css"
+    style.parent.mkdir(parents=True, exist_ok=True)
+    style.write_text("body { color: red; }", encoding="utf-8")
+    manifest = (child.theme_dir / "theme.toml").read_text(encoding="utf-8")
+    manifest = manifest.replace('css = []', 'css = ["static/style.css"]')
+    manifest = manifest.replace(
+        'entry_points = {}', 'entry_points = { public_css = "static/style.css" }'
+    )
+    (child.theme_dir / "theme.toml").write_text(manifest, encoding="utf-8")
+    registry.load()
+
+    before = theme_preview_fingerprint(registry, child.id)
+    original_stat = style.stat()
+    style.write_text("body { color: tan; }", encoding="utf-8")
+    os.utime(style, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+    assert theme_preview_fingerprint(registry, child.id) != before
