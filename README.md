@@ -74,6 +74,9 @@ tests/                    Automated tests
 The frontend build model and local commands are documented in
 [docs/frontend-build.md](docs/frontend-build.md).
 
+Local backup-set creation and verification are documented in
+[docs/backups.md](docs/backups.md).
+
 Theme runtime and theme.toml conventions are documented in
 [docs/themes.md](docs/themes.md). Runtime themes are package built-ins or
 operator themes under the active prefix's instance/themes/; source-checkout

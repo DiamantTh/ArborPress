@@ -23,7 +23,7 @@ PREFIX/
     ├── media/
     ├── themes/
     ├── plugins/
-    ├── backups/                reserved; no backup engine is provided here
+    ├── backups/                local manifest-based backup sets
     └── var/
         ├── cache/
         ├── log/
@@ -103,9 +103,12 @@ absolute log paths remain absolute. New instance directories are created with
 owner-only permissions where supported, and existing directory permissions
 are not rewritten.
 
-`instance/backups/`, `instance/var/run/`, and `instance/var/tmp/` are reserved
-locations. This phase does not add a backup system, PID/socket manager, or
-general-purpose temporary-file framework.
+`instance/backups/` stores local manifest-based backup sets. Backup creation
+uses `instance/var/run/backup.lock` for per-instance coordination and
+`instance/var/tmp/` for temporary stable-file staging and SQLite snapshots.
+These temporary files are not part of a backup. See
+[docs/backups.md](backups.md) for the format, component selection, and
+verification commands. This does not add a general-purpose PID/socket manager.
 
 ## Development example
 
@@ -183,8 +186,8 @@ relocate the instance.
 
 `app/releases/<version>/` and `app/current` are reserved for a future release
 layout. No release download, pointer switching, update, or rollback behavior
-is implemented. `instance/backups/` is the reserved local backup root; no
-backup creation or restore engine is implemented.
+is implemented. `instance/backups/` is the local backup-set root. ArborPress can
+create, list, inspect, and verify backup sets, but cannot yet apply a restore.
 
 Existing source-checkout directories such as `config/`, `media/`, or
 `content/themes/` are not automatically copied or moved. Operators must place
