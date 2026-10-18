@@ -103,4 +103,4 @@ def test_manifest_rejects_invalid_toml_and_unsupported_version() -> None:
     with pytest.raises(BackupVerificationError, match="Invalid backup manifest"):
         BackupManifest.from_toml("format_version = [")
     with pytest.raises(BackupVerificationError, match="Unsupported manifest version"):
-        BackupManifest.from_toml("format_version = 2\n")
+        BackupManifest.from_toml("format_version = 3\n")

@@ -9,11 +9,15 @@ import tomllib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from arborpress.backups.encryption import EncryptionParameters
 
 MANIFEST_NAME = "manifest.toml"
 CHECKSUMS_NAME = "checksums.sha256"
 FORMAT_VERSION = 1
+CURRENT_FORMAT_VERSION = 2
 DATABASE_FORMAT_VERSION = 1
 BACKUP_ID_RE = re.compile(r"^[0-9]{8}-[0-9]{6}(?:-[0-9]{2,})?$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -88,6 +92,49 @@ class BackupComponent:
 
 
 @dataclass(frozen=True, slots=True)
+class BackupEncryption:
+    envelope_version: int
+    key_source: str
+    salt: str
+    kdf: str
+    scrypt_n: int | None = None
+    scrypt_r: int | None = None
+    scrypt_p: int | None = None
+    manifest_auth: str = "manifest.auth"
+
+    def __post_init__(self) -> None:
+        from arborpress.backups.encryption import EncryptionParameters
+
+        try:
+            EncryptionParameters(
+                envelope_version=self.envelope_version,
+                key_source=self.key_source,  # type: ignore[arg-type]
+                salt=self.salt,
+                kdf=self.kdf,
+                scrypt_n=self.scrypt_n,
+                scrypt_r=self.scrypt_r,
+                scrypt_p=self.scrypt_p,
+                manifest_auth=self.manifest_auth,
+            )
+        except ValueError as exc:
+            raise ValueError(f"Invalid backup encryption metadata: {exc}") from exc
+
+    def as_parameters(self) -> EncryptionParameters:
+        from arborpress.backups.encryption import EncryptionParameters
+
+        return EncryptionParameters(
+            envelope_version=self.envelope_version,
+            key_source=self.key_source,  # type: ignore[arg-type]
+            salt=self.salt,
+            kdf=self.kdf,
+            scrypt_n=self.scrypt_n,
+            scrypt_r=self.scrypt_r,
+            scrypt_p=self.scrypt_p,
+            manifest_auth=self.manifest_auth,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class BackupManifest:
     backup_id: str
     created_at: str
@@ -104,6 +151,8 @@ class BackupManifest:
     omitted_sensitive: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     encryption: str = "none"
+    encryption_parameters: BackupEncryption | None = None
+    secrets_included: bool = False
     status: str = "complete"
     format_version: int = FORMAT_VERSION
     python_version: str | None = None
@@ -115,14 +164,24 @@ class BackupManifest:
             suffix = self.backup_id[16:]
             if not suffix.isdigit() or int(suffix) < 1 or f"{int(suffix):02d}" != suffix:
                 raise ValueError("Backup ID collision suffix is not canonical")
-        if self.format_version != FORMAT_VERSION:
+        if self.format_version not in {FORMAT_VERSION, CURRENT_FORMAT_VERSION}:
             raise ValueError("Unsupported backup manifest format version")
         if self.status != "complete":
             raise ValueError("Only complete backup manifests may be finalized")
         if not self.arborpress_version or not self.consistency_mode:
             raise ValueError("Backup version and consistency metadata are required")
-        if self.encryption != "none":
-            raise ValueError("Phase 6A only writes unencrypted backup sets")
+        if type(self.secrets_included) is not bool:
+            raise ValueError("secrets_included must be a boolean")
+        if self.encryption == "none":
+            if self.encryption_parameters is not None or self.secrets_included:
+                raise ValueError("Unencrypted backup metadata cannot include encryption or secrets")
+        elif self.encryption == "aes-256-gcm":
+            if self.format_version < CURRENT_FORMAT_VERSION or self.encryption_parameters is None:
+                raise ValueError("Encrypted backups require manifest format version 2 metadata")
+        else:
+            raise ValueError("Unknown backup encryption method")
+        if self.format_version == FORMAT_VERSION and self.encryption != "none":
+            raise ValueError("Manifest format version 1 only supports unencrypted backups")
         if self.compression_backend not in {"bz2", "bz3"}:
             raise ValueError("Unknown backup compression backend")
         if self.compression_profile not in {"fast", "medium", "strong", "custom"}:
@@ -200,6 +259,7 @@ class BackupManifest:
             f"compression_backend = {_toml_string(self.compression_backend)}",
             f"compression_profile = {_toml_string(self.compression_profile)}",
             f"encryption = {_toml_string(self.encryption)}",
+            f"secrets_included = {str(self.secrets_included).lower()}",
             f"status = {_toml_string(self.status)}",
             f"omitted_sensitive = {_toml_array(self.omitted_sensitive)}",
             f"warnings = {_toml_array(self.warnings)}",
@@ -211,6 +271,26 @@ class BackupManifest:
         ):
             if value is not None:
                 lines.append(f"{key} = {value}")
+        if self.encryption_parameters is not None:
+            parameters = self.encryption_parameters
+            lines.extend(
+                (
+                    "",
+                    "[encryption_parameters]",
+                    f"envelope_version = {parameters.envelope_version}",
+                    f"key_source = {_toml_string(parameters.key_source)}",
+                    f"salt = {_toml_string(parameters.salt)}",
+                    f"kdf = {_toml_string(parameters.kdf)}",
+                    f"manifest_auth = {_toml_string(parameters.manifest_auth)}",
+                )
+            )
+            for key, value in (
+                ("scrypt_n", parameters.scrypt_n),
+                ("scrypt_r", parameters.scrypt_r),
+                ("scrypt_p", parameters.scrypt_p),
+            ):
+                if value is not None:
+                    lines.append(f"{key} = {value}")
         for component in self.components:
             lines.extend(("", "[[components]]", f"name = {_toml_string(component.name)}"))
             for item in component.files:
@@ -239,7 +319,7 @@ class BackupManifest:
             raise BackupVerificationError(f"Invalid backup manifest TOML: {exc}") from exc
         try:
             version = raw["format_version"]
-            if type(version) is not int or version != FORMAT_VERSION:
+            if type(version) is not int or version not in {FORMAT_VERSION, CURRENT_FORMAT_VERSION}:
                 raise BackupVerificationError(f"Unsupported manifest version: {version!r}")
             component_values = raw["components"]
             if not isinstance(component_values, list):
@@ -268,6 +348,10 @@ class BackupManifest:
                 compression_threads=_optional_int(raw, "compression_threads"),
                 compression_block_size_bytes=_optional_int(raw, "compression_block_size_bytes"),
                 encryption=_required_str(raw, "encryption"),
+                encryption_parameters=_parse_encryption_parameters(
+                    raw.get("encryption_parameters")
+                ),
+                secrets_included=_optional_bool(raw, "secrets_included", default=False),
                 status=_required_str(raw, "status"),
                 omitted_sensitive=_string_tuple(raw, "omitted_sensitive"),
                 warnings=_string_tuple(raw, "warnings"),
@@ -298,6 +382,30 @@ def _required_int(table: dict[str, Any], key: str) -> int:
     if type(value) is not int:
         raise TypeError(f"{key} must be an integer")
     return value
+
+
+def _optional_bool(table: dict[str, Any], key: str, *, default: bool) -> bool:
+    value = table.get(key, default)
+    if type(value) is not bool:
+        raise TypeError(f"{key} must be a boolean")
+    return value
+
+
+def _parse_encryption_parameters(raw: object) -> BackupEncryption | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise TypeError("encryption_parameters must be a table")
+    return BackupEncryption(
+        envelope_version=_required_int(raw, "envelope_version"),
+        key_source=_required_str(raw, "key_source"),
+        salt=_required_str(raw, "salt"),
+        kdf=_required_str(raw, "kdf"),
+        scrypt_n=_optional_int(raw, "scrypt_n"),
+        scrypt_r=_optional_int(raw, "scrypt_r"),
+        scrypt_p=_optional_int(raw, "scrypt_p"),
+        manifest_auth=_required_str(raw, "manifest_auth"),
+    )
 
 
 def _optional_int(table: dict[str, Any], key: str) -> int | None:

@@ -13,6 +13,16 @@ from typing import IO, cast
 
 from arborpress.backups.compression import CompressionBackend, open_compressed_reader
 from arborpress.backups.database import validate_database_stream
+from arborpress.backups.encryption import (
+    MANIFEST_AUTH_NAME,
+    BackupKey,
+    EncryptionContext,
+    EncryptionError,
+    context_from_manifest,
+    decrypted_component_file,
+    verify_envelope_header,
+    verify_manifest_authentication,
+)
 from arborpress.backups.manifest import (
     CHECKSUMS_NAME,
     MANIFEST_NAME,
@@ -33,12 +43,14 @@ class VerificationReport:
     checked_bytes: int
     component_names: tuple[str, ...]
     database_rows: int
+    verification_level: str = "full-integrity"
 
 
 def verify_backup_set(
     directory: Path,
     *,
     require_directory_id: bool = True,
+    key: BackupKey | None = None,
 ) -> VerificationReport:
     """Verify metadata, checksums, archive structure and database stream.
 
@@ -52,9 +64,37 @@ def verify_backup_set(
     manifest_path = root / MANIFEST_NAME
     if manifest_path.is_symlink() or not manifest_path.is_file():
         raise BackupVerificationError("Backup manifest is missing or not a regular file")
-    manifest = BackupManifest.from_toml(manifest_path.read_bytes())
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = BackupManifest.from_toml(manifest_bytes)
     if require_directory_id and root.name != manifest.backup_id:
         raise BackupVerificationError("Backup directory name does not match manifest backup_id")
+    encryption_context: EncryptionContext | None = None
+    authenticated = manifest.encryption == "none"
+    if manifest.encryption != "none":
+        parameters = manifest.encryption_parameters
+        if parameters is None:
+            raise BackupVerificationError("Encrypted backup is missing key derivation metadata")
+        auth_path = root / parameters.manifest_auth
+        if auth_path.is_symlink() or not auth_path.is_file():
+            raise BackupVerificationError("Backup manifest authentication file is missing")
+        auth_content = auth_path.read_bytes()
+        if len(auth_content) != 65 or auth_content[-1:] != b"\n":
+            raise BackupVerificationError("Backup manifest authentication file is malformed")
+        try:
+            authentication = bytes.fromhex(auth_content[:64].decode("ascii"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise BackupVerificationError(
+                "Backup manifest authentication file is malformed"
+            ) from exc
+        if key is not None:
+            encryption_context = context_from_manifest(key, parameters.as_parameters())
+            try:
+                verify_manifest_authentication(
+                    encryption_context, manifest.backup_id, manifest_bytes, authentication
+                )
+            except EncryptionError:
+                raise BackupVerificationError("Backup authentication failed") from None
+            authenticated = True
     expected: dict[str, tuple[str, int]] = {}
     component_files: dict[str, list[BackupFile]] = {}
     for component in manifest.components:
@@ -76,7 +116,13 @@ def verify_backup_set(
     checksums = parse_checksums(checksums_path.read_text(encoding="utf-8"))
     if checksums != {path: values[0] for path, values in expected.items()}:
         raise BackupVerificationError("Checksum list does not match manifest component files")
-    _verify_set_inventory(root, set(expected))
+    _verify_set_inventory(
+        root,
+        set(expected),
+        auth_name=(
+            manifest.encryption_parameters.manifest_auth if manifest.encryption_parameters else None
+        ),
+    )
 
     total_bytes = 0
     database_rows = 0
@@ -89,31 +135,27 @@ def verify_backup_set(
             if digest != item.sha256 or checksums[item.path] != digest:
                 raise BackupVerificationError(f"SHA-256 mismatch for {item.path}")
             total_bytes += size
-            if component.name == "database":
-                if not item.archive_format.startswith("ndjson-v1+"):
-                    raise BackupVerificationError("Database component has an unknown stream format")
-                backend = _backend_from_format(item.archive_format)
-                if backend != manifest.compression_backend:
-                    raise BackupVerificationError("Database compression differs from manifest")
-                result = validate_database_stream(candidate, backend)
-                if result["row_count"] != item.members:
-                    raise BackupVerificationError("Database row count does not match manifest")
-                database_rows += result["row_count"]
-            else:
-                if not item.archive_format.startswith("tar-pax+"):
-                    raise BackupVerificationError(
-                        f"Component {component.name!r} has an unknown archive format"
+            stream_path = candidate
+            if manifest.encryption != "none":
+                verify_envelope_header(candidate)
+                if encryption_context is None:
+                    continue
+                assert manifest.encryption_parameters is not None
+                with decrypted_component_file(
+                    candidate,
+                    context=encryption_context,
+                    backup_id=manifest.backup_id,
+                    relative_path=item.path,
+                    manifest_version=manifest.format_version,
+                ) as decrypted_path:
+                    stream_path = decrypted_path
+                    database_rows += _verify_component_content(
+                        component.name, item, manifest.compression_backend, stream_path
                     )
-                backend = _backend_from_format(item.archive_format)
-                if backend != manifest.compression_backend:
-                    raise BackupVerificationError("Component compression differs from manifest")
-                member_count, uncompressed_size, member_paths = _verify_tar(candidate, backend)
-                if member_count != item.members:
-                    raise BackupVerificationError(f"TAR member count mismatch for {item.path}")
-                if item.member_paths != member_paths:
-                    raise BackupVerificationError(f"TAR member inventory mismatch for {item.path}")
-                if uncompressed_size != item.uncompressed_size_bytes:
-                    raise BackupVerificationError(f"TAR size mismatch for {item.path}")
+                continue
+            database_rows += _verify_component_content(
+                component.name, item, manifest.compression_backend, stream_path
+            )
     media = component_files.get("media")
     if media is not None:
         segments = [item.segment for item in media]
@@ -125,7 +167,43 @@ def verify_backup_set(
         checked_bytes=total_bytes,
         component_names=tuple(component.name for component in manifest.components),
         database_rows=database_rows,
+        verification_level=(
+            "structural-only"
+            if manifest.encryption != "none" and not authenticated
+            else ("full-cryptographic" if manifest.encryption != "none" else "full-integrity")
+        ),
     )
+
+
+def _verify_component_content(
+    component_name: str,
+    item: BackupFile,
+    compression_backend: str,
+    path: Path,
+) -> int:
+    if component_name == "database":
+        if not item.archive_format.startswith("ndjson-v1+"):
+            raise BackupVerificationError("Database component has an unknown stream format")
+        backend = _backend_from_format(item.archive_format)
+        if backend != compression_backend:
+            raise BackupVerificationError("Database compression differs from manifest")
+        result = validate_database_stream(path, backend)
+        if result["row_count"] != item.members:
+            raise BackupVerificationError("Database row count does not match manifest")
+        return int(result["row_count"])
+    if not item.archive_format.startswith("tar-pax+"):
+        raise BackupVerificationError(f"Component {component_name!r} has an unknown archive format")
+    backend = _backend_from_format(item.archive_format)
+    if backend != compression_backend:
+        raise BackupVerificationError("Component compression differs from manifest")
+    member_count, uncompressed_size, member_paths = _verify_tar(path, backend)
+    if member_count != item.members:
+        raise BackupVerificationError(f"TAR member count mismatch for {item.path}")
+    if item.member_paths != member_paths:
+        raise BackupVerificationError(f"TAR member inventory mismatch for {item.path}")
+    if uncompressed_size != item.uncompressed_size_bytes:
+        raise BackupVerificationError(f"TAR size mismatch for {item.path}")
+    return 0
 
 
 def _safe_component_file(root: Path, relative_path: str) -> Path:
@@ -153,8 +231,12 @@ def _sha256(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
-def _verify_set_inventory(root: Path, component_paths: set[str]) -> None:
+def _verify_set_inventory(root: Path, component_paths: set[str], *, auth_name: str | None) -> None:
     expected_files = component_paths | {MANIFEST_NAME, CHECKSUMS_NAME}
+    if auth_name is not None:
+        if auth_name != MANIFEST_AUTH_NAME:
+            raise BackupVerificationError("Unsupported manifest authentication path")
+        expected_files.add(auth_name)
     expected_directories: set[str] = set()
     for name in expected_files:
         parent = PurePosixPath(name).parent

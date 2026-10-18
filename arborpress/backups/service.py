@@ -8,9 +8,10 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import uuid
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePosixPath
@@ -25,10 +26,18 @@ from arborpress.backups.archive import (
 )
 from arborpress.backups.compression import CompressionSettings
 from arborpress.backups.database import DatabaseExportResult, export_database
+from arborpress.backups.encryption import (
+    BackupKey,
+    create_encryption_context,
+    encrypt_file,
+    manifest_authentication,
+)
 from arborpress.backups.manifest import (
     CHECKSUMS_NAME,
+    CURRENT_FORMAT_VERSION,
     MANIFEST_NAME,
     BackupComponent,
+    BackupEncryption,
     BackupFile,
     BackupManifest,
     BackupVerificationError,
@@ -60,6 +69,7 @@ class BackupSummary:
     manifest: BackupManifest
     verification_ok: bool
     verification_error: str | None = None
+    verification_level: str | None = None
 
 
 @contextlib.contextmanager
@@ -108,6 +118,9 @@ async def create_backup(
     media_segment_size: int = DEFAULT_MEDIA_SEGMENT_SIZE,
     created_at: datetime | None = None,
     keep_incomplete: bool = False,
+    key: BackupKey | None = None,
+    include_secrets: bool = False,
+    keyfile_path: Path | None = None,
     _lock_already_held: bool = False,
 ) -> BackupSummary:
     """Create, internally verify, then atomically publish a complete set."""
@@ -121,6 +134,18 @@ async def create_backup(
     unknown = set(selected_components) - set(DEFAULT_COMPONENTS)
     if unknown:
         raise ValueError(f"Unknown backup component(s): {', '.join(sorted(unknown))}")
+    if include_secrets and key is None:
+        raise ValueError("Secret-bearing config requires --encrypt and a backup key")
+    if include_secrets and "config" not in selected_components:
+        raise ValueError("--include-secrets requires the config component")
+    if include_secrets and keyfile_path is not None:
+        try:
+            keyfile_resolved = keyfile_path.resolve(strict=True)
+            config_resolved = selected_paths.config.resolve(strict=True)
+            if keyfile_resolved.is_relative_to(config_resolved):
+                raise ValueError("The backup keyfile cannot be stored inside included config data")
+        except FileNotFoundError:
+            pass
     settings = compression or CompressionSettings()
     if media_segment_size < 1:
         raise ValueError("Media segment size must be positive")
@@ -143,9 +168,11 @@ async def create_backup(
             )
         backup_id = _available_backup_id(selected_paths.backups, base_id)
         staging = selected_paths.backups / (f".incomplete-{backup_id}-{uuid.uuid4().hex}")
-        staging.mkdir(mode=0o700)
+        encryption_context = create_encryption_context(key) if key is not None else None
+        payload_workspace = Path(tempfile.mkdtemp(prefix="backup-payload-", dir=selected_paths.tmp))
         db_result: DatabaseExportResult | None = None
         try:
+            staging.mkdir(mode=0o700)
             component_records: list[BackupComponent] = []
             omitted_sensitive: list[str] = []
             warnings = [
@@ -161,15 +188,33 @@ async def create_backup(
                 db_dir.mkdir(mode=0o700)
                 backend = settings.backend
                 extension = settings.extension
-                relative = f"database/database-{backup_id}.ndjson.{extension}"
-                database_path = staging / relative
+                compressed_relative = f"database/database-{backup_id}.ndjson.{extension}"
+                relative = compressed_relative + (".apenc" if encryption_context else "")
+                database_path = (
+                    payload_workspace / compressed_relative
+                    if encryption_context
+                    else staging / relative
+                )
+                database_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 db_result = await export_database(
                     engine,
                     database_path,
                     compression=settings,
                     temporary_root=selected_paths.tmp,
                 )
-                digest, size = sha256_file(database_path)
+                if encryption_context is not None:
+                    encrypted_path = staging / relative
+                    digest, size, _nonce = encrypt_file(
+                        database_path,
+                        encrypted_path,
+                        context=encryption_context,
+                        backup_id=backup_id,
+                        relative_path=relative,
+                        manifest_version=CURRENT_FORMAT_VERSION,
+                    )
+                    database_path.unlink(missing_ok=True)
+                else:
+                    digest, size = sha256_file(database_path)
                 component_records.append(
                     BackupComponent(
                         "database",
@@ -190,24 +235,43 @@ async def create_backup(
                     continue
                 root = getattr(selected_paths, component)
                 ignored: tuple[Path, ...] = ()
-                if component == "config":
+                if component == "config" and not include_secrets:
                     ignored, omitted = _config_sensitive_paths(root)
                     omitted_sensitive.extend(omitted)
                 if component == "data":
                     ignored = _sqlite_database_sidecars(selected_paths, engine)
                 results = create_component_archives(
                     root=root,
-                    destination=staging,
+                    destination=payload_workspace if encryption_context else staging,
                     component=component,
                     backup_id=backup_id,
                     compression=settings,
-                    temporary_root=selected_paths.tmp,
+                    temporary_root=payload_workspace if encryption_context else selected_paths.tmp,
                     media_segment_size=media_segment_size,
                     ignored_paths=ignored,
                 )
-                component_records.append(
-                    BackupComponent(component, tuple(result.file for result in results))
-                )
+                if encryption_context is None:
+                    component_records.append(
+                        BackupComponent(component, tuple(result.file for result in results))
+                    )
+                else:
+                    encrypted_records: list[BackupFile] = []
+                    for result in results:
+                        relative = result.file.path + ".apenc"
+                        destination = staging / relative
+                        digest, size, _nonce = encrypt_file(
+                            result.archive_path,
+                            destination,
+                            context=encryption_context,
+                            backup_id=backup_id,
+                            relative_path=relative,
+                            manifest_version=CURRENT_FORMAT_VERSION,
+                        )
+                        result.archive_path.unlink(missing_ok=True)
+                        encrypted_records.append(
+                            replace(result.file, path=relative, size_bytes=size, sha256=digest)
+                        )
+                    component_records.append(BackupComponent(component, tuple(encrypted_records)))
             if omitted_sensitive:
                 warnings.append(
                     "Bootstrap configuration files were omitted because "
@@ -234,13 +298,40 @@ async def create_backup(
                 components=tuple(component_records),
                 omitted_sensitive=tuple(sorted(set(omitted_sensitive))),
                 warnings=tuple(warnings),
+                encryption="aes-256-gcm" if encryption_context else "none",
+                encryption_parameters=(
+                    BackupEncryption(
+                        envelope_version=encryption_context.parameters.envelope_version,
+                        key_source=encryption_context.parameters.key_source,
+                        salt=encryption_context.parameters.salt,
+                        kdf=encryption_context.parameters.kdf,
+                        scrypt_n=encryption_context.parameters.scrypt_n,
+                        scrypt_r=encryption_context.parameters.scrypt_r,
+                        scrypt_p=encryption_context.parameters.scrypt_p,
+                        manifest_auth=encryption_context.parameters.manifest_auth,
+                    )
+                    if encryption_context
+                    else None
+                ),
+                secrets_included=include_secrets,
+                format_version=CURRENT_FORMAT_VERSION,
             )
             _write_checksums(staging, manifest)
-            _write_atomic_bytes(staging / MANIFEST_NAME, manifest.to_toml().encode("utf-8"))
+            manifest_bytes = manifest.to_toml().encode("utf-8")
+            _write_atomic_bytes(staging / MANIFEST_NAME, manifest_bytes)
+            if encryption_context is not None:
+                assert manifest.encryption_parameters is not None
+                authentication = manifest_authentication(
+                    encryption_context, backup_id, manifest_bytes
+                )
+                _write_atomic_bytes(
+                    staging / manifest.encryption_parameters.manifest_auth,
+                    authentication.hex().encode("ascii") + b"\n",
+                )
             _fsync_tree_directories(staging)
             from arborpress.backups.verify import verify_backup_set
 
-            verify_backup_set(staging, require_directory_id=False)
+            verify_backup_set(staging, require_directory_id=False, key=key)
             final = selected_paths.backups / backup_id
             if final.exists():
                 raise BackupError(f"Backup ID collision would overwrite existing data: {backup_id}")
@@ -251,6 +342,8 @@ async def create_backup(
             if not keep_incomplete:
                 _remove_staging_directory(selected_paths.backups, staging)
             raise
+        finally:
+            shutil.rmtree(payload_workspace, ignore_errors=True)
 
 
 def list_backups(paths: ArborPressPaths | None = None) -> list[BackupSummary]:
@@ -280,25 +373,34 @@ def list_backups(paths: ArborPressPaths | None = None) -> list[BackupSummary]:
     return summaries
 
 
-def inspect_backup(backup_id: str, paths: ArborPressPaths | None = None) -> BackupSummary:
+def inspect_backup(
+    backup_id: str,
+    paths: ArborPressPaths | None = None,
+    *,
+    key: BackupKey | None = None,
+) -> BackupSummary:
     """Load metadata and compute a verification status without extraction."""
     directory = _backup_directory(backup_id, paths or get_runtime_paths())
     manifest = _load_manifest(directory)
     from arborpress.backups.verify import verify_backup_set
 
     try:
-        verify_backup_set(directory)
+        report = verify_backup_set(directory, key=key)
+        return BackupSummary(
+            backup_id, directory, manifest, True, verification_level=report.verification_level
+        )
     except (OSError, ValueError) as exc:
         return BackupSummary(backup_id, directory, manifest, False, str(exc))
-    return BackupSummary(backup_id, directory, manifest, True)
 
 
-def verify_backup(backup_id: str, paths: ArborPressPaths | None = None) -> VerificationReport:
+def verify_backup(
+    backup_id: str, paths: ArborPressPaths | None = None, *, key: BackupKey | None = None
+) -> VerificationReport:
     """Verify a named set without extracting or mutating its contents."""
     directory = _backup_directory(backup_id, paths or get_runtime_paths())
     from arborpress.backups.verify import verify_backup_set
 
-    return verify_backup_set(directory)
+    return verify_backup_set(directory, key=key)
 
 
 def _backup_directory(backup_id: str, paths: ArborPressPaths) -> Path:
