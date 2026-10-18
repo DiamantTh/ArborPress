@@ -1,0 +1,113 @@
+{% extends "admin/_base.html" %}
+{% block title %}{{ theme.name if theme else record.id }} – Themes{% endblock %}
+{% block admin_content %}
+<p><a href="{{ url_for('admin.themes_overview') }}">← Theme-Verwaltung</a></p>
+<h1>{{ theme.name if theme else record.id }}</h1>
+<p><code>{{ record.id }}</code> · {{ record.type or 'unknown type' }} · {{ record.source }}{% if theme and theme.derived %} · lokal abgeleitet{% endif %}</p>
+<p>Status: <strong>{{ record.status }}</strong>{% if theme %} · Version {{ theme.version }} · {{ theme.author }} · {{ theme.license }} · requires ArborPress {{ theme.requires_arborpress }} · tested with {{ theme.tested_with or '–' }}{% endif %}</p>
+{% if theme and theme.parent %}<p>Parent: <a href="{{ url_for('admin.theme_detail', theme_id=theme.parent) }}"><code>{{ theme.parent }}</code></a></p>{% endif %}
+{% if children %}<p>Abhängige Child Themes: {% for child_id in children %}<a href="{{ url_for('admin.theme_detail', theme_id=child_id) }}"><code>{{ child_id }}</code></a>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+{% if management_error %}<div class="alert alert--error" role="alert">{{ management_error }}</div>{% endif %}
+{% if record.diagnostics %}<ul>{% for message in record.diagnostics %}<li>{{ message }}</li>{% endfor %}</ul>{% endif %}
+
+{% if theme %}
+<section class="admin-card">
+  <h2>Auswahl und Vorschau</h2>
+  <form method="post" action="{{ url_for('admin.theme_activate', theme_id=theme.id) }}">
+    {{ csrf_input() }}<input type="hidden" name="theme_type" value="{{ theme.type }}">
+    <button class="btn btn--primary" type="submit">Als {{ theme.type }} Theme aktivieren</button>
+  </form>
+  <form method="post" action="{{ url_for('admin.theme_preview', theme_id=theme.id) }}">
+    {{ csrf_input() }}<button class="btn" type="submit">In dieser Sitzung previewen</button>
+  </form>
+</section>
+
+<section class="admin-card">
+  <h2>Validierung</h2>
+  <ul>{% for issue in validation %}<li class="theme-validation theme-validation--{{ issue.level }}"><strong>{{ issue.level }}</strong> · <code>{{ issue.file }}</code> · {{ issue.message }}</li>{% endfor %}</ul>
+</section>
+
+<section class="admin-card">
+  <h2>Themeoptionen</h2>
+  {% if options %}
+  <form method="post" action="{{ url_for('admin.theme_options_save', theme_id=theme.id) }}" class="admin-form">
+    {{ csrf_input() }}
+    <input type="hidden" name="expected_hash" value="{{ option_hash }}">
+    {% for item in options %}
+      {% set definition = item.definition %}
+      <label>
+        {{ definition.label }}{% if definition.required %} *{% endif %}
+        {% if definition.description %}<small>{{ definition.description }}</small>{% endif %}
+        {% if definition.type == 'boolean' %}
+          <input type="checkbox" name="option_{{ item.key }}" value="1" {{ 'checked' if item.value }}>
+        {% elif definition.type == 'select' %}
+          <select name="option_{{ item.key }}" {{ 'required' if definition.required }}>
+            {% for choice in definition.choices %}<option value="{{ choice }}" {{ 'selected' if item.value == choice }}>{{ choice }}</option>{% endfor %}
+          </select>
+        {% elif definition.type == 'text' %}
+          <textarea name="option_{{ item.key }}" {{ 'required' if definition.required }}>{{ item.value or '' }}</textarea>
+        {% else %}
+          <input type="{{ 'color' if definition.type == 'color' else 'number' if definition.type in ('integer', 'number') else 'url' if definition.type == 'url' else 'text' }}" name="option_{{ item.key }}" value="{{ item.value if item.value is not none else definition.default if definition.default is not none else '' }}" {{ 'required' if definition.required }} {% if definition.type in ('integer', 'number') %}min="{{ definition.minimum if definition.minimum is not none else '' }}" max="{{ definition.maximum if definition.maximum is not none else '' }}" step="{{ '1' if definition.type == 'integer' else 'any' }}"{% endif %}>
+        {% endif %}
+      </label>
+    {% endfor %}
+    <button class="btn btn--primary" type="submit">Optionen speichern</button>
+  </form>
+  <form method="post" action="{{ url_for('admin.theme_options_reset', theme_id=theme.id) }}">
+    {{ csrf_input() }}<input type="hidden" name="expected_hash" value="{{ option_hash }}"><button class="btn" type="submit">Optionen auf Defaults / Parent zurücksetzen</button>
+  </form>
+  {% else %}<p>Dieses Theme deklariert keine Optionen.</p>{% endif %}
+</section>
+
+{% if theme.source == 'instance' %}
+<section class="admin-card">
+  <h2>Lokaler Trust</h2>
+  <p>Trust wird nur in dieser ArborPress-Instanz vergeben und niemals aus dem Theme-Manifest übernommen. Auch trusted Themes erhalten keinen Python-, Datei-, Netzwerk-, Shell- oder Datenbankzugriff.</p>
+  <form method="post" action="{{ url_for('admin.theme_trust', theme_id=theme.id) }}">
+    {{ csrf_input() }}<input type="hidden" name="grant" value="{{ '0' if trusted else '1' }}">
+    <button class="btn" type="submit">{{ 'Trust entziehen' if trusted else 'Trust vergeben (Step-up erforderlich)' }}</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="admin-card">
+  <h2>Kontrollierte Overrides</h2>
+  <p>Speichern erzeugt oder aktualisiert ein lokales Derived Theme. Parent-Dateien werden nicht verändert.</p>
+  <h3>Jinja Templates</h3>
+  <ul>{% for path in templates %}<li><a href="{{ url_for('admin.theme_file_edit', theme_id=theme.id, kind='template', relative=path) }}"><code>{{ path }}</code> bearbeiten</a></li>{% endfor %}</ul>
+  <h3>CSS</h3>
+  <ul>{% for path in styles %}<li><a href="{{ url_for('admin.theme_file_edit', theme_id=theme.id, kind='css', relative=path) }}"><code>{{ path }}</code> bearbeiten</a></li>{% else %}<li>Keine deklarierten CSS-Dateien.</li>{% endfor %}</ul>
+  <h3>Advanced Manifest</h3>
+  <p>Nur ein Derived Manifest kann gespeichert werden; Parent, Typ und Derived-Markierung bleiben fest gebunden.</p>
+  <a class="btn" href="{{ url_for('admin.theme_manifest_edit', theme_id=theme.id) }}">Manifest als Derived Theme bearbeiten</a>
+</section>
+
+{% if theme.derived %}
+<section class="admin-card">
+  <h2>Aktive lokale Overrides</h2>
+  <ul>
+  {% for path in theme.templates %}
+    <li><code>{{ path }}</code> · <a href="{{ url_for('admin.theme_file_edit', theme_id=theme.id, kind='template', relative=path) }}">bearbeiten / Override entfernen</a></li>
+  {% endfor %}
+  {% for path in theme.assets.css %}
+    <li><code>{{ path }}</code> · <a href="{{ url_for('admin.theme_file_edit', theme_id=theme.id, kind='css', relative=path) }}">bearbeiten / Override entfernen</a></li>
+  {% endfor %}
+  {% if not theme.templates and not theme.assets.css %}<li>Keine lokalen Datei-Overrides.</li>{% endif %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="admin-card">
+  <h2>Revisionen</h2>
+  {% if revisions %}<ol>
+  {% for revision in revisions %}
+    <li><time>{{ revision.created_at }}</time> · {{ revision.kind }} · <code>{{ revision.path }}</code> · {{ revision.actor_name or revision.actor_id }}
+      {% if revision.kind in ('template', 'css', 'template-reset', 'css-reset', 'manifest', 'options', 'options-reset') %}
+      <form method="post" action="{{ url_for('admin.theme_revision_restore', theme_id=theme.id, revision_id=revision.id) }}" style="display:inline">{{ csrf_input() }}<button class="btn btn--small" type="submit">Vorherigen Stand wiederherstellen</button></form>
+      {% endif %}
+    </li>
+  {% endfor %}
+  </ol>{% else %}<p>Noch keine Admin-Änderungsrevisionen.</p>{% endif %}
+</section>
+{% endif %}
+{% endblock %}

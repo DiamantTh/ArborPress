@@ -16,7 +16,18 @@ import json
 import logging
 import secrets
 
-from quart import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
+from jinja2 import TemplateError
+from quart import (
+    Blueprint,
+    abort,
+    jsonify,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 from sqlalchemy import func, select
 
 from arborpress.auth.password_tools import (
@@ -83,23 +94,23 @@ async def _resolve_body(form, db) -> tuple[str, str, dict | None]:
     """
     import json as _json
 
-    raw         = (form.get("body") or "").strip()
+    raw = (form.get("body") or "").strip()
     editor_type = (form.get("_editor_type") or "markdown").strip()
 
     if editor_type == "editorjs":
         try:
             doc = _json.loads(raw)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             doc = {}
         body_html = editorjs_to_html(doc)
-        body_md   = editorjs_to_md(doc)
+        body_md = editorjs_to_md(doc)
         body_json = doc if doc else None
     elif editor_type == "html":
         body_html = sanitize_html(raw)
-        body_md   = html_to_md(body_html)
+        body_md = html_to_md(body_html)
         body_json = None
     else:
-        body_md   = raw
+        body_md = raw
         body_html = await render_md_async(raw, db=db)
         body_json = None
 
@@ -140,7 +151,35 @@ async def _session_guard() -> None:
 async def _role_context() -> dict:
     """Provides user_role and has_role for all admin templates."""
     from arborpress.auth.roles import has_min_role
+
     return {"user_role": session.get("user_role", "viewer"), "has_role": has_min_role}
+
+
+@admin_bp.errorhandler(TemplateError)
+async def _theme_preview_failure(error: TemplateError):
+    """Recover to the package Admin theme after any Admin render failure."""
+    preview = session.get("_theme_preview")
+    if session.get("user_role") != "admin":
+        raise error
+    if isinstance(preview, dict) and preview.get("type") == "admin":
+        session.pop("_theme_preview", None)
+    session["_theme_admin_safe_fallback"] = True
+    log.warning(
+        "Admin template rendering failed for endpoint %s; using the built-in fallback (%s).",
+        request.endpoint,
+        type(error).__name__,
+    )
+    from quart import flash
+
+    await flash("Admin-Theme konnte diese Seite nicht rendern; Built-in-Fallback aktiv.", "error")
+    try:
+        response = await make_response(
+            await render_template("admin/dashboard.html", stats={}, noindex=True)
+        )
+        response.status_code = 500
+        return response
+    finally:
+        session.pop("_theme_admin_safe_fallback", None)
 
 
 # ---------------------------------------------------------------------------
@@ -169,17 +208,20 @@ async def _get_stats() -> dict:
             pages_count = (await db.execute(select(func.count()).select_from(Page))).scalar_one()
             media_count = (await db.execute(select(func.count()).select_from(Media))).scalar_one()
             users_count = (await db.execute(select(func.count()).select_from(User))).scalar_one()
-            mail_queue  = (await db.execute(
-                select(func.count()).select_from(MailQueue)
-                .where(MailQueue.status == MailStatus.pending)
-            )).scalar_one()
+            mail_queue = (
+                await db.execute(
+                    select(func.count())
+                    .select_from(MailQueue)
+                    .where(MailQueue.status == MailStatus.pending)
+                )
+            ).scalar_one()
 
         stats = {
-            "posts_total":    posts_count,
-            "pages_total":    pages_count,
-            "media_total":    media_count,
-            "users_total":    users_count,
-            "mail_queue":     mail_queue,
+            "posts_total": posts_count,
+            "pages_total": pages_count,
+            "media_total": media_count,
+            "users_total": users_count,
+            "mail_queue": mail_queue,
             "plugins_active": len(get_registry().all()),
         }
     except Exception as exc:
@@ -196,6 +238,7 @@ async def _get_stats() -> dict:
 async def posts():
     _require_session()
     from arborpress.models.content import Post
+
     async for db in get_db_session():
         result = await db.execute(select(Post).order_by(Post.published_at.desc()).limit(100))
         post_list = result.scalars().all()
@@ -207,8 +250,11 @@ async def post_new():
     _require_session()
     from arborpress.core.captcha import CaptchaType
     from arborpress.models.content import PostVisibility
+
     return await render_template(
-        "admin/post_edit.html", post=None, noindex=True,
+        "admin/post_edit.html",
+        post=None,
+        noindex=True,
         captcha_types=list(CaptchaType),
         visibility_options=list(PostVisibility),
     )
@@ -220,15 +266,17 @@ async def post_new_save():
     import uuid as _uuid
 
     from arborpress.models.content import Post, PostRevision, PostStatus, PostVisibility
+
     form = await request.form
-    title        = (form.get("title") or "").strip()[:256]
-    slug         = (form.get("slug") or "").strip()[:128] or None
-    status_val   = form.get("status", "draft")
+    title = (form.get("title") or "").strip()[:256]
+    slug = (form.get("slug") or "").strip()[:128] or None
+    status_val = form.get("status", "draft")
     visibility_val = form.get("visibility", "public")
     captcha_type = (form.get("captcha_type") or "").strip() or None
 
     # Scheduled publishing (datetime-local without timezone → UTC)
     from datetime import datetime as _dt
+
     _pub_raw = (form.get("published_at") or "").strip()
     published_at = None
     if _pub_raw:
@@ -241,6 +289,7 @@ async def post_new_save():
         abort(400)
 
     import re
+
     if not slug:
         slug = re.sub(r"[^a-z0-9\-]", "-", title.lower()).strip("-")
         slug = re.sub(r"-{2,}", "-", slug)
@@ -263,9 +312,7 @@ async def post_new_save():
             body_html=body_html,
             body_json=body_json,
             status=(
-                PostStatus(status_val)
-                if status_val in PostStatus.__members__
-                else PostStatus.DRAFT
+                PostStatus(status_val) if status_val in PostStatus.__members__ else PostStatus.DRAFT
             ),
             visibility=(
                 PostVisibility(visibility_val)
@@ -277,7 +324,7 @@ async def post_new_save():
             published_at=published_at,
         )
         db.add(post)
-        await db.flush()   # ID vergeben, aber Transaktion offen halten
+        await db.flush()  # ID vergeben, aber Transaktion offen halten
 
         # Erste Revision anlegen
         rev = PostRevision(
@@ -295,7 +342,9 @@ async def post_new_save():
 
     audit.info(
         "POST created | slug=%s visibility=%s user=%s",
-        slug, visibility_val, session.get("user_id", ""),
+        slug,
+        visibility_val,
+        session.get("user_id", ""),
     )
     return redirect(url_for("admin.posts"))
 
@@ -305,13 +354,16 @@ async def post_edit(slug: str):
     _require_session()
     from arborpress.core.captcha import CaptchaType
     from arborpress.models.content import Post, PostVisibility
+
     async for db in get_db_session():
         result = await db.execute(select(Post).where(Post.slug == slug))
         post = result.scalar_one_or_none()
     if post is None:
         abort(404)
     return await render_template(
-        "admin/post_edit.html", post=post, noindex=True,
+        "admin/post_edit.html",
+        post=post,
+        noindex=True,
         captcha_types=list(CaptchaType),
         visibility_options=list(PostVisibility),
     )
@@ -323,6 +375,7 @@ async def post_edit_save(slug: str):
     import uuid as _uuid
 
     from arborpress.models.content import Post, PostRevision, PostStatus, PostVisibility
+
     form = await request.form
     action = form.get("action", "save")
 
@@ -338,21 +391,23 @@ async def post_edit_save(slug: str):
             audit.info("POST deleted | slug=%s user=%s", slug, session.get("user_id", ""))
             return redirect(url_for("admin.posts"))
 
-        title          = (form.get("title") or "").strip()[:256]
-        new_slug       = (form.get("slug") or "").strip()[:128] or slug
-        status_val     = form.get("status", post.status.value)
+        title = (form.get("title") or "").strip()[:256]
+        new_slug = (form.get("slug") or "").strip()[:128] or slug
+        status_val = form.get("status", post.status.value)
         visibility_val = form.get("visibility", post.visibility.value)
-        captcha_type   = (form.get("captcha_type") or "").strip() or None
+        captcha_type = (form.get("captcha_type") or "").strip() or None
         change_summary = (form.get("change_summary") or "").strip()[:256] or None
 
         # Slug validieren; ungültige Eingaben werden auto-korrigiert
         import re as _re
+
         if new_slug != slug and not is_valid_slug(new_slug):
             new_slug = _re.sub(r"[^a-z0-9\-]", "-", new_slug.lower()).strip("-")
             new_slug = _re.sub(r"-{2,}", "-", new_slug) or slug
 
         # Scheduled publishing
         from datetime import datetime as _dt
+
         _pub_raw = (form.get("published_at") or "").strip()
         if _pub_raw:
             try:
@@ -370,10 +425,10 @@ async def post_edit_save(slug: str):
         if new_slug != slug:
             post.slug_old = slug
             post.slug = new_slug
-        post.body_md          = body_md
-        post.body_html        = body_html
-        post.body_json        = body_json
-        post.captcha_type     = captcha_type
+        post.body_md = body_md
+        post.body_html = body_html
+        post.body_json = body_json
+        post.captcha_type = captcha_type
         post.reading_time_min = Post.calc_reading_time(body_md, body_json)
         try:
             post.status = PostStatus(status_val)
@@ -386,10 +441,9 @@ async def post_edit_save(slug: str):
 
         # Determine next revision number
         from sqlalchemy import func as _func
+
         rev_max_result = await db.execute(
-            select(_func.max(PostRevision.rev_number)).where(
-                PostRevision.post_id == post.id
-            )
+            select(_func.max(PostRevision.rev_number)).where(PostRevision.post_id == post.id)
         )
         last_rev = rev_max_result.scalar() or 0
         next_rev = last_rev + 1
@@ -409,8 +463,12 @@ async def post_edit_save(slug: str):
         db.add(rev)
 
         await db.commit()
-        audit.info("POST updated | slug=%s visibility=%s user=%s",
-                   post.slug, post.visibility.value, session.get("user_id", ""))
+        audit.info(
+            "POST updated | slug=%s visibility=%s user=%s",
+            post.slug,
+            post.visibility.value,
+            session.get("user_id", ""),
+        )
 
     return redirect(url_for("admin.post_edit", slug=post.slug))
 
@@ -425,6 +483,7 @@ async def pages_list():
     _require_session()
     require_role("editor")
     from arborpress.models.content import Page, PageType, PostVisibility
+
     async for db in get_db_session():
         result = await db.execute(select(Page).order_by(Page.title))
         page_list = result.scalars().all()
@@ -432,7 +491,8 @@ async def pages_list():
     # Warning: system pages that are not publicly visible
     system_page_types = {PageType.IMPRESSUM, PageType.PRIVACY, PageType.RULES}
     hidden_system_pages = [
-        p for p in page_list
+        p
+        for p in page_list
         if p.page_type in system_page_types
         and (not p.is_published or p.visibility != PostVisibility.PUBLIC)
     ]
@@ -454,6 +514,7 @@ async def pages_list():
 async def media_list():
     _require_session()
     from arborpress.models.content import Media
+
     async for db in get_db_session():
         result = await db.execute(select(Media).order_by(Media.uploaded_at.desc()).limit(200))
         media = result.scalars().all()
@@ -558,8 +619,12 @@ async def user_breakglass_password_set(user_id: str):
             db=db,
         )
         await write_audit_event(
-            event_type="breakglass_password_set", outcome="success",
-            actor_id=actor_id, target_id=str(user.id), detail="breakglass_password_set", db=db,
+            event_type="breakglass_password_set",
+            outcome="success",
+            actor_id=actor_id,
+            target_id=str(user.id),
+            detail="breakglass_password_set",
+            db=db,
         )
         await db.commit()
 
@@ -599,7 +664,8 @@ async def user_breakglass_password_disable(user_id: str):
             await assert_auth_path_remains(db, user, exclude_password=True)
         except ValueError:
             await write_audit_event(
-                event_type="auth_lockout_prevention", outcome="blocked",
+                event_type="auth_lockout_prevention",
+                outcome="blocked",
                 actor_id=actor_id,
                 target_id=str(user.id),
                 detail="last_auth_path_password_disable",
@@ -619,8 +685,11 @@ async def user_breakglass_password_disable(user_id: str):
         user.legacy_password_hash = None
         db.add(user)
         await write_audit_event(
-            event_type="password_disabled", outcome="success",
-            actor_id=actor_id, target_id=str(user.id), db=db,
+            event_type="password_disabled",
+            outcome="success",
+            actor_id=actor_id,
+            target_id=str(user.id),
+            db=db,
         )
         await db.commit()
 
@@ -683,44 +752,62 @@ async def user_authenticator_reset(user_id: str):
         if form.get("confirm_username", "").strip() != user.username:
             abort(400, "Type the target username to confirm authenticator recovery")
         now = utcnow_naive()
-        previous_authorizations = (await db.execute(
-            select(AuthPending).where(
-                AuthPending.user_id == str(user.id),
-                AuthPending.purpose == RECOVERY_AUTHORIZATION_PURPOSE,
-                AuthPending.consumed_at.is_(None),
-                AuthPending.expires_at > now,
-        ).with_for_update()
-        )).scalars().all()
+        previous_authorizations = (
+            (
+                await db.execute(
+                    select(AuthPending)
+                    .where(
+                        AuthPending.user_id == str(user.id),
+                        AuthPending.purpose == RECOVERY_AUTHORIZATION_PURPOSE,
+                        AuthPending.consumed_at.is_(None),
+                        AuthPending.expires_at > now,
+                    )
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
         for prior in previous_authorizations:
             try:
                 prior_context = json.loads(prior.context or "{}")
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 prior_context = {}
             if isinstance(prior_context, dict):
                 prior_context["superseded"] = True
                 prior.context = json.dumps(prior_context, separators=(",", ":"))
             prior.consumed_at = now
             await write_audit_event(
-                event_type="recovery_authorization_superseded", outcome="success",
-                actor_id=actor_id, target_id=str(user.id),
+                event_type="recovery_authorization_superseded",
+                outcome="success",
+                actor_id=actor_id,
+                target_id=str(user.id),
                 detail="purpose=account_credential_recovery",
                 db=db,
             )
 
         # A newly authorized replacement supersedes a ticket already redeemed
         # into a restricted recovery session, including its staged factors.
-        active_recovery_sessions = (await db.execute(
-            select(AuthPending).where(
-                AuthPending.user_id == str(user.id),
-                AuthPending.purpose == RECOVERY_SESSION_PURPOSE,
-                AuthPending.consumed_at.is_(None),
-                AuthPending.expires_at > now,
-            ).with_for_update()
-        )).scalars().all()
+        active_recovery_sessions = (
+            (
+                await db.execute(
+                    select(AuthPending)
+                    .where(
+                        AuthPending.user_id == str(user.id),
+                        AuthPending.purpose == RECOVERY_SESSION_PURPOSE,
+                        AuthPending.consumed_at.is_(None),
+                        AuthPending.expires_at > now,
+                    )
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
         for recovery_pending in active_recovery_sessions:
             try:
                 recovery_context = json.loads(recovery_pending.context or "{}")
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 recovery_context = {}
             if not isinstance(recovery_context, dict):
                 recovery_context = {}
@@ -731,8 +818,10 @@ async def user_authenticator_reset(user_id: str):
                 reason="superseded",
             )
             await write_audit_event(
-                event_type="recovery_aborted", outcome="success",
-                actor_id=actor_id, target_id=str(user.id),
+                event_type="recovery_aborted",
+                outcome="success",
+                actor_id=actor_id,
+                target_id=str(user.id),
                 detail="purpose=account_credential_recovery;reason=superseded",
                 db=db,
             )
@@ -744,17 +833,27 @@ async def user_authenticator_reset(user_id: str):
             reason="authorization_issued",
         )
 
-        baseline_webauthn = (await db.execute(
-            select(WebAuthnCredential.id).where(
-                WebAuthnCredential.user_id == str(user.id)
+        baseline_webauthn = (
+            (
+                await db.execute(
+                    select(WebAuthnCredential.id).where(WebAuthnCredential.user_id == str(user.id))
+                )
             )
-        )).scalars().all()
-        baseline_totp = (await db.execute(
-            select(MFADevice.id).where(
-                MFADevice.user_id == str(user.id),
-                MFADevice.device_type == MFADeviceType.TOTP,
+            .scalars()
+            .all()
+        )
+        baseline_totp = (
+            (
+                await db.execute(
+                    select(MFADevice.id).where(
+                        MFADevice.user_id == str(user.id),
+                        MFADevice.device_type == MFADeviceType.TOTP,
+                    )
+                )
             )
-        )).scalars().all()
+            .scalars()
+            .all()
+        )
         ticket_secret = secrets.token_bytes(32)
         ticket_secret_text = base64.urlsafe_b64encode(ticket_secret).rstrip(b"=").decode("ascii")
         authorization = await create_pending(
@@ -776,22 +875,28 @@ async def user_authenticator_reset(user_id: str):
             .values(is_valid=False)
         )
         await write_audit_event(
-            event_type="recovery_authorized", outcome="success",
-            actor_id=actor_id, target_id=str(user.id),
+            event_type="recovery_authorized",
+            outcome="success",
+            actor_id=actor_id,
+            target_id=str(user.id),
             detail=(
                 "purpose=account_credential_recovery;"
                 f"ttl_seconds={RECOVERY_AUTHORIZATION_TTL_SECONDS};"
                 "method=webauthn_uv"
-            ), db=db,
+            ),
+            db=db,
         )
         await write_audit_event(
-            event_type="recovery_ticket_issued", outcome="success",
-            actor_id=actor_id, target_id=str(user.id),
+            event_type="recovery_ticket_issued",
+            outcome="success",
+            actor_id=actor_id,
+            target_id=str(user.id),
             detail=(
                 f"purpose={RECOVERY_PURPOSE};"
                 f"authorization_id={authorization.id};ttl_seconds="
                 f"{RECOVERY_AUTHORIZATION_TTL_SECONDS}"
-            ), db=db,
+            ),
+            db=db,
         )
         await db.commit()
         return await _render_users_page(
@@ -817,6 +922,7 @@ async def plugins_list():
     _require_session()
     require_role("admin")
     from arborpress.plugins.registry import get_registry
+
     plugins = get_registry().all()
     return await render_template("admin/plugins.html", plugins=plugins, noindex=True)
 
@@ -893,10 +999,10 @@ async def security_update():
     raw = {
         "legacy_password_min_length": form.get("legacy_password_min_length"),
         "legacy_password_max_length": form.get("legacy_password_max_length"),
-        "legacy_password_min_score":  form.get("legacy_password_min_score"),
-        "hibp_enabled":   form.get("hibp_enabled"),
+        "legacy_password_min_score": form.get("legacy_password_min_score"),
+        "hibp_enabled": form.get("hibp_enabled"),
         "hibp_max_count": form.get("hibp_max_count"),
-        "hibp_timeout":   form.get("hibp_timeout"),
+        "hibp_timeout": form.get("hibp_timeout"),
         "hibp_fail_open": form.get("hibp_fail_open"),
         "totp_credential_limit": form.get("totp_credential_limit"),
         "hotp_credential_limit": form.get("hotp_credential_limit"),
@@ -929,9 +1035,12 @@ async def security_update():
         await save_section("security", cleaned, db, updated_by=user_id)
         sec = await get_security_settings(db)
         await write_audit_event(
-            event_type="auth_policy_changed", outcome="success",
-            actor_id=user_id, target_id="instance",
-            detail="security_settings:" + ",".join(sorted(cleaned)), db=db,
+            event_type="auth_policy_changed",
+            outcome="success",
+            actor_id=user_id,
+            target_id="instance",
+            detail="security_settings:" + ",".join(sorted(cleaned)),
+            db=db,
         )
         await db.commit()
         break
@@ -950,6 +1059,7 @@ async def security_update():
 # ---------------------------------------------------------------------------
 # WebAuthn / Passkey settings
 # ---------------------------------------------------------------------------
+
 
 async def _webauthn_view_context(db, **extra):
     """Build the template context for /admin/webauthn (view + post)."""
@@ -998,9 +1108,7 @@ async def webauthn_settings_page():
     _require_session()
     require_role("admin")
     user_id = session.get("user_id", "")
-    stepup_active = await is_stepup_active(
-        session, user_id, "change_webauthn_settings", "instance"
-    )
+    stepup_active = await is_stepup_active(session, user_id, "change_webauthn_settings", "instance")
 
     async for db in get_db_session():
         ctx = await _webauthn_view_context(db, stepup_active=stepup_active)
@@ -1032,29 +1140,32 @@ async def webauthn_update():
     for key in form.keys():
         if key.startswith("alg_"):
             try:
-                selected_algs.append(int(key[len("alg_"):]))
+                selected_algs.append(int(key[len("alg_") :]))
             except ValueError:
                 continue
 
     raw: dict = {
-        "user_verification":         form.get("user_verification"),
-        "resident_key":              form.get("resident_key"),
-        "attestation":               form.get("attestation"),
-        "authenticator_attachment":  form.get("authenticator_attachment"),
-        "algorithms":                selected_algs or None,
-        "timeout_ms":                form.get("timeout_ms"),
-        "challenge_ttl_seconds":     form.get("challenge_ttl_seconds"),
+        "user_verification": form.get("user_verification"),
+        "resident_key": form.get("resident_key"),
+        "attestation": form.get("attestation"),
+        "authenticator_attachment": form.get("authenticator_attachment"),
+        "algorithms": selected_algs or None,
+        "timeout_ms": form.get("timeout_ms"),
+        "challenge_ttl_seconds": form.get("challenge_ttl_seconds"),
         "webauthn_credential_limit": form.get("webauthn_credential_limit"),
-        "conditional_ui_enabled":    form.get("conditional_ui_enabled"),
-        "signal_api_enabled":        form.get("signal_api_enabled"),
+        "conditional_ui_enabled": form.get("conditional_ui_enabled"),
+        "signal_api_enabled": form.get("signal_api_enabled"),
         "require_2fa_after_passkey": form.get("require_2fa_after_passkey"),
-        "require_mfa_after_sso":     form.get("require_mfa_after_sso"),
-        "counter_strict":            form.get("counter_strict"),
+        "require_mfa_after_sso": form.get("require_mfa_after_sso"),
+        "counter_strict": form.get("counter_strict"),
     }
     # Unchecked checkboxes ⇒ explicit False (form omits them).
     for bool_key in (
-        "conditional_ui_enabled", "signal_api_enabled",
-        "require_2fa_after_passkey", "require_mfa_after_sso", "counter_strict",
+        "conditional_ui_enabled",
+        "signal_api_enabled",
+        "require_2fa_after_passkey",
+        "require_mfa_after_sso",
+        "counter_strict",
     ):
         if raw[bool_key] is None:
             raw[bool_key] = False
@@ -1075,9 +1186,12 @@ async def webauthn_update():
         cleaned["rp_id_last_known"] = existing.get("rp_id_last_known", "")
         await save_section("webauthn", cleaned, db, updated_by=user_id)
         await write_audit_event(
-            event_type="auth_policy_changed", outcome="success",
-            actor_id=user_id, target_id="instance",
-            detail="webauthn_settings:" + ",".join(sorted(cleaned)), db=db,
+            event_type="auth_policy_changed",
+            outcome="success",
+            actor_id=user_id,
+            target_id="instance",
+            detail="webauthn_settings:" + ",".join(sorted(cleaned)),
+            db=db,
         )
         await db.commit()
         ctx = await _webauthn_view_context(db, stepup_active=True, saved=True)
@@ -1130,9 +1244,12 @@ async def webauthn_unlock_rp_id():
         wa["rp_id_locked"] = True
         await save_section("webauthn", wa, db, updated_by=user_id)
         await write_audit_event(
-            event_type="rp_id_change_confirmed", outcome="success",
-            actor_id=user_id, target_id=resolved,
-            detail=f"old={old};new={resolved}", db=db,
+            event_type="rp_id_change_confirmed",
+            outcome="success",
+            actor_id=user_id,
+            target_id=resolved,
+            detail=f"old={old};new={resolved}",
+            db=db,
         )
         await db.commit()
         ctx = await _webauthn_view_context(db, stepup_active=True, saved=True)
@@ -1140,7 +1257,9 @@ async def webauthn_unlock_rp_id():
 
     audit.warning(
         "WEBAUTHN rp_id unlocked | user=%s old=%s new=%s",
-        user_id, old, resolved,
+        user_id,
+        old,
+        resolved,
     )
     return await render_template("admin/webauthn.html", **ctx)
 
@@ -1260,7 +1379,7 @@ async def security_password_evaluate():
             "policy": {
                 "min_length": sec["legacy_password_min_length"],
                 "max_length": sec["legacy_password_max_length"],
-                "min_score":  sec["legacy_password_min_score"],
+                "min_score": sec["legacy_password_min_score"],
                 "accepted": accepted,
                 "error": policy_error,
             },
@@ -1328,7 +1447,7 @@ async def comment_approve(comment_id: str):
         comment = result.scalar_one_or_none()
         if comment is None:
             abort(404)
-        comment.status      = CommentStatus.APPROVED
+        comment.status = CommentStatus.APPROVED
         comment.approved_at = dt.utcnow()
         await db.commit()
 
@@ -1384,6 +1503,7 @@ async def captcha_settings():
     require_role("admin")
     from arborpress.core.captcha import CaptchaType
     from arborpress.core.site_settings import get_section
+
     async for db in get_db_session():
         captcha_section = await get_section("captcha", db)
     return await render_template(
@@ -1424,6 +1544,7 @@ async def captcha_settings_save():
 
     audit.info("CAPTCHA questions updated | count=%d user=%s", len(questions), user_id)
     from quart import flash
+
     await flash(f"{len(questions)} Fragen gespeichert.", "success")
     return redirect(url_for("admin.captcha_settings"))
 
@@ -1433,9 +1554,39 @@ async def captcha_settings_save():
 # ---------------------------------------------------------------------------
 
 _SETTINGS_SECTIONS = (
-    "general", "mail", "comments", "comment_filter", "federation",
-    "search", "theme", "demo",
+    "general",
+    "mail",
+    "comments",
+    "comment_filter",
+    "federation",
+    "search",
+    "theme",
+    "demo",
 )
+
+
+_SETTING_SECRET_MARKERS = (
+    "password",
+    "secret",
+    "api_key",
+    "private_key",
+    "signing_key",
+    "token",
+)
+
+
+def _template_safe_settings(value):
+    """Copy settings for rendering without exposing stored credentials to themes."""
+    if isinstance(value, dict):
+        return {
+            key: ""
+            if any(marker in str(key).lower() for marker in _SETTING_SECRET_MARKERS)
+            else _template_safe_settings(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_template_safe_settings(item) for item in value]
+    return value
 
 
 @admin_bp.get("/settings")
@@ -1452,21 +1603,20 @@ async def site_settings_page():
         for sec in _SETTINGS_SECTIONS:
             sections[sec] = await get_section(sec, db)
 
+    sections = _template_safe_settings(sections)
+
     # Separate selectors preserve the Public/Admin trust boundary.
     registry = get_theme_registry()
     available_public_themes = [
-        {"id": t.theme.id, "name": t.theme.name}
-        for t in registry.all("public")
+        {"id": t.theme.id, "name": t.theme.name} for t in registry.all("public")
     ]
     available_admin_themes = [
-        {"id": t.theme.id, "name": t.theme.name}
-        for t in registry.all("admin")
+        {"id": t.theme.id, "name": t.theme.name} for t in registry.all("admin")
     ]
 
     # Available patterns for pattern picker
     available_patterns = [
-        {"id": pid, "label": PATTERN_LABELS.get(pid, pid)}
-        for pid in PATTERN_ORDER
+        {"id": pid, "label": PATTERN_LABELS.get(pid, pid)} for pid in PATTERN_ORDER
     ]
 
     return await render_template(
@@ -1494,78 +1644,91 @@ async def site_settings_save():
     user_id = session.get("user_id", "")
 
     async for db in get_db_session():
-        current = await get_section(section, db)
+        current = await (
+            _locked_theme_settings(db) if section == "theme" else get_section(section, db)
+        )
 
         if section == "general":
-            current.update({
-                "site_title": (
-                    (form.get("site_title") or "").strip() or current.get("site_title", "")
-                ),
-                "tagline":       (form.get("tagline") or "").strip(),
-                "language":      (form.get("language") or "de").strip(),
-                "posts_per_page": int(
-                    form.get("posts_per_page") or current.get("posts_per_page", 10)
-                ),
-                "timezone":      (form.get("timezone") or "UTC").strip(),
-            })
+            current.update(
+                {
+                    "site_title": (
+                        (form.get("site_title") or "").strip() or current.get("site_title", "")
+                    ),
+                    "tagline": (form.get("tagline") or "").strip(),
+                    "language": (form.get("language") or "de").strip(),
+                    "posts_per_page": int(
+                        form.get("posts_per_page") or current.get("posts_per_page", 10)
+                    ),
+                    "timezone": (form.get("timezone") or "UTC").strip(),
+                }
+            )
 
         elif section == "mail":
-            current.update({
-                "backend":     (form.get("backend") or "none").strip(),
-                "smtp_host":   (form.get("smtp_host") or "localhost").strip(),
-                "smtp_port":   int(form.get("smtp_port") or 587),
-                "smtp_starttls": form.get("smtp_starttls") == "1",
-                "smtp_tls":    form.get("smtp_tls") == "1",
-                "smtp_user":   (form.get("smtp_user") or "").strip(),
-                "from_address": (form.get("from_address") or "").strip(),
-                "from_name":   (form.get("from_name") or "ArborPress").strip(),
-            })
+            current.update(
+                {
+                    "backend": (form.get("backend") or "none").strip(),
+                    "smtp_host": (form.get("smtp_host") or "localhost").strip(),
+                    "smtp_port": int(form.get("smtp_port") or 587),
+                    "smtp_starttls": form.get("smtp_starttls") == "1",
+                    "smtp_tls": form.get("smtp_tls") == "1",
+                    "smtp_user": (form.get("smtp_user") or "").strip(),
+                    "from_address": (form.get("from_address") or "").strip(),
+                    "from_name": (form.get("from_name") or "ArborPress").strip(),
+                }
+            )
             # Only apply password if filled in (do not delete when empty)
             pw = (form.get("smtp_password") or "").strip()
             if pw:
                 current["smtp_password"] = pw
 
         elif section == "comments":
-            current.update({
-                "require_email_confirmation": form.get("require_email_confirmation") == "1",
-                "require_admin_approval":     form.get("require_admin_approval") == "1",
-                "allow_anonymous":            form.get("allow_anonymous") == "1",
-                "rate_limit_per_hour":        int(form.get("rate_limit_per_hour") or 10),
-                "notify_admin_email":         (form.get("notify_admin_email") or "").strip(),
-                "max_depth":                  int(form.get("max_depth") or 3),
-                "min_comment_length":         int(form.get("min_comment_length") or 1),
-                "max_comment_length":         int(form.get("max_comment_length") or 5000),
-            })
+            current.update(
+                {
+                    "require_email_confirmation": form.get("require_email_confirmation") == "1",
+                    "require_admin_approval": form.get("require_admin_approval") == "1",
+                    "allow_anonymous": form.get("allow_anonymous") == "1",
+                    "rate_limit_per_hour": int(form.get("rate_limit_per_hour") or 10),
+                    "notify_admin_email": (form.get("notify_admin_email") or "").strip(),
+                    "max_depth": int(form.get("max_depth") or 3),
+                    "min_comment_length": int(form.get("min_comment_length") or 1),
+                    "max_comment_length": int(form.get("max_comment_length") or 5000),
+                }
+            )
 
         elif section == "federation":
-            current.update({
-                "mode":                         (form.get("mode") or "disabled").strip(),
-                "instance_name":                (form.get("instance_name") or "").strip(),
-                "instance_description":         (form.get("instance_description") or "").strip(),
-                "contact_email":                (form.get("contact_email") or "").strip(),
-                "followers_visible":            form.get("followers_visible") == "1",
-                "following_visible":            form.get("following_visible") == "1",
-                "allow_per_account_federation": form.get("allow_per_account_federation") == "1",
-                "require_approval_to_follow":   form.get("require_approval_to_follow") == "1",
-                "federate_tags":                form.get("federate_tags") == "1",
-                "federate_media":               form.get("federate_media") == "1",
-                "max_note_length":              int(form.get("max_note_length") or 500),
-                "require_http_signature":       form.get("require_http_signature") == "1",
-                "authorized_fetch":             form.get("authorized_fetch") == "1",
-                "allowlist_mode":               form.get("allowlist_mode") == "1",
-                "inbox_blocklist_domains": [
-                    d.strip()
-                    for d in (form.get("inbox_blocklist_domains") or "").splitlines()
-                    if d.strip()
-                ],
-            })
+            current.update(
+                {
+                    "mode": (form.get("mode") or "disabled").strip(),
+                    "instance_name": (form.get("instance_name") or "").strip(),
+                    "instance_description": (form.get("instance_description") or "").strip(),
+                    "contact_email": (form.get("contact_email") or "").strip(),
+                    "followers_visible": form.get("followers_visible") == "1",
+                    "following_visible": form.get("following_visible") == "1",
+                    "allow_per_account_federation": form.get("allow_per_account_federation") == "1",
+                    "require_approval_to_follow": form.get("require_approval_to_follow") == "1",
+                    "federate_tags": form.get("federate_tags") == "1",
+                    "federate_media": form.get("federate_media") == "1",
+                    "max_note_length": int(form.get("max_note_length") or 500),
+                    "require_http_signature": form.get("require_http_signature") == "1",
+                    "authorized_fetch": form.get("authorized_fetch") == "1",
+                    "allowlist_mode": form.get("allowlist_mode") == "1",
+                    "inbox_blocklist_domains": [
+                        d.strip()
+                        for d in (form.get("inbox_blocklist_domains") or "").splitlines()
+                        if d.strip()
+                    ],
+                }
+            )
 
         elif section == "search":
-            current.update({
-                "provider": (form.get("provider") or "fallback").strip(),
-            })
+            current.update(
+                {
+                    "provider": (form.get("provider") or "fallback").strip(),
+                }
+            )
 
         elif section == "theme":
+            from arborpress.themes.management import validate_theme
             from arborpress.themes.manifest import get_theme_registry
 
             registry = get_theme_registry()
@@ -1577,43 +1740,778 @@ async def site_settings_save():
                 abort(400, description="Selected public theme is unavailable or invalid.")
             if admin_theme is None or admin_theme.type != "admin":
                 abort(400, description="Selected admin theme is unavailable or invalid.")
-            current.update({
-                "active":              public_id,
-                "admin_active":        admin_id,
-                "auto_dark":           form.get("auto_dark") == "1",
-                "auto_dark_start":     int(form.get("auto_dark_start") or 19),
-                "auto_dark_end":       int(form.get("auto_dark_end") or 6),
-                "bg_pattern":          (form.get("bg_pattern") or "auto").strip(),
-                "bg_pattern_color":    (form.get("bg_pattern_color") or "").strip(),
-                "bg_pattern_opacity":  float(form.get("bg_pattern_opacity") or 0.07),
-            })
+            for selected_theme in (public_theme, admin_theme):
+                if any(
+                    issue["level"] == "error"
+                    for issue in validate_theme(registry, selected_theme.id)
+                ):
+                    abort(400, description=f"Theme {selected_theme.id!r} failed validation.")
+            current.update(
+                {
+                    "active": public_id,
+                    "admin_active": admin_id,
+                    "auto_dark": form.get("auto_dark") == "1",
+                    "auto_dark_start": int(form.get("auto_dark_start") or 19),
+                    "auto_dark_end": int(form.get("auto_dark_end") or 6),
+                    "bg_pattern": (form.get("bg_pattern") or "auto").strip(),
+                    "bg_pattern_color": (form.get("bg_pattern_color") or "").strip(),
+                    "bg_pattern_opacity": float(form.get("bg_pattern_opacity") or 0.07),
+                }
+            )
 
         elif section == "comment_filter":
-            current.update({
-                "ip_whitelist":          (form.get("ip_whitelist") or ""),
-                "ip_blocklist":          (form.get("ip_blocklist") or ""),
-                "country_whitelist":     (form.get("country_whitelist") or "").strip().upper(),
-                "country_blocklist":     (form.get("country_blocklist") or "").strip().upper(),
-                "country_block_unknown": form.get("country_block_unknown") == "1",
-                "geoip_db_path":         (form.get("geoip_db_path") or "").strip(),
-                "rbl_enabled":           form.get("rbl_enabled") == "1",
-                "rbl_zones":             (form.get("rbl_zones") or ""),
-                "rbl_action":            (form.get("rbl_action") or "block").strip(),
-            })
+            current.update(
+                {
+                    "ip_whitelist": (form.get("ip_whitelist") or ""),
+                    "ip_blocklist": (form.get("ip_blocklist") or ""),
+                    "country_whitelist": (form.get("country_whitelist") or "").strip().upper(),
+                    "country_blocklist": (form.get("country_blocklist") or "").strip().upper(),
+                    "country_block_unknown": form.get("country_block_unknown") == "1",
+                    "geoip_db_path": (form.get("geoip_db_path") or "").strip(),
+                    "rbl_enabled": form.get("rbl_enabled") == "1",
+                    "rbl_zones": (form.get("rbl_zones") or ""),
+                    "rbl_action": (form.get("rbl_action") or "block").strip(),
+                }
+            )
 
         elif section == "demo":
-            current.update({
-                "enabled":          form.get("enabled") == "1",
-                "show_banner":      form.get("show_banner") == "1",
-                "allow_all_themes": form.get("allow_all_themes") == "1",
-            })
+            current.update(
+                {
+                    "enabled": form.get("enabled") == "1",
+                    "show_banner": form.get("show_banner") == "1",
+                    "allow_all_themes": form.get("allow_all_themes") == "1",
+                }
+            )
 
         await save_section(section, current, db, updated_by=user_id)
 
     audit.info("SETTINGS updated | section=%s user=%s", section, user_id)
     from quart import flash
+
     await flash("Einstellungen gespeichert.", "success")
     return redirect(url_for("admin.site_settings_page"))
+
+
+# ---------------------------------------------------------------------------
+# Theme management (§5 – server-rendered; file edits always create local children)
+# ---------------------------------------------------------------------------
+
+
+async def _theme_settings() -> dict:
+    from arborpress.core.site_settings import get_section_uncached
+
+    async for db in get_db_session():
+        return await get_section_uncached("theme", db)
+    return {}
+
+
+async def _locked_theme_settings(db) -> dict:
+    """Read the persisted theme JSON under a row lock for optimistic edits."""
+    from sqlalchemy import select
+
+    from arborpress.core.site_settings import get_defaults
+    from arborpress.models.settings import SiteSetting
+
+    row = (
+        await db.execute(
+            select(SiteSetting).where(SiteSetting.key == "theme").with_for_update()
+        )
+    ).scalar_one_or_none()
+    merged = get_defaults("theme")
+    if row is not None:
+        try:
+            stored = json.loads(row.value)
+        except (TypeError, ValueError):
+            stored = {}
+        if isinstance(stored, dict):
+            merged.update(stored)
+    return merged
+
+
+async def _theme_audit(event: str, theme_id: str, detail: str) -> None:
+    user_id = str(session.get("user_id", ""))
+    async for db in get_db_session():
+        await write_audit_event(
+            event_type=f"theme_{event}",
+            outcome="success",
+            actor_id=user_id,
+            actor_name=str(session.get("user_name", ""))[:32] or None,
+            target_id=theme_id[:36],
+            ip=request.remote_addr,
+            user_agent=request.headers.get("User-Agent"),
+            detail=detail[:500],
+            db=db,
+        )
+        await db.commit()
+        break
+
+
+def _theme_effective_ids(registry, settings: dict) -> dict[str, str]:
+    return {
+        "public": registry.get_or_default(str(settings.get("active", "default")), "public").id,
+        "admin": registry.get_or_default(
+            str(settings.get("admin_active", "arbor-admin")), "admin"
+        ).id,
+    }
+
+
+def _theme_fallback_reasons(registry, settings: dict) -> dict[str, str | None]:
+    reasons: dict[str, str | None] = {}
+    for kind, key, default_id in (
+        ("public", "active", "default"),
+        ("admin", "admin_active", "arbor-admin"),
+    ):
+        configured = str(settings.get(key, default_id))
+        record = registry.record(configured)
+        if record is not None and record.status == "valid" and record.type == kind:
+            reasons[kind] = None
+        elif record is None:
+            reasons[kind] = "Theme ID is not installed."
+        elif record.type != kind:
+            reasons[kind] = f"Theme has type {record.type or 'unknown'}, expected {kind}."
+        else:
+            reasons[kind] = "; ".join(record.diagnostics) or record.status
+    return reasons
+
+
+@admin_bp.get("/themes")
+async def themes_overview():
+    _require_session()
+    require_role("admin")
+    from arborpress.themes.management import parent_children
+    from arborpress.themes.manifest import get_theme_registry
+
+    registry = get_theme_registry()
+    settings = await _theme_settings()
+    configured = {
+        "public": str(settings.get("active", "default")),
+        "admin": str(settings.get("admin_active", "arbor-admin")),
+    }
+    effective = _theme_effective_ids(registry, settings)
+    fallback_reasons = _theme_fallback_reasons(registry, settings)
+    trusted = settings.get("trusted_themes", [])
+    trusted_ids = set(trusted) if isinstance(trusted, list) else set()
+    rows: dict[str, list[dict]] = {"public": [], "admin": []}
+    invalid_themes: list[dict] = []
+    for record in registry.records():
+        if record.type not in rows:
+            if record.status != "valid":
+                invalid_themes.append(
+                    {
+                        "id": record.id,
+                        "name": record.name,
+                        "source": record.source,
+                        "status": record.status,
+                        "diagnostics": record.diagnostics,
+                    }
+                )
+            continue
+        theme = record.manifest
+        kind = record.type
+        rows[kind].append(
+            {
+                "id": record.id,
+                "name": theme.name if theme else record.name,
+                "version": record.version,
+                "author": theme.author if theme else "",
+                "license": theme.license if theme else "",
+                "requires": theme.requires_arborpress if theme else "",
+                "tested_with": theme.tested_with if theme else None,
+                "source": record.source,
+                "derived": bool(theme and theme.derived),
+                "parent": theme.parent if theme else None,
+                "status": record.status,
+                "diagnostics": record.diagnostics,
+                "trusted": record.source == "builtin" or record.id in trusted_ids,
+                "trust_source": "package" if record.source == "builtin" else "local",
+                "configured": record.id == configured[kind],
+                "effective": record.id == effective[kind],
+                "children": parent_children(registry, record.id) if theme else [],
+            }
+        )
+    return await render_template(
+        "admin/themes.html",
+        public_themes=rows["public"],
+        admin_themes=rows["admin"],
+        configured=configured,
+        effective=effective,
+        fallback_reasons=fallback_reasons,
+        invalid_themes=invalid_themes,
+        preview=session.get("_theme_preview"),
+        noindex=True,
+    )
+
+
+@admin_bp.get("/themes/<theme_id>")
+async def theme_detail(theme_id: str):
+    _require_session()
+    require_role("admin")
+    from arborpress.themes.management import (
+        ThemeManagementError,
+        derived_manifest_source,
+        editable_styles,
+        editable_templates,
+        list_revisions,
+        merged_option_definitions,
+        option_values_hash,
+        parent_children,
+        resolve_option_values,
+        validate_theme,
+    )
+    from arborpress.themes.manifest import get_theme_registry
+
+    registry = get_theme_registry()
+    record = registry.record(theme_id)
+    if record is None:
+        abort(404)
+    settings = await _theme_settings()
+    manifest = record.manifest
+    definitions = {}
+    values = {}
+    manifest_text = ""
+    management_error = None
+    if manifest is not None:
+        try:
+            definitions = merged_option_definitions(registry, theme_id)
+            options = settings.get("option_values", {})
+            theme_values = options.get(theme_id, {}) if isinstance(options, dict) else {}
+            if not isinstance(theme_values, dict):
+                theme_values = {}
+            values = resolve_option_values(
+                registry,
+                theme_id,
+                options if isinstance(options, dict) else {},
+            )
+            manifest_text, _ = derived_manifest_source(registry, theme_id)
+        except ThemeManagementError as exc:
+            management_error = str(exc)
+    trusted = settings.get("trusted_themes", [])
+    return await render_template(
+        "admin/theme_detail.html",
+        record=record,
+        theme=manifest,
+        trusted=theme_id in trusted if isinstance(trusted, list) else False,
+        configured=theme_id in (settings.get("active"), settings.get("admin_active")),
+        options=[
+            {"key": key, "definition": definition, "value": values.get(key)}
+            for key, definition in definitions.items()
+        ],
+        option_hash=option_values_hash(theme_values if manifest is not None else {}),
+        templates=editable_templates(manifest) if manifest else [],
+        styles=editable_styles(registry, theme_id) if manifest else [],
+        children=parent_children(registry, theme_id),
+        validation=validate_theme(registry, theme_id),
+        revisions=list_revisions(theme_id),
+        manifest_text=manifest_text,
+        management_error=management_error,
+        noindex=True,
+    )
+
+
+@admin_bp.post("/themes/<theme_id>/activate")
+async def theme_activate(theme_id: str):
+    _require_session()
+    require_role("admin")
+    from quart import flash
+
+    from arborpress.core.site_settings import save_section
+    from arborpress.themes.management import validate_theme
+    from arborpress.themes.manifest import get_theme_registry
+
+    form = await request.form
+    theme_type = form.get("theme_type", "")
+    if theme_type not in ("public", "admin"):
+        abort(400)
+    registry = get_theme_registry()
+    theme = registry.get(theme_id)
+    if theme is None or theme.type != theme_type:
+        await flash("Theme ist ungültig, inkompatibel oder vom falschen Typ.", "error")
+        return redirect(url_for("admin.themes_overview"))
+    if any(issue["level"] == "error" for issue in validate_theme(registry, theme_id)):
+        await flash(
+            "Theme-Validierung fehlgeschlagen; die bisherige Auswahl bleibt aktiv.", "error"
+        )
+        return redirect(url_for("admin.theme_detail", theme_id=theme_id))
+    async for db in get_db_session():
+        current = await _locked_theme_settings(db)
+        key = "active" if theme_type == "public" else "admin_active"
+        current[key] = theme_id
+        await save_section("theme", current, db, updated_by=str(session.get("user_id", "")))
+    await _theme_audit("activated", theme_id, f"type={theme_type}")
+    await flash(f"{theme.name} wurde als {theme_type} Theme aktiviert.", "success")
+    return redirect(url_for("admin.themes_overview"))
+
+
+@admin_bp.post("/themes/<theme_id>/trust")
+async def theme_trust(theme_id: str):
+    _require_session()
+    require_role("admin")
+    from quart import flash
+
+    from arborpress.core.site_settings import save_section
+    from arborpress.themes.manifest import get_theme_registry
+
+    theme = get_theme_registry().get(theme_id)
+    if theme is None or theme.source != "instance":
+        abort(400, description="Only a valid instance theme can receive local trust.")
+    actor_id = str(session.get("user_id", ""))
+    await assert_stepup(session, actor_id, "trust_theme", target=theme_id)
+    grant = (await request.form).get("grant") == "1"
+    async for db in get_db_session():
+        current = await _locked_theme_settings(db)
+        trusted = current.get("trusted_themes", [])
+        trusted_ids = set(trusted) if isinstance(trusted, list) else set()
+        if grant:
+            trusted_ids.add(theme_id)
+        else:
+            trusted_ids.discard(theme_id)
+        current["trusted_themes"] = sorted(trusted_ids)
+        await save_section("theme", current, db, updated_by=actor_id)
+    event = "trust_granted" if grant else "trust_revoked"
+    await _theme_audit(event, theme_id, "local administrator decision")
+    await flash("Lokaler Theme-Trust aktualisiert.", "success")
+    return redirect(url_for("admin.theme_detail", theme_id=theme_id))
+
+
+@admin_bp.post("/themes/<theme_id>/options")
+async def theme_options_save(theme_id: str):
+    _require_session()
+    require_role("admin")
+    from quart import flash
+
+    from arborpress.core.site_settings import save_section
+    from arborpress.themes.management import (
+        ThemeManagementError,
+        option_values_hash,
+        record_change_revision,
+        validate_option_values,
+    )
+    from arborpress.themes.manifest import get_theme_registry
+
+    registry = get_theme_registry()
+    theme = registry.get(theme_id)
+    if theme is None:
+        abort(404)
+    form = await request.form
+    submitted = {
+        key.removeprefix("option_"): value
+        for key, value in form.items()
+        if key.startswith("option_")
+    }
+    try:
+        values = validate_option_values(registry, theme_id, submitted)
+    except ThemeManagementError as exc:
+        await flash(str(exc), "error")
+        return redirect(url_for("admin.theme_detail", theme_id=theme_id))
+    actor_id = str(session.get("user_id", ""))
+    async for db in get_db_session():
+        current = await _locked_theme_settings(db)
+        all_values = current.get("option_values", {})
+        if not isinstance(all_values, dict):
+            all_values = {}
+        previous = all_values.get(theme_id, {})
+        if option_values_hash(previous if isinstance(previous, dict) else {}) != str(
+            form.get("expected_hash", "")
+        ):
+            abort(409, description="Theme options changed while this form was open; reload first.")
+        all_values[theme_id] = values
+        current["option_values"] = all_values
+        await save_section("theme", current, db, updated_by=actor_id)
+    record_change_revision(
+        theme_id=theme_id,
+        kind="options",
+        relative="theme.options",
+        before=json.dumps(previous, ensure_ascii=False, sort_keys=True),
+        after=json.dumps(values, ensure_ascii=False, sort_keys=True),
+        actor_id=actor_id,
+        actor_name=str(session.get("user_name", "")),
+    )
+    await _theme_audit("option_changed", theme_id, "validated option values updated")
+    await flash("Themeoptionen gespeichert.", "success")
+    return redirect(url_for("admin.theme_detail", theme_id=theme_id))
+
+
+@admin_bp.post("/themes/<theme_id>/options/reset")
+async def theme_options_reset(theme_id: str):
+    _require_session()
+    require_role("admin")
+    from quart import flash
+
+    from arborpress.core.site_settings import save_section
+    from arborpress.themes.management import option_values_hash, record_change_revision
+    from arborpress.themes.manifest import get_theme_registry
+
+    if get_theme_registry().get(theme_id) is None:
+        abort(404)
+    form = await request.form
+    actor_id = str(session.get("user_id", ""))
+    previous: dict = {}
+    async for db in get_db_session():
+        current = await _locked_theme_settings(db)
+        all_values = current.get("option_values", {})
+        if not isinstance(all_values, dict):
+            all_values = {}
+        raw_previous = all_values.get(theme_id, {})
+        previous = raw_previous if isinstance(raw_previous, dict) else {}
+        if option_values_hash(previous) != str(form.get("expected_hash", "")):
+            abort(409, description="Theme options changed while this form was open; reload first.")
+        all_values.pop(theme_id, None)
+        current["option_values"] = all_values
+        await save_section("theme", current, db, updated_by=actor_id)
+    record_change_revision(
+        theme_id=theme_id,
+        kind="options-reset",
+        relative="theme.options",
+        before=json.dumps(previous, ensure_ascii=False, sort_keys=True),
+        after="{}",
+        actor_id=actor_id,
+        actor_name=str(session.get("user_name", "")),
+    )
+    await _theme_audit("option_reset", theme_id, "local option values removed")
+    await flash("Lokale Themeoptionen wurden zurückgesetzt.", "success")
+    return redirect(url_for("admin.theme_detail", theme_id=theme_id))
+
+
+@admin_bp.post("/themes/<theme_id>/preview")
+async def theme_preview(theme_id: str):
+    _require_session()
+    require_role("admin")
+    from time import time
+
+    from quart import flash
+
+    from arborpress.themes.management import (
+        ThemeManagementError,
+        theme_preview_fingerprint,
+        validate_theme,
+    )
+    from arborpress.themes.manifest import get_theme_registry
+
+    theme = get_theme_registry().get(theme_id)
+    if theme is None:
+        abort(400)
+    try:
+        registry = get_theme_registry()
+        if any(issue["level"] == "error" for issue in validate_theme(registry, theme_id)):
+            await flash("Theme-Validierung fehlgeschlagen; Vorschau nicht gestartet.", "error")
+            return redirect(url_for("admin.theme_detail", theme_id=theme_id))
+        fingerprint = theme_preview_fingerprint(registry, theme_id)
+    except ThemeManagementError:
+        abort(409, description="Theme changed or failed validation before preview.")
+    session["_theme_preview"] = {
+        "theme_id": theme_id,
+        "type": theme.type,
+        "expires": time() + 1800,
+        "fingerprint": fingerprint,
+    }
+    await flash("Vorschau ist 30 Minuten nur in dieser Administratorsitzung aktiv.", "info")
+    target = "public.index" if theme.type == "public" else "admin.dashboard"
+    return redirect(url_for(target))
+
+
+@admin_bp.post("/themes/preview/stop")
+async def theme_preview_stop():
+    _require_session()
+    require_role("admin")
+    from quart import flash
+
+    session.pop("_theme_preview", None)
+    await flash("Themevorschau beendet.", "success")
+    return redirect(url_for("admin.themes_overview"))
+
+
+@admin_bp.get("/themes/<theme_id>/edit/<kind>/<path:relative>")
+async def theme_file_edit(theme_id: str, kind: str, relative: str):
+    _require_session()
+    require_role("admin")
+    from arborpress.themes.management import (
+        ThemeManagementError,
+        load_editable_file,
+        local_derived_theme,
+    )
+    from arborpress.themes.manifest import get_theme_registry
+
+    if kind not in ("template", "css"):
+        abort(404)
+    try:
+        content, expected_hash = load_editable_file(get_theme_registry(), theme_id, relative, kind)
+    except ThemeManagementError:
+        abort(404)
+    derived_theme = local_derived_theme(get_theme_registry(), theme_id)
+    has_local_override = False
+    if derived_theme is not None:
+        has_local_override = relative in (
+            derived_theme.templates if kind == "template" else derived_theme.assets.css
+        )
+    derived_manifest = None
+    if derived_theme is not None:
+        try:
+            derived_manifest = (derived_theme.theme_dir / "theme.toml").read_text(encoding="utf-8")
+        except OSError:
+            derived_manifest = None
+    return await render_template(
+        "admin/theme_editor.html",
+        theme_id=theme_id,
+        kind=kind,
+        relative=relative,
+        content=content,
+        expected_hash=expected_hash,
+        derived_theme=derived_theme.id if derived_theme else None,
+        has_local_override=has_local_override,
+        derived_manifest=derived_manifest,
+        noindex=True,
+    )
+
+
+@admin_bp.post("/themes/<theme_id>/edit/<kind>/<path:relative>")
+async def theme_file_save(theme_id: str, kind: str, relative: str):
+    _require_session()
+    require_role("admin")
+    from quart import flash
+
+    from arborpress.themes.management import (
+        ThemeConflictError,
+        ThemeManagementError,
+        local_derived_theme,
+        save_override,
+    )
+    from arborpress.themes.manifest import get_theme_registry
+
+    if kind not in ("template", "css"):
+        abort(404)
+    registry = get_theme_registry()
+    source_theme = registry.get(theme_id)
+    had_derived = local_derived_theme(registry, theme_id) is not None
+    form = await request.form
+    try:
+        derived, revision = save_override(
+            registry,
+            theme_id,
+            relative,
+            kind,
+            str(form.get("content", "")),
+            str(form.get("expected_hash", "")),
+            actor_id=str(session.get("user_id", "")),
+            actor_name=str(session.get("user_name", "")),
+        )
+    except ThemeConflictError as exc:
+        abort(409, description=str(exc))
+    except ThemeManagementError as exc:
+        await flash(str(exc), "error")
+        return redirect(url_for("admin.theme_detail", theme_id=theme_id))
+    if source_theme is not None and not source_theme.derived and not had_derived:
+        await _theme_audit("derived_created", derived.id, f"parent={source_theme.id}")
+    await _theme_audit("override_created", derived.id, f"{kind}:{relative}; revision={revision}")
+    await flash("Lokaler Override gespeichert; das Originaltheme blieb unverändert.", "success")
+    return redirect(
+        url_for("admin.theme_file_edit", theme_id=derived.id, kind=kind, relative=relative)
+    )
+
+
+@admin_bp.post("/themes/<theme_id>/override/reset/<kind>/<path:relative>")
+async def theme_override_reset(theme_id: str, kind: str, relative: str):
+    _require_session()
+    require_role("admin")
+    from quart import flash
+
+    from arborpress.themes.management import ThemeManagementError, reset_override
+    from arborpress.themes.manifest import get_theme_registry
+
+    if kind not in ("template", "css"):
+        abort(404)
+    form = await request.form
+    try:
+        revision = reset_override(
+            get_theme_registry(),
+            theme_id,
+            relative,
+            kind,
+            str(form.get("expected_hash", "")),
+            actor_id=str(session.get("user_id", "")),
+            actor_name=str(session.get("user_name", "")),
+        )
+    except ThemeManagementError as exc:
+        abort(409, description=str(exc))
+    await _theme_audit("override_reset", theme_id, f"{kind}:{relative}; revision={revision}")
+    await flash("Lokaler Override entfernt; die Parentdatei ist wieder aktiv.", "success")
+    return redirect(url_for("admin.theme_detail", theme_id=theme_id))
+
+
+@admin_bp.get("/themes/<theme_id>/manifest")
+async def theme_manifest_edit(theme_id: str):
+    _require_session()
+    require_role("admin")
+    from arborpress.themes.management import ThemeManagementError, derived_manifest_source
+    from arborpress.themes.manifest import get_theme_registry
+
+    try:
+        content, expected_hash = derived_manifest_source(get_theme_registry(), theme_id)
+    except ThemeManagementError:
+        abort(404)
+    return await render_template(
+        "admin/theme_editor.html",
+        theme_id=theme_id,
+        kind="manifest",
+        relative="theme.toml",
+        content=content,
+        expected_hash=expected_hash,
+        derived_theme=None,
+        derived_manifest=None,
+        noindex=True,
+    )
+
+
+@admin_bp.post("/themes/<theme_id>/manifest")
+async def theme_manifest_save(theme_id: str):
+    _require_session()
+    require_role("admin")
+    from quart import flash
+
+    from arborpress.themes.management import (
+        ThemeConflictError,
+        ThemeManagementError,
+        local_derived_theme,
+        write_manifest_override,
+    )
+    from arborpress.themes.manifest import get_theme_registry
+
+    registry = get_theme_registry()
+    source_theme = registry.get(theme_id)
+    had_derived = local_derived_theme(registry, theme_id) is not None
+    form = await request.form
+    try:
+        derived, revision = write_manifest_override(
+            registry,
+            theme_id,
+            str(form.get("content", "")),
+            str(form.get("expected_hash", "")),
+            actor_id=str(session.get("user_id", "")),
+            actor_name=str(session.get("user_name", "")),
+        )
+    except ThemeConflictError as exc:
+        abort(409, description=str(exc))
+    except ThemeManagementError as exc:
+        await flash(str(exc), "error")
+        return redirect(url_for("admin.theme_manifest_edit", theme_id=theme_id))
+    if source_theme is not None and not source_theme.derived and not had_derived:
+        await _theme_audit("derived_created", derived.id, f"parent={source_theme.id}")
+    await _theme_audit("manifest_changed", derived.id, f"revision={revision}")
+    await flash("Derived Theme Manifest validiert und gespeichert.", "success")
+    return redirect(url_for("admin.theme_detail", theme_id=derived.id))
+
+
+@admin_bp.post("/themes/<theme_id>/revisions/<revision_id>/restore")
+async def theme_revision_restore(theme_id: str, revision_id: str):
+    _require_session()
+    require_role("admin")
+    from quart import flash
+
+    from arborpress.themes.management import (
+        ThemeManagementError,
+        derived_manifest_source,
+        list_revisions,
+        load_editable_file,
+        record_change_revision,
+        save_override,
+        validate_option_values,
+        write_manifest_override,
+    )
+    from arborpress.themes.manifest import get_theme_registry
+
+    revision = next(
+        (item for item in list_revisions(theme_id) if item.get("id") == revision_id), None
+    )
+    if revision is None:
+        abort(404)
+    registry = get_theme_registry()
+    kind = revision.get("kind")
+    relative = revision.get("path")
+    before = revision.get("before")
+    try:
+        if kind == "manifest":
+            _current, expected_hash = derived_manifest_source(registry, theme_id)
+            if not isinstance(before, str):
+                abort(400)
+            write_manifest_override(
+                registry,
+                theme_id,
+                before,
+                expected_hash,
+                actor_id=str(session.get("user_id", "")),
+                actor_name=str(session.get("user_name", "")),
+            )
+        elif kind in ("template", "css", "template-reset", "css-reset") and isinstance(
+            relative, str
+        ):
+            file_kind = kind.removesuffix("-reset")
+            _content, expected_hash = load_editable_file(registry, theme_id, relative, file_kind)
+            if before is None:
+                from arborpress.themes.management import reset_override
+
+                reset_override(
+                    registry,
+                    theme_id,
+                    relative,
+                    file_kind,
+                    expected_hash,
+                    actor_id=str(session.get("user_id", "")),
+                    actor_name=str(session.get("user_name", "")),
+                )
+            else:
+                save_override(
+                    registry,
+                    theme_id,
+                    relative,
+                    file_kind,
+                    str(before),
+                    expected_hash,
+                    actor_id=str(session.get("user_id", "")),
+                    actor_name=str(session.get("user_name", "")),
+                )
+        elif kind in ("options", "options-reset"):
+            before_values = json.loads(before or "{}")
+            if not isinstance(before_values, dict):
+                abort(400)
+            if before_values:
+                before_values = validate_option_values(registry, theme_id, before_values)
+            current_values: dict = {}
+            async for db in get_db_session():
+                from arborpress.core.site_settings import get_section, save_section
+
+                current = await get_section("theme", db)
+                all_values = current.get("option_values", {})
+                if not isinstance(all_values, dict):
+                    all_values = {}
+                current_values = all_values.get(theme_id, {})
+                if before_values:
+                    all_values[theme_id] = before_values
+                else:
+                    all_values.pop(theme_id, None)
+                current["option_values"] = all_values
+                await save_section("theme", current, db, updated_by=str(session.get("user_id", "")))
+                break
+            record_change_revision(
+                theme_id=theme_id,
+                kind="options-restore",
+                relative="theme.options",
+                before=json.dumps(current_values, ensure_ascii=False, sort_keys=True),
+                after=json.dumps(before_values, ensure_ascii=False, sort_keys=True),
+                actor_id=str(session.get("user_id", "")),
+                actor_name=str(session.get("user_name", "")),
+            )
+        else:
+            abort(400)
+    except ThemeManagementError as exc:
+        abort(409, description=str(exc))
+    await _theme_audit("revision_restored", theme_id, f"revision={revision_id}")
+    await flash("Themeänderung aus der Revision wiederhergestellt.", "success")
+    return redirect(url_for("admin.theme_detail", theme_id=theme_id))
+
+
+@admin_bp.post("/themes/<theme_id>/revision-reset/<kind>/<path:relative>")
+async def theme_revision_override_reset(theme_id: str, kind: str, relative: str):
+    # Kept as a separate HTML action for an explicit, CSRF-protected reset.
+    return await theme_override_reset(theme_id, kind, relative)
 
 
 # ---------------------------------------------------------------------------
@@ -1655,9 +2553,7 @@ async def session_revoke(session_id: str):
     from arborpress.models.user import UserSession
 
     async for db in get_db_session():
-        result = await db.execute(
-            select(UserSession).where(UserSession.id == session_id)
-        )
+        result = await db.execute(select(UserSession).where(UserSession.id == session_id))
         us = result.scalar_one_or_none()
         if us is None:
             abort(404)

@@ -194,3 +194,178 @@ async def test_theme_settings_keep_public_and_admin_selection_types_separate(
         },
     )
     assert rejected.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_theme_management_is_server_rendered_and_role_gated(
+    client: QuartClient,
+    test_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _login_admin(client, test_engine, monkeypatch)
+
+    overview = await client.get("/admin/themes")
+    assert overview.status_code == 200
+    overview_html = await overview.get_data(as_text=True)
+    assert "Public Themes" in overview_html
+    assert "Admin Themes" in overview_html
+    assert "default-local" in overview_html or "Theme-Verwaltung" in overview_html
+    assert 'name="theme_type" value="public"' in overview_html
+    assert 'name="_csrf"' in overview_html
+
+    detail = await client.get("/admin/themes/default")
+    assert detail.status_code == 200
+    detail_html = await detail.get_data(as_text=True)
+    assert "Validierung" in detail_html
+    assert "Themeoptionen" in detail_html
+    assert "index.html" in detail_html
+    assert "Derived Theme" in detail_html
+
+    async with client.session_transaction() as browser_session:
+        user_id = browser_session["user_id"]
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from arborpress.models.user import User, UserRole
+
+    factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    async with factory() as db:
+        user = await db.get(User, user_id)
+        assert user is not None
+        user.role = UserRole.AUTHOR
+        await db.commit()
+    async with client.session_transaction() as browser_session:
+        browser_session["user_role"] = "admin"
+    forbidden = await client.get("/admin/themes")
+    assert forbidden.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_theme_options_form_saves_and_rejects_stale_concurrent_edit(
+    client: QuartClient,
+    test_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _login_admin(client, test_engine, monkeypatch)
+    from arborpress.runtime.paths import get_runtime_paths
+    from arborpress.themes.manifest import get_theme_registry
+
+    theme_root = get_runtime_paths().themes / "options-ssr"
+    theme_root.mkdir(parents=True)
+    (theme_root / "theme.toml").write_text(
+        '''name = "Options SSR"
+version = "1.0.0"
+type = "public"
+[options.accent]
+type = "color"
+label = "Accent"
+default = "#123456"
+''',
+        encoding="utf-8",
+    )
+    get_theme_registry().load()
+
+    detail = await client.get("/admin/themes/options-ssr")
+    assert detail.status_code == 200
+    html = await detail.get_data(as_text=True)
+    token = re.search(r'<input type="hidden" name="_csrf" value="([0-9a-f]+)">', html)
+    expected = re.search(r'<input type="hidden" name="expected_hash" value="([0-9a-f]+)">', html)
+    assert token is not None and expected is not None
+    assert 'name="option_accent"' in html
+
+    saved = await client.post(
+        "/admin/themes/options-ssr/options",
+        form={
+            "_csrf": token.group(1),
+            "expected_hash": expected.group(1),
+            "option_accent": "#abcdef",
+        },
+    )
+    assert saved.status_code == 302
+    stale = await client.post(
+        "/admin/themes/options-ssr/options",
+        form={
+            "_csrf": token.group(1),
+            "expected_hash": expected.group(1),
+            "option_accent": "#fedcba",
+        },
+    )
+    assert stale.status_code == 409
+
+    from arborpress.themes.management import list_revisions
+
+    revision = next(
+        item for item in list_revisions("options-ssr") if item["kind"] == "options"
+    )
+    restored = await client.post(
+        f"/admin/themes/options-ssr/revisions/{revision['id']}/restore",
+        form={"_csrf": token.group(1)},
+    )
+    assert restored.status_code == 302
+    reset_detail = await client.get("/admin/themes/options-ssr")
+    reset_html = await reset_detail.get_data(as_text=True)
+    assert 'value="#123456"' in reset_html
+
+
+@pytest.mark.asyncio
+async def test_broken_admin_theme_preview_recovers_to_builtin_fallback(
+    client: QuartClient,
+    test_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    import shutil
+
+    await _login_admin(client, test_engine, monkeypatch)
+    from arborpress.runtime.paths import get_runtime_paths
+    from arborpress.themes.manifest import get_theme_registry
+
+    theme_root = get_runtime_paths().themes / "broken-admin-preview"
+    request.addfinalizer(lambda: shutil.rmtree(theme_root, ignore_errors=True))
+    (theme_root / "templates/admin").mkdir(parents=True)
+    (theme_root / "theme.toml").write_text(
+        '''name = "Broken admin preview"
+version = "1.0.0"
+type = "admin"
+capabilities = ["templates"]
+templates = ["admin/dashboard.html"]
+''',
+        encoding="utf-8",
+    )
+    (theme_root / "templates/admin/dashboard.html").write_text(
+        "{{ missing_template_callable() }}", encoding="utf-8"
+    )
+    get_theme_registry().load()
+
+    detail = await client.get("/admin/themes/broken-admin-preview")
+    html = await detail.get_data(as_text=True)
+    token = re.search(r'<input type="hidden" name="_csrf" value="([0-9a-f]+)">', html)
+    assert token is not None
+    preview = await client.post(
+        "/admin/themes/broken-admin-preview/preview", form={"_csrf": token.group(1)}
+    )
+    assert preview.status_code == 302
+
+    recovered = await client.get("/admin/")
+    recovered_html = await recovered.get_data(as_text=True)
+    assert recovered.status_code == 500
+    assert "Admin-Theme konnte diese Seite nicht rendern" in recovered_html
+    assert "Dashboard" in recovered_html
+    async with client.session_transaction() as browser_session:
+        assert "_theme_preview" not in browser_session
+
+
+def test_settings_passed_to_theme_templates_are_secret_redacted() -> None:
+    from arborpress.web.routes.admin import _template_safe_settings
+
+    source = {
+        "mail": {"smtp_password": "mail-secret", "smtp_user": "operator"},
+        "search": {"meilisearch_api_key": "search-secret"},
+        "nested": [{"private_key": "key-secret", "label": "safe"}],
+    }
+    safe = _template_safe_settings(source)
+    assert safe == {
+        "mail": {"smtp_password": "", "smtp_user": "operator"},
+        "search": {"meilisearch_api_key": ""},
+        "nested": [{"private_key": "", "label": "safe"}],
+    }
+    assert safe["mail"]["smtp_password"] != source["mail"]["smtp_password"]

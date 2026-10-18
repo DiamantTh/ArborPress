@@ -25,6 +25,7 @@
 <a href="{{ url_for('admin.sessions_list') }}"{% if request.endpoint == 'admin.sessions_list' %} aria-current="page"{% endif %}>{{ _('Sitzungen') }}</a>
 <a href="{{ url_for('admin.captcha_settings') }}"{% if request.endpoint == 'admin.captcha_settings' %} aria-current="page"{% endif %}>{{ _('Captcha') }}</a>
 <a href="{{ url_for('admin.site_settings_page') }}"{% if request.endpoint == 'admin.site_settings_page' %} aria-current="page"{% endif %}>{{ _('Einstellungen') }}</a>
+<a href="{{ url_for('admin.themes_overview') }}"{% if request.endpoint and request.endpoint.startswith('admin.theme') %} aria-current="page"{% endif %}>{{ _('Themes') }}</a>
 <a href="{{ url_for('admin.plugins_list') }}"{% if request.endpoint == 'admin.plugins_list' %} aria-current="page"{% endif %}>{{ _('Plugins') }}</a>
 <a href="{{ url_for('admin.security') }}"{% if request.endpoint == 'admin.security' %} aria-current="page"{% endif %}>{{ _('Sicherheit') }}</a>
 {% endif %}

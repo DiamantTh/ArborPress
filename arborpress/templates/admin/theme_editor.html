@@ -1,0 +1,29 @@
+{% extends "admin/_base.html" %}
+{% block title %}Theme-Editor – ArborPress Admin{% endblock %}
+{% block admin_content %}
+<p><a href="{{ url_for('admin.theme_detail', theme_id=theme_id) }}">← Theme</a></p>
+<h1>{{ 'Manifest' if kind == 'manifest' else 'Theme-Datei' }} bearbeiten</h1>
+<p><code>{{ theme_id }}</code> · <code>{{ relative }}</code></p>
+<p class="hint">UTF-8, serverseitige Validierung, Größenlimit und Versionskonfliktschutz sind aktiv. Speichern erzeugt einen lokalen Derived Override; das installierte Original bleibt unverändert.</p>
+{% if kind == 'manifest' %}
+<form method="post" action="{{ url_for('admin.theme_manifest_save', theme_id=theme_id) }}" class="admin-form">
+{% else %}
+<form method="post" action="{{ url_for('admin.theme_file_save', theme_id=theme_id, kind=kind, relative=relative) }}" class="admin-form">
+{% endif %}
+  {{ csrf_input() }}
+  <input type="hidden" name="expected_hash" value="{{ expected_hash }}">
+  <label for="theme-source">{{ relative }}</label>
+  <textarea id="theme-source" name="content" rows="32" spellcheck="false" autocapitalize="off" autocomplete="off" required>{{ content }}</textarea>
+  <div class="form-actions"><button class="btn btn--primary" type="submit">Validieren und speichern</button></div>
+</form>
+
+{% if derived_theme and has_local_override and kind in ('template', 'css') %}
+<form method="post" action="{{ url_for('admin.theme_override_reset', theme_id=derived_theme, kind=kind, relative=relative) }}">
+  {{ csrf_input() }}<input type="hidden" name="expected_hash" value="{{ expected_hash }}">
+  <button class="btn" type="submit">Nur diesen lokalen Override entfernen</button>
+</form>
+{% endif %}
+{% if kind == 'manifest' and derived_manifest %}
+<p>Diese Bearbeitung wird für <code>{{ theme_id }}</code> als lokale Derived-Manifestrevision gespeichert.</p>
+{% endif %}
+{% endblock %}

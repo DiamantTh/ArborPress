@@ -1,0 +1,60 @@
+{% extends "admin/_base.html" %}
+{% block title %}Themes – ArborPress Admin{% endblock %}
+{% block admin_content %}
+<h1>Theme-Verwaltung</h1>
+<p>Public- und Admin-Themes werden unabhängig ausgewählt. Bearbeitungen entstehen als lokale Derived Themes; installierte Originaldateien bleiben unverändert.</p>
+
+{% if preview %}
+<div class="alert alert--info" role="status">
+  Vorschau aktiv: <code>{{ preview.theme_id }}</code> ({{ preview.type }}).
+  <form method="post" action="{{ url_for('admin.theme_preview_stop') }}" style="display:inline">
+    {{ csrf_input() }}<button class="btn btn--small" type="submit">Vorschau beenden</button>
+  </form>
+</div>
+{% endif %}
+
+{% for kind, themes in [('public', public_themes), ('admin', admin_themes)] %}
+<section class="admin-card" aria-labelledby="themes-{{ kind }}">
+  <h2 id="themes-{{ kind }}">{{ 'Public Themes' if kind == 'public' else 'Admin Themes' }}</h2>
+  <p>Konfiguriert: <code>{{ configured[kind] }}</code>; effektiv: <code>{{ effective[kind] }}</code>.</p>
+  {% if configured[kind] != effective[kind] %}
+    <p class="alert alert--warning" role="status">Das konfigurierte Theme ist nicht verwendbar. ArborPress nutzt den Built-in Fallback, damit der Bereich erreichbar bleibt. Grund: {{ fallback_reasons[kind] or 'nicht verfügbar' }}</p>
+  {% endif %}
+  {% if themes %}
+  <div class="table-wrap"><table>
+    <thead><tr><th scope="col">Theme</th><th scope="col">Quelle / Parent</th><th scope="col">Status</th><th scope="col">Aktiv</th><th scope="col">Aktionen</th></tr></thead>
+    <tbody>
+    {% for item in themes %}
+      <tr>
+        <th scope="row"><a href="{{ url_for('admin.theme_detail', theme_id=item.id) }}">{{ item.name }}</a><br><code>{{ item.id }}</code> · {{ item.version or '–' }}</th>
+        <td>{{ item.source }}{% if item.derived %} · Derived{% endif %}{% if item.parent %}<br>Parent: <code>{{ item.parent }}</code>{% endif %}<br>{{ item.author or 'Unknown author' }} · {{ item.license or 'unknown license' }}<br>Requires ArborPress {{ item.requires or '–' }} · tested with {{ item.tested_with or '–' }}</td>
+        <td>{{ item.status }}{% if item.diagnostics %}<ul>{% for warning in item.diagnostics %}<li>{{ warning }}</li>{% endfor %}</ul>{% endif %}{% if item.trusted %}<span> · trusted ({{ item.trust_source }})</span>{% else %}<span> · untrusted</span>{% endif %}</td>
+        <td>{% if item.configured %}configured{% endif %}{% if item.effective %} / effective{% endif %}</td>
+        <td>
+          {% if item.status == 'valid' %}
+          <form method="post" action="{{ url_for('admin.theme_activate', theme_id=item.id) }}">
+            {{ csrf_input() }}<input type="hidden" name="theme_type" value="{{ kind }}">
+            <button class="btn btn--small" type="submit">Aktivieren</button>
+          </form>
+          <form method="post" action="{{ url_for('admin.theme_preview', theme_id=item.id) }}">
+            {{ csrf_input() }}<button class="btn btn--small" type="submit">Vorschau</button>
+          </form>
+          {% endif %}
+          {% if item.children %}<small>Child Themes: {{ item.children | join(', ') }}</small>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p>Keine Themes dieses Typs gefunden.</p>{% endif %}
+</section>
+{% endfor %}
+
+{% if invalid_themes %}
+<section class="admin-card" aria-labelledby="themes-invalid">
+  <h2 id="themes-invalid">Ungültige oder nicht klassifizierbare Themes</h2>
+  <p>Diese Themes können wegen eines Manifestfehlers nicht sicher Public oder Admin zugeordnet und daher nicht aktiviert werden.</p>
+  <ul>{% for item in invalid_themes %}<li><code>{{ item.id }}</code> · {{ item.source }} · {{ item.status }}{% for message in item.diagnostics %}<br>{{ message }}{% endfor %}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+{% endblock %}
