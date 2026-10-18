@@ -524,3 +524,43 @@ def test_preview_fingerprint_binds_css_content_not_only_file_metadata(tmp_path: 
     os.utime(style, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
 
     assert theme_preview_fingerprint(registry, child.id) != before
+
+
+def test_derived_themes_and_revisions_are_prefix_scoped(tmp_path: Path) -> None:
+    from arborpress.runtime.paths import initialize_runtime
+
+    prefix_a = tmp_path / "arborpress-a"
+    paths_a = initialize_runtime(prefix_a, override=True)
+    ensure_instance_layout(paths_a)
+    reset_theme_registry()
+    registry_a = get_theme_registry()
+    _, expected = load_editable_file(registry_a, "default", "index.html", "template")
+    derived_a, revision_a = save_override(
+        registry_a,
+        "default",
+        "index.html",
+        "template",
+        "<main>Only prefix A</main>",
+        expected,
+        actor_id="actor-a",
+        actor_name="Admin A",
+    )
+    revision_path_a = (
+        paths_a.data / "theme-revisions" / derived_a.id / f"{revision_a}.json"
+    )
+    assert revision_path_a.is_file()
+
+    paths_b = initialize_runtime(tmp_path / "arborpress-b", override=True)
+    ensure_instance_layout(paths_b)
+    reset_theme_registry()
+    registry_b = get_theme_registry()
+    assert registry_b.get(derived_a.id) is None
+    assert list_revisions(derived_a.id) == []
+    assert not (paths_b.themes / derived_a.id).exists()
+
+    paths_a_again = initialize_runtime(prefix_a, override=True)
+    reset_theme_registry()
+    registry_a_again = get_theme_registry()
+    assert registry_a_again.get(derived_a.id) is not None
+    assert revision_path_a.is_file()
+    assert paths_a_again.themes == paths_a.themes
