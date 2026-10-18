@@ -56,6 +56,19 @@ def create_app() -> Quart:
     app.jinja_env.globals["vite_asset"] = AssetResolver().resolve
     app.secret_key = cfg.web.secret_key.get_secret_value()
 
+    @app.before_request
+    async def _restore_maintenance_gate() -> ResponseReturnValue | None:
+        """Fail closed while an offline restore is switching instance state."""
+        marker = paths.run / "restore-maintenance.json"
+        if marker.exists() or marker.is_symlink():
+            log.warning("Web request rejected while instance restore maintenance is active")
+            return Response(
+                "ArborPress is temporarily unavailable while an offline restore is in progress.\n",
+                status=503,
+                headers={"Retry-After": "60", "Cache-Control": "no-store"},
+            )
+        return None
+
     # §10 Session cookie hardening
     # Secure=True: served as HTTPS by the proxy; in a local dev setup
     # set to False if no HTTPS is available.
@@ -441,6 +454,13 @@ def create_app() -> Quart:
         from arborpress.core.db import get_engine
         from arborpress.core.db_capabilities import detect_capabilities, set_capabilities
         from arborpress.core.scheduler import run_scheduler
+
+        restore_marker = paths.run / "restore-maintenance.json"
+        if restore_marker.exists() or restore_marker.is_symlink():
+            raise RuntimeError(
+                "An interrupted ArborPress restore is marked in maintenance mode; "
+                "run `arborpress restore recover --offline` before starting the web service."
+            )
 
         # §14 Installations-Token generieren wenn noch nicht installiert
         if not is_installed():

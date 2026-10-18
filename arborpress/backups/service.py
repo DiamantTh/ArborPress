@@ -108,6 +108,7 @@ async def create_backup(
     media_segment_size: int = DEFAULT_MEDIA_SEGMENT_SIZE,
     created_at: datetime | None = None,
     keep_incomplete: bool = False,
+    _lock_already_held: bool = False,
 ) -> BackupSummary:
     """Create, internally verify, then atomically publish a complete set."""
     selected_paths = paths or get_runtime_paths()
@@ -129,7 +130,17 @@ async def create_backup(
     timestamp = timestamp.astimezone(UTC)
     base_id = timestamp.strftime("%Y%m%d-%H%M%S")
 
-    with backup_lock(selected_paths):
+    lock_context = contextlib.nullcontext() if _lock_already_held else backup_lock(selected_paths)
+    with lock_context:
+        if (
+            (selected_paths.run / "restore-maintenance.json").exists()
+            or (selected_paths.run / "restore-maintenance.json").is_symlink()
+            or (selected_paths.run / "restore-journal.json").exists()
+            or (selected_paths.run / "restore-journal.json").is_symlink()
+        ):
+            raise BackupError(
+                "Backup creation is blocked while an incomplete restore requires recovery."
+            )
         backup_id = _available_backup_id(selected_paths.backups, base_id)
         staging = selected_paths.backups / (f".incomplete-{backup_id}-{uuid.uuid4().hex}")
         staging.mkdir(mode=0o700)
