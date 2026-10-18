@@ -12,13 +12,14 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import fields
+from dataclasses import asdict, fields
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import typer
 
+from arborpress.backups.archive import DEFAULT_MEDIA_SEGMENT_SIZE
 from arborpress.core.config import get_settings
 from arborpress.core.i18n import cli_gettext as __
 from arborpress.runtime.paths import (
@@ -54,6 +55,7 @@ mail_app = typer.Typer(help="Mail queue (§13)", no_args_is_help=True)
 plugin_app = typer.Typer(help="Plugin management (§15)", no_args_is_help=True)
 webauthn_app = typer.Typer(help="WebAuthn / Passkey recovery (§17)", no_args_is_help=True)
 themes_app = typer.Typer(help="Theme diagnostics (read-only)", no_args_is_help=True)
+backup_app = typer.Typer(help="Local backup set operations", no_args_is_help=True)
 
 app.add_typer(db_app, name="db")
 app.add_typer(user_app, name="user")
@@ -66,6 +68,7 @@ app.add_typer(mail_app, name="mail")
 app.add_typer(plugin_app, name="plugin")
 app.add_typer(webauthn_app, name="webauthn")
 app.add_typer(themes_app, name="themes")
+app.add_typer(backup_app, name="backup")
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +82,9 @@ def main_callback(
         None, "--prefix", help="ArborPress installation prefix"
     ),
     config: Path | None = typer.Option(  # noqa: B008
-        None, "--config", "-c",
+        None,
+        "--config",
+        "-c",
         help="Path to config.toml or a config/ directory",
     ),
 ) -> None:
@@ -224,17 +229,220 @@ def themes_inspect(
 
 
 # ---------------------------------------------------------------------------
+# Local backup sets
+# ---------------------------------------------------------------------------
+
+
+def _backup_json(summary: Any) -> dict[str, Any]:
+    return {
+        "backup_id": summary.backup_id,
+        "path": str(summary.directory),
+        "verified": summary.verification_ok,
+        "verification_error": summary.verification_error,
+        "manifest": asdict(summary.manifest),
+    }
+
+
+def _parse_backup_threads(value: str) -> int | None:
+    if value.lower() == "auto":
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError("--threads must be 'auto' or a positive integer") from exc
+    if parsed < 1 or parsed > 64:
+        raise ValueError("--threads must be between 1 and 64")
+    return parsed
+
+
+@backup_app.command("create")
+def backup_create(
+    compression: str = typer.Option("bz2", "--compression", help="bz2 or optional bz3"),
+    profile: str = typer.Option("medium", "--profile", help="fast, medium, strong or custom"),
+    level: int | None = typer.Option(None, "--level", min=1, max=9),
+    threads: str = typer.Option("auto", "--threads", help="BZip3: auto or 1..64"),
+    component: list[str] | None = typer.Option(  # noqa: B008
+        None, "--component", help="Select a component; repeatable"
+    ),
+    media_segment_size: int = typer.Option(
+        DEFAULT_MEDIA_SEGMENT_SIZE,
+        "--media-segment-size",
+        min=1,
+        help="Maximum uncompressed media payload per archive, in bytes",
+    ),
+    keep_incomplete: bool = typer.Option(
+        False,
+        "--keep-incomplete",
+        help="Developer diagnostic: retain a failed .incomplete set",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """Create and internally verify an unencrypted local backup set."""
+    from arborpress.backups.compression import (
+        CompressionSettings,
+        CompressionUnavailableError,
+    )
+    from arborpress.backups.service import BackupError, create_backup
+
+    typer.echo(
+        "WARNING: this backup set is unencrypted and contains sensitive database and user data.",
+        err=True,
+    )
+    try:
+        backend = compression.lower()
+        selected_profile = profile.lower()
+        thread_count = _parse_backup_threads(threads)
+        if backend == "bz2":
+            if threads.lower() != "auto" and thread_count != 1:
+                raise ValueError("BZip2 uses one process thread; --threads applies only to BZip3")
+            thread_count = None
+        if backend not in {"bz2", "bz3"}:
+            raise ValueError("--compression must be bz2 or bz3")
+        if selected_profile not in {"fast", "medium", "strong", "custom"}:
+            raise ValueError("--profile must be fast, medium, strong or custom")
+        settings = CompressionSettings(
+            backend=cast(Literal["bz2", "bz3"], backend),
+            profile=cast(Literal["fast", "medium", "strong", "custom"], selected_profile),
+            level=level,
+            threads=thread_count,
+        )
+
+        async def _create() -> Any:
+            from arborpress.core.db import get_engine
+
+            selected = component or (
+                "database",
+                "config",
+                "data",
+                "themes",
+                "plugins",
+                "media",
+            )
+            engine = get_engine() if "database" in selected else None
+            try:
+                return await create_backup(
+                    components=selected,
+                    engine=engine,
+                    compression=settings,
+                    media_segment_size=media_segment_size,
+                    keep_incomplete=keep_incomplete,
+                )
+            finally:
+                if engine is not None:
+                    await engine.dispose()
+
+        summary = asyncio.run(_create())
+    except (BackupError, CompressionUnavailableError, ValueError, OSError) as exc:
+        typer.echo(f"Backup failed: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    except Exception as exc:
+        # Unexpected database/library exceptions can include credentials in
+        # their diagnostic text, so only expose the exception class here.
+        typer.echo(f"Backup failed due to {type(exc).__name__}; no set was published.", err=True)
+        raise typer.Exit(code=1) from None
+    if as_json:
+        typer.echo(json.dumps(_backup_json(summary), indent=2, sort_keys=True))
+    else:
+        typer.echo(f"Backup created and verified: {summary.backup_id}")
+        typer.echo(f"Path: {summary.directory}")
+
+
+@backup_app.command("list")
+def backup_list(
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """List completed sets with valid manifests."""
+    from arborpress.backups.service import BackupError, list_backups
+
+    try:
+        values = list_backups()
+    except (BackupError, OSError, ValueError) as exc:
+        typer.echo(f"Backup listing failed: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    if as_json:
+        payload = [_backup_json(value) for value in values]
+        for item in payload:
+            item["verified"] = None
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    for summary in values:
+        total = sum(item.size_bytes for comp in summary.manifest.components for item in comp.files)
+        typer.echo(
+            f"{summary.backup_id}\t{summary.manifest.created_at}\t{total} bytes\t"
+            f"{summary.manifest.compression_backend}/{summary.manifest.compression_profile}"
+        )
+
+
+@backup_app.command("inspect")
+def backup_inspect(
+    backup_id: str,
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """Display backup metadata and a read-only verification result."""
+    from arborpress.backups.compression import CompressionUnavailableError
+    from arborpress.backups.service import BackupError, inspect_backup
+
+    try:
+        summary = inspect_backup(backup_id)
+    except (BackupError, OSError, ValueError, CompressionUnavailableError) as exc:
+        typer.echo(f"Backup inspection failed: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+    if as_json:
+        typer.echo(json.dumps(_backup_json(summary), indent=2, sort_keys=True))
+        return
+    typer.echo(f"ID: {summary.backup_id}")
+    typer.echo(f"Created: {summary.manifest.created_at}")
+    typer.echo(f"ArborPress: {summary.manifest.arborpress_version}")
+    typer.echo(f"Database: {summary.manifest.database_system or 'not included'}")
+    typer.echo(f"Alembic revisions: {', '.join(summary.manifest.alembic_revisions) or 'none'}")
+    typer.echo(
+        "Compression: "
+        f"{summary.manifest.compression_backend}/{summary.manifest.compression_profile}"
+    )
+    typer.echo(f"Encryption: {summary.manifest.encryption}")
+    typer.echo(f"Components: {', '.join(comp.name for comp in summary.manifest.components)}")
+    typer.echo(f"Verification: {'passed' if summary.verification_ok else 'FAILED'}")
+    if summary.verification_error:
+        typer.echo(f"Reason: {summary.verification_error}")
+    for item in summary.manifest.omitted_sensitive:
+        typer.echo(f"Omitted sensitive config: {item}")
+
+
+@backup_app.command("verify")
+def backup_verify(
+    backup_id: str,
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """Verify checksums and archive structure without extracting."""
+    from arborpress.backups.compression import CompressionUnavailableError
+    from arborpress.backups.service import BackupError, verify_backup
+
+    try:
+        report = verify_backup(backup_id)
+    except (BackupError, OSError, ValueError, CompressionUnavailableError) as exc:
+        typer.echo(f"Backup verification failed: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    payload = asdict(report)
+    if as_json:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(
+            f"Verified {report.backup_id}: {report.checked_files} files, "
+            f"{report.checked_bytes} bytes, {report.database_rows} database rows"
+        )
+
+
+# ---------------------------------------------------------------------------
 # §14 install / init
 # ---------------------------------------------------------------------------
 
 
 @app.command("init")
 def init(
-    force: bool = typer.Option(
-        False, "--force", help="Overwrite an already initialised instance"
-    ),
+    force: bool = typer.Option(False, "--force", help="Overwrite an already initialised instance"),
     seed: bool = typer.Option(
-        True, "--seed/--no-seed",
+        True,
+        "--seed/--no-seed",
         help="Insert sample content (posts, pages, imprint, privacy policy)",
     ),
 ) -> None:
@@ -277,6 +485,7 @@ def serve(
         hcfg.use_reloader = True
 
     from arborpress.web.app import create_app
+
     quart_app = create_app()
     typer.echo(__("Starting ArborPress on {bind}").format(bind=hcfg.bind[0]))
     asyncio.run(hypercorn.asyncio.serve(quart_app, hcfg))  # type: ignore[arg-type]
@@ -295,10 +504,15 @@ def healthcheck() -> None:
     async def _check() -> None:
         from arborpress.core.db import get_engine
         from arborpress.core.db_capabilities import detect_capabilities
+
         engine = get_engine()
         try:
             caps = await detect_capabilities(engine)
-            typer.echo(__("DB: {engine} {version}").format(engine=caps.engine_name, version=caps.version_string))
+            typer.echo(
+                __("DB: {engine} {version}").format(
+                    engine=caps.engine_name, version=caps.version_string
+                )
+            )
             typer.echo(__("FTS: {provider}").format(provider=caps.fts_provider))
             typer.echo(__("Status: OK"))
         except Exception as exc:
@@ -363,9 +577,7 @@ def db_check() -> None:
         typer.echo(f"Database schema check failed: {exc}", err=True)
         raise typer.Exit(1) from exc
     if not status.is_current:
-        typer.echo(
-            f"Database schema is not ready ({status.state}): {status.detail}", err=True
-        )
+        typer.echo(f"Database schema is not ready ({status.state}): {status.detail}", err=True)
         raise typer.Exit(1)
     typer.echo(f"Database schema is current at {status.head_revision}.")
 
@@ -400,9 +612,7 @@ def db_downgrade(
     ),
 ) -> None:
     """Run an explicit downgrade (may destroy data; never run automatically)."""
-    if not yes and not typer.confirm(
-        f"Downgrade database to {revision!r}? This may destroy data."
-    ):
+    if not yes and not typer.confirm(f"Downgrade database to {revision!r}? This may destroy data."):
         raise typer.Exit(0)
     from arborpress.core.migrations import downgrade_database
 
@@ -421,23 +631,26 @@ def db_seed(
     """Inserts sample content, imprint and privacy policy (§14)."""
     typer.echo(__("Inserting seed data …"))
     result = asyncio.run(_seed(force=force))
-    typer.echo("  " + __("Posts inserted:  {n}").format(n=result.get('posts', 0)))
-    typer.echo("  " + __("Pages inserted:  {n}").format(n=result.get('pages', 0)))
-    typer.echo("  " + __("Tags inserted:   {n}").format(n=result.get('tags', 0)))
+    typer.echo("  " + __("Posts inserted:  {n}").format(n=result.get("posts", 0)))
+    typer.echo("  " + __("Pages inserted:  {n}").format(n=result.get("pages", 0)))
+    typer.echo("  " + __("Tags inserted:   {n}").format(n=result.get("tags", 0)))
     typer.echo(__("Done."))
 
 
 @db_app.command("capabilities")
 def db_capabilities() -> None:
     """Shows detected DB capabilities (§12)."""
+
     async def _show() -> None:
         from arborpress.core.db import get_engine
         from arborpress.core.db_capabilities import detect_capabilities
+
         caps = await detect_capabilities(get_engine())
         typer.echo(f"Engine:  {caps.engine_name}")
         typer.echo(f"Version: {caps.version_string}")
         typer.echo(f"FTS:     {caps.fts_available} ({caps.fts_provider})")
         typer.echo(f"JSON:    {caps.json_ops}")
+
     asyncio.run(_show())
 
 
@@ -462,13 +675,19 @@ def user_add(
     try:
         role_enum = UserRole(role)
     except ValueError:
-        typer.echo(__("Invalid role: {role}. Allowed: {allowed}").format(role=role, allowed=[r.value for r in UserRole]), err=True)
+        typer.echo(
+            __("Invalid role: {role}. Allowed: {allowed}").format(
+                role=role, allowed=[r.value for r in UserRole]
+            ),
+            err=True,
+        )
         raise typer.Exit(1) from None
 
     account_type = AccountType.OPERATIONAL if operational else AccountType.PUBLIC
 
     async def _create() -> None:
         from arborpress.core.db import get_db_session
+
         async for db in get_db_session():
             user = User(
                 username=username,
@@ -479,9 +698,15 @@ def user_add(
             )
             db.add(user)
             await db.commit()
-            typer.echo(__("User created: {username!r} [{type}/{role}]").format(username=username, type=account_type.value, role=role_enum.value))
+            typer.echo(
+                __("User created: {username!r} [{type}/{role}]").format(
+                    username=username, type=account_type.value, role=role_enum.value
+                )
+            )
             typer.echo("  " + __("ID: {id}").format(id=user.id))
-            typer.echo("  " + __("Next step: arborpress user mfa add {username}").format(username=username))
+            typer.echo(
+                "  " + __("Next step: arborpress user mfa add {username}").format(username=username)
+            )
 
     asyncio.run(_create())
 
@@ -503,8 +728,11 @@ def user_disable(
         from arborpress.core.db import get_db_session
         from arborpress.core.audit import write_audit_event
         from arborpress.models.user import User
+
         async for db in get_db_session():
-            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
+            result = await db.execute(
+                select(User).where(func.lower(User.username) == username.lower())
+            )
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(__("User {username!r} not found.").format(username=username), err=True)
@@ -527,8 +755,11 @@ def user_disable(
             user.is_active = False
             db.add(user)
             await write_audit_event(
-                event_type="user_disabled", outcome="success",
-                actor_id="cli", target_id=str(user.id), db=db,
+                event_type="user_disabled",
+                outcome="success",
+                actor_id="cli",
+                target_id=str(user.id),
+                db=db,
             )
             await db.commit()
             typer.echo(__("User {username!r} disabled.").format(username=username))
@@ -547,6 +778,7 @@ def user_unlock(
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
+
         async for db in get_db_session():
             result = await db.execute(
                 select(User).where(func.lower(User.username) == username.lower())
@@ -561,9 +793,17 @@ def user_unlock(
             db.add(user)
             await db.commit()
             if was_locked:
-                typer.echo(__("User {username!r} unlocked (lock removed, failed_login_count reset).").format(username=username))
+                typer.echo(
+                    __(
+                        "User {username!r} unlocked (lock removed, failed_login_count reset)."
+                    ).format(username=username)
+                )
             else:
-                typer.echo(__("User {username!r}: no active lock, failed_login_count reset to 0.").format(username=username))
+                typer.echo(
+                    __("User {username!r}: no active lock, failed_login_count reset to 0.").format(
+                        username=username
+                    )
+                )
 
     asyncio.run(_unlock())
 
@@ -589,18 +829,17 @@ def user_roles(
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
+
         async for db in get_db_session():
-            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
+            result = await db.execute(
+                select(User).where(func.lower(User.username) == username.lower())
+            )
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(__("User {username!r} not found.").format(username=username), err=True)
                 raise typer.Exit(1)
             old_role = user.role.value
-            if (
-                old_role == "admin"
-                and role_enum.value != "admin"
-                and user.is_active
-            ):
+            if old_role == "admin" and role_enum.value != "admin" and user.is_active:
                 from arborpress.auth.policy import is_last_active_admin
                 from arborpress.core.audit import write_audit_event
 
@@ -614,21 +853,26 @@ def user_roles(
                         db=db,
                     )
                     await db.commit()
-                    typer.echo(
-                        "ERROR: Cannot demote the last active administrator.", err=True
-                    )
+                    typer.echo("ERROR: Cannot demote the last active administrator.", err=True)
                     raise typer.Exit(1)
             user.role = role_enum
             db.add(user)
             from arborpress.core.audit import write_audit_event
 
             await write_audit_event(
-                event_type="role_changed", outcome="success",
-                actor_id="cli", target_id=str(user.id),
-                detail=f"old={old_role};new={role_enum.value}", db=db,
+                event_type="role_changed",
+                outcome="success",
+                actor_id="cli",
+                target_id=str(user.id),
+                detail=f"old={old_role};new={role_enum.value}",
+                db=db,
             )
             await db.commit()
-            typer.echo(__("Role: {old} → {new} for {username!r}").format(old=old_role, new=role_enum.value, username=username))
+            typer.echo(
+                __("Role: {old} → {new} for {username!r}").format(
+                    old=old_role, new=role_enum.value, username=username
+                )
+            )
 
     asyncio.run(_set_role())
 
@@ -638,11 +882,13 @@ def user_list(
     inactive: bool = typer.Option(False, "--inactive", help="Also show inactive accounts"),
 ) -> None:
     """Lists all users."""
+
     async def _list() -> None:
         from sqlalchemy import select
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
+
         async for db in get_db_session():
             stmt = select(User)
             if not inactive:
@@ -684,7 +930,10 @@ def _build_breakglass_password(
     delimiter: str,
     length: int,
 ) -> str:
-    from arborpress.auth.password_tools import generate_diceware_passphrase, generate_random_password
+    from arborpress.auth.password_tools import (
+        generate_diceware_passphrase,
+        generate_random_password,
+    )
 
     normalized = generator.strip().lower()
     if normalized in {"diceware", "xkcd"}:
@@ -699,7 +948,11 @@ def _print_password_assessment(assessment) -> None:
     if assessment.warning:
         typer.echo(__("Warning:                 {warning}").format(warning=assessment.warning))
     if assessment.suggestions:
-        typer.echo(__("Suggestions:             {suggestions}").format(suggestions=' | '.join(assessment.suggestions)))
+        typer.echo(
+            __("Suggestions:             {suggestions}").format(
+                suggestions=" | ".join(assessment.suggestions)
+            )
+        )
     offline = assessment.crack_times_display.get("offline_slow_hashing_1e4_per_second")
     if offline:
         typer.echo(__("Crack time (offline):    {time}").format(time=offline))
@@ -710,13 +963,17 @@ def user_password_status(
     username: str = typer.Argument(..., help="Username"),
 ) -> None:
     """Shows password status of an account (warning if active)."""
+
     async def _check() -> None:
         from sqlalchemy import func, select
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
+
         async for db in get_db_session():
-            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
+            result = await db.execute(
+                select(User).where(func.lower(User.username) == username.lower())
+            )
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -740,13 +997,17 @@ def user_password_status(
 def user_password_set(
     username: str = typer.Argument(..., help="Username"),
     password: str | None = typer.Option(
-        None, "--password", "-p",
+        None,
+        "--password",
+        "-p",
         help="Set a specific break-glass password",
         hide_input=True,
     ),
     generate: bool = typer.Option(False, "--generate", help="Generate the password automatically"),
     generator: str = typer.Option("random", "--generator", help="Generator mode: diceware|random"),
-    words: int = typer.Option(6, "--words", min=4, max=10, help="Word count for Diceware passphrases"),
+    words: int = typer.Option(
+        6, "--words", min=4, max=10, help="Word count for Diceware passphrases"
+    ),
     delimiter: str = typer.Option("-", "--delimiter", help="Separator for Diceware passphrases"),
     length: int = typer.Option(24, "--length", min=16, max=256, help="Length for random passwords"),
 ) -> None:
@@ -801,7 +1062,9 @@ def user_password_set(
         from arborpress.models.user import User
 
         async for db in get_db_session():
-            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
+            result = await db.execute(
+                select(User).where(func.lower(User.username) == username.lower())
+            )
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -811,14 +1074,22 @@ def user_password_set(
             user.legacy_password_enabled = True
             db.add(user)
             from arborpress.core.audit import write_audit_event
+
             await write_audit_event(
                 event_type="password_changed" if was_enabled else "password_enabled",
-                outcome="success", actor_id="cli", target_id=str(user.id),
-                detail="cli_password_set", db=db,
+                outcome="success",
+                actor_id="cli",
+                target_id=str(user.id),
+                detail="cli_password_set",
+                db=db,
             )
             await write_audit_event(
-                event_type="breakglass_password_set", outcome="success",
-                actor_id="cli", target_id=str(user.id), detail="cli_password_set", db=db,
+                event_type="breakglass_password_set",
+                outcome="success",
+                actor_id="cli",
+                target_id=str(user.id),
+                detail="cli_password_set",
+                db=db,
             )
             await db.commit()
             typer.echo(__("Password for {username!r} set and activated.").format(username=username))
@@ -832,10 +1103,14 @@ def user_password_set(
 @user_app.command("password-generate")
 def user_password_generate(
     generator: str = typer.Option("random", "--generator", help="Generator mode: diceware|random"),
-    words: int = typer.Option(6, "--words", min=4, max=10, help="Word count for Diceware passphrases"),
+    words: int = typer.Option(
+        6, "--words", min=4, max=10, help="Word count for Diceware passphrases"
+    ),
     delimiter: str = typer.Option("-", "--delimiter", help="Separator for Diceware passphrases"),
     length: int = typer.Option(24, "--length", min=16, max=256, help="Length for random passwords"),
-    username: str | None = typer.Option(None, "--username", help="Optional username for zxcvbn context"),
+    username: str | None = typer.Option(
+        None, "--username", help="Optional username for zxcvbn context"
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
 ) -> None:
     """Generates a break-glass password and prints the quality assessment."""
@@ -883,8 +1158,7 @@ def user_password_disable(
     """
     if not yes:
         confirmed = typer.confirm(
-            f"Really disable password for {username!r}? "
-            "Make sure WebAuthn/MFA is set up."
+            f"Really disable password for {username!r}? Make sure WebAuthn/MFA is set up."
         )
         if not confirmed:
             raise typer.Exit(0)
@@ -895,8 +1169,11 @@ def user_password_disable(
         from arborpress.core.audit import write_audit_event
         from arborpress.core.db import get_db_session
         from arborpress.models.user import User
+
         async for db in get_db_session():
-            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
+            result = await db.execute(
+                select(User).where(func.lower(User.username) == username.lower())
+            )
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -905,13 +1182,17 @@ def user_password_disable(
                 typer.echo(f"Password for {username!r} is already disabled.")
                 return
             from arborpress.auth.policy import assert_auth_path_remains
+
             try:
                 await assert_auth_path_remains(db, user, exclude_password=True)
             except ValueError:
                 await write_audit_event(
-                    event_type="auth_lockout_prevention", outcome="blocked",
-                    actor_id="cli", target_id=str(user.id),
-                    detail="last_auth_path_password_disable", db=db,
+                    event_type="auth_lockout_prevention",
+                    outcome="blocked",
+                    actor_id="cli",
+                    target_id=str(user.id),
+                    detail="last_auth_path_password_disable",
+                    db=db,
                 )
                 await db.commit()
                 typer.echo(
@@ -924,8 +1205,11 @@ def user_password_disable(
             user.legacy_password_hash = None
             db.add(user)
             await write_audit_event(
-                event_type="password_disabled", outcome="success",
-                actor_id="cli", target_id=str(user.id), db=db,
+                event_type="password_disabled",
+                outcome="success",
+                actor_id="cli",
+                target_id=str(user.id),
+                db=db,
             )
             await db.commit()
             typer.echo(f"Password for {username!r} disabled and hash deleted.")
@@ -938,13 +1222,17 @@ def user_federation_status(
     username: str = typer.Argument(..., help="Username"),
 ) -> None:
     """Shows federation status of an account (opt-out, key pair)."""
+
     async def _show() -> None:
         from sqlalchemy import func, select
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import ActorKeypair, User
+
         async for db in get_db_session():
-            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
+            result = await db.execute(
+                select(User).where(func.lower(User.username) == username.lower())
+            )
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -965,10 +1253,7 @@ def user_federation_status(
                 if keypair.rotated_at:
                     typer.echo(f"  Last rotated:     {keypair.rotated_at}")
             else:
-                typer.echo(
-                    "Actor key:          NOT PRESENT"
-                    " – run: arborpress federation keygen"
-                )
+                typer.echo("Actor key:          NOT PRESENT – run: arborpress federation keygen")
 
     asyncio.run(_show())
 
@@ -1001,14 +1286,18 @@ def mfa_list(
     username: str = typer.Argument(..., help="Username"),
 ) -> None:
     """Lists all MFA devices of a user."""
+
     async def _list() -> None:
         from sqlalchemy import func, select
 
         from arborpress.auth.mfa import get_device_limit
         from arborpress.core.db import get_db_session
         from arborpress.models.user import MFADevice, MFADeviceType, User
+
         async for db in get_db_session():
-            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
+            result = await db.execute(
+                select(User).where(func.lower(User.username) == username.lower())
+            )
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -1058,32 +1347,40 @@ def mfa_add(
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import MFADevice, User
+
         async for db in get_db_session():
-            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
+            result = await db.execute(
+                select(User).where(func.lower(User.username) == username.lower())
+            )
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
                 raise typer.Exit(1)
             # Check limit
-            count_result = await db.execute(select(func.count()).select_from(MFADevice).where(
-                MFADevice.user_id == str(user.id),
-                MFADevice.device_type == dtype,
-                MFADevice.is_active.is_(True),
-            ))
+            count_result = await db.execute(
+                select(func.count())
+                .select_from(MFADevice)
+                .where(
+                    MFADevice.user_id == str(user.id),
+                    MFADevice.device_type == dtype,
+                    MFADevice.is_active.is_(True),
+                )
+            )
             count = count_result.scalar_one()
             limit = await get_device_limit(db, dtype)
             if count >= limit:
                 from arborpress.core.audit import write_audit_event
 
                 await write_audit_event(
-                    event_type="auth_lockout_prevention", outcome="blocked",
-                    actor_id="cli", target_id=str(user.id),
-                    detail=f"{dtype.value}_credential_limit", db=db,
+                    event_type="auth_lockout_prevention",
+                    outcome="blocked",
+                    actor_id="cli",
+                    target_id=str(user.id),
+                    detail=f"{dtype.value}_credential_limit",
+                    db=db,
                 )
                 await db.commit()
-                typer.echo(
-                    f"ERROR: Maximum of {limit} {dtype.value} devices reached.", err=True
-                )
+                typer.echo(f"ERROR: Maximum of {limit} {dtype.value} devices reached.", err=True)
                 raise typer.Exit(1)
 
             if dtype == MFADeviceType.TOTP:
@@ -1111,8 +1408,7 @@ def mfa_add(
                 secret_enc=secret_enc,
                 verification_status="verified" if dtype == MFADeviceType.TOTP else "unknown",
                 last_used_at=(
-                    datetime.now(UTC).replace(tzinfo=None)
-                    if dtype == MFADeviceType.TOTP else None
+                    datetime.now(UTC).replace(tzinfo=None) if dtype == MFADeviceType.TOTP else None
                 ),
             )
             db.add(device)
@@ -1120,8 +1416,11 @@ def mfa_add(
 
             await write_audit_event(
                 event_type=("totp_added" if dtype == MFADeviceType.TOTP else "mfa_device_added"),
-                outcome="success", actor_id="cli", target_id=str(user.id),
-                detail=f"type={dtype.value};label={label}", db=db,
+                outcome="success",
+                actor_id="cli",
+                target_id=str(user.id),
+                detail=f"type={dtype.value};label={label}",
+                db=db,
             )
             await db.commit()
 
@@ -1150,8 +1449,11 @@ def mfa_remove(
         from arborpress.core.audit import write_audit_event
         from arborpress.core.db import get_db_session
         from arborpress.models.user import MFADevice, MFADeviceType, User
+
         async for db in get_db_session():
-            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
+            result = await db.execute(
+                select(User).where(func.lower(User.username) == username.lower())
+            )
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -1168,13 +1470,17 @@ def mfa_remove(
                 raise typer.Exit(1)
             if device.device_type == MFADeviceType.TOTP:
                 from arborpress.auth.policy import assert_auth_path_remains
+
                 try:
                     await assert_auth_path_remains(db, user, exclude_mfa_id=str(device.id))
                 except ValueError:
                     await write_audit_event(
-                        event_type="auth_lockout_prevention", outcome="blocked",
-                        actor_id="cli", target_id=str(user.id),
-                        detail="last_totp_removed", db=db,
+                        event_type="auth_lockout_prevention",
+                        outcome="blocked",
+                        actor_id="cli",
+                        target_id=str(user.id),
+                        detail="last_totp_removed",
+                        db=db,
                     )
                     await db.commit()
                     typer.echo("ERROR: This is the last usable authentication path.", err=True)
@@ -1182,8 +1488,12 @@ def mfa_remove(
             await db.delete(device)
             if device.device_type == MFADeviceType.TOTP:
                 await write_audit_event(
-                    event_type="totp_removed", outcome="success",
-                    actor_id="cli", target_id=str(user.id), detail=f"label={label}", db=db,
+                    event_type="totp_removed",
+                    outcome="success",
+                    actor_id="cli",
+                    target_id=str(user.id),
+                    detail=f"label={label}",
+                    db=db,
                 )
             await db.commit()
             typer.echo(f"MFA device {label!r} removed.")
@@ -1198,13 +1508,17 @@ def mfa_rename(
     new_label: str = typer.Argument(..., help="New device name"),
 ) -> None:
     """Renames an MFA device."""
+
     async def _rename() -> None:
         from sqlalchemy import func, select
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import MFADevice, User
+
         async for db in get_db_session():
-            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
+            result = await db.execute(
+                select(User).where(func.lower(User.username) == username.lower())
+            )
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -1267,6 +1581,7 @@ def key_status(
     Without argument: instance key pair (HTTP signatures) + all actor keys.
     With username: OpenPGP keys + actor key of that account.
     """
+
     async def _show() -> None:
         from datetime import UTC, datetime
 
@@ -1290,17 +1605,16 @@ def key_status(
                     if inst.rotated_at:
                         typer.echo(f"  Rotated:   {inst.rotated_at.date()}")
                 else:
-                    typer.echo(
-                        "Instance key pair: NOT PRESENT"
-                        " – run: arborpress federation keygen"
-                    )
+                    typer.echo("Instance key pair: NOT PRESENT – run: arborpress federation keygen")
 
                 # ---- Actor keys (all accounts) ----
-                rows = (await db.execute(
-                    select(ActorKeypair, User.username)
-                    .join(User, User.id == ActorKeypair.user_id)
-                    .order_by(User.username)
-                )).all()
+                rows = (
+                    await db.execute(
+                        select(ActorKeypair, User.username)
+                        .join(User, User.id == ActorKeypair.user_id)
+                        .order_by(User.username)
+                    )
+                ).all()
                 typer.echo(f"\nActor keys ({len(rows)}):")
                 if rows:
                     typer.echo(f"  {'User':<20} {'Algo':<10} {'Created':<12} Rotated")
@@ -1313,9 +1627,9 @@ def key_status(
                         )
 
                 # ---- OpenPGP keys (overall overview) ----
-                pgp_count = (await db.execute(
-                    select(func.count()).select_from(UserPGPKey)
-                )).scalar_one()
+                pgp_count = (
+                    await db.execute(select(func.count()).select_from(UserPGPKey))
+                ).scalar_one()
                 typer.echo(f"\nOpenPGP keys total: {pgp_count}")
                 return
 
@@ -1330,31 +1644,39 @@ def key_status(
             typer.echo(f"Key status for {username!r}:")
 
             # Actor key
-            kp = (await db.execute(
-                select(ActorKeypair).where(ActorKeypair.user_id == str(user_row.id))
-            )).scalar_one_or_none()
+            kp = (
+                await db.execute(
+                    select(ActorKeypair).where(ActorKeypair.user_id == str(user_row.id))
+                )
+            ).scalar_one_or_none()
             typer.echo("\nActor key (HTTP signatures):")
             if kp:
                 typer.echo(f"  Algorithm: {kp.algorithm}")
                 typer.echo(f"  Key-ID:    {kp.key_id_url}")
-                typer.echo(f"  Created:   {kp.created_at.date()}"
-                           f" ({(now - kp.created_at).days} days old)")
+                typer.echo(
+                    f"  Created:   {kp.created_at.date()} ({(now - kp.created_at).days} days old)"
+                )
                 if kp.rotated_at:
                     typer.echo(f"  Rotated:   {kp.rotated_at.date()}")
             else:
                 typer.echo("  NOT PRESENT")
 
             # OpenPGP keys
-            pgp_rows = (await db.execute(
-                select(UserPGPKey)
-                .where(UserPGPKey.user_id == str(user_row.id))
-                .order_by(UserPGPKey.is_primary_signing.desc(), UserPGPKey.created_at)
-            )).scalars().all()
+            pgp_rows = (
+                (
+                    await db.execute(
+                        select(UserPGPKey)
+                        .where(UserPGPKey.user_id == str(user_row.id))
+                        .order_by(UserPGPKey.is_primary_signing.desc(), UserPGPKey.created_at)
+                    )
+                )
+                .scalars()
+                .all()
+            )
             typer.echo(f"\nOpenPGP keys ({len(pgp_rows)}):")
             if pgp_rows:
                 typer.echo(
-                    f"  {'Label':<20} {'Fingerprint':<42}"
-                    f" {'Sign':<5} {'Enc':<5} {'Prim':<5} Expiry"
+                    f"  {'Label':<20} {'Fingerprint':<42} {'Sign':<5} {'Enc':<5} {'Prim':<5} Expiry"
                 )
                 typer.echo("  " + "-" * 90)
                 for pk in pgp_rows:
@@ -1394,15 +1716,19 @@ def search_reindex(
 ) -> None:
     """Rebuilds the search index (§12 FTS, §14 search reindex)."""
     from arborpress.core.site_settings import get_defaults
+
     effective = provider or get_defaults("search").get("provider", "fallback")
     typer.echo(f"Reindex with provider {effective!r} (TODO: provider-specific actions).")
+
     async def _show_caps() -> None:
         from arborpress.core.db import get_engine
         from arborpress.core.db_capabilities import detect_capabilities
+
         caps = await detect_capabilities(get_engine())
         typer.echo(f"DB-FTS:     {caps.fts_provider}")
         if caps.external_fts:
             typer.echo(f"Externe FTS: {caps.external_fts}")
+
     asyncio.run(_show_caps())
 
 
@@ -1415,6 +1741,7 @@ def search_reindex(
 def cache_status() -> None:
     """Shows cache backend status (§14 cache status)."""
     from arborpress.core.cache import cache_backend_info
+
     info = cache_backend_info()
     typer.echo(f"Cache backend: {info}")
     typer.echo(f"Default TTL:   {get_settings().cache.ttl}s")
@@ -1424,10 +1751,12 @@ def cache_status() -> None:
 def cache_purge() -> None:
     """Clears the entire cache (§14 cache purge)."""
     from arborpress.core.cache import cache_backend_info, cache_flush
+
     asyncio.run(cache_flush())
     typer.echo(f"Cache cleared. Backend: {cache_backend_info()}")
     # Also clear site settings cache
     from arborpress.core.site_settings import invalidate_cache
+
     invalidate_cache()
     typer.echo("Site settings cache cleared.")
 
@@ -1435,9 +1764,11 @@ def cache_purge() -> None:
 @cache_app.command("warm")
 def cache_warm() -> None:
     """Pre-warms important cache entries (§14 cache warm)."""
+
     async def _warm() -> None:
         from arborpress.core.db import get_db_session
         from arborpress.core.site_settings import get_section
+
         sections = ["general", "theme", "mail", "comments", "captcha", "federation", "search"]
         async for db in get_db_session():
             for sec in sections:
@@ -1458,9 +1789,11 @@ def federation_inbox_process(
     batch: int = typer.Option(50, "--batch", "-n", help="Number of items per run"),
 ) -> None:
     """Processes ActivityPub inbox items (§5, §14 federation inbox processing)."""
+
     async def _process() -> None:
         from arborpress.core.db import get_db_session
         from arborpress.core.site_settings import get_section
+
         async for db in get_db_session():
             fed = await get_section("federation", db)
         if fed.get("mode", "disabled") in ("disabled", "outgoing_only"):
@@ -1475,12 +1808,14 @@ def federation_inbox_process(
 @federation_app.command("status")
 def federation_status() -> None:
     """Shows federation configuration and instance key status from the DB (§5)."""
+
     async def _show() -> None:
         from sqlalchemy import select
 
         from arborpress.core.db import get_db_session
         from arborpress.core.site_settings import get_section
         from arborpress.models.user import InstanceKeypair
+
         async for db in get_db_session():
             fed = await get_section("federation", db)
             ikp_result = await db.execute(select(InstanceKeypair).where(InstanceKeypair.id == 1))
@@ -1523,6 +1858,7 @@ def federation_kek_init() -> None:
     """
     import base64
     import os
+
     kek = base64.urlsafe_b64encode(os.urandom(32)).decode()
     typer.echo("New actor KEK generated:")
     typer.echo(f"\n  {kek}\n")
@@ -1538,6 +1874,7 @@ def _get_actor_fernet() -> Fernet:  # type: ignore[name-defined]
     Aborts if no KEK is configured.
     """
     from cryptography.fernet import Fernet
+
     cfg = get_settings()
     kek = cfg.auth.actor_key_enc_key
     if kek is None:
@@ -1556,9 +1893,7 @@ def federation_keygen(
     algorithm: str = typer.Option(
         "ed25519", "--algo", help="ed25519 (default) | rsa-sha256 (legacy)"
     ),
-    force: bool = typer.Option(
-        False, "--force", help="Overwrite existing key pair (rotation)"
-    ),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing key pair (rotation)"),
 ) -> None:
     """Generates the instance key pair for HTTP signatures (§5).
 
@@ -1599,10 +1934,14 @@ def federation_keygen(
 
             if algorithm == "rsa-sha256":
                 private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-                public_pem = private_key.public_key().public_bytes(
-                    serialization.Encoding.PEM,
-                    serialization.PublicFormat.SubjectPublicKeyInfo,
-                ).decode()
+                public_pem = (
+                    private_key.public_key()
+                    .public_bytes(
+                        serialization.Encoding.PEM,
+                        serialization.PublicFormat.SubjectPublicKeyInfo,
+                    )
+                    .decode()
+                )
                 private_raw = private_key.private_bytes(
                     serialization.Encoding.PEM,
                     serialization.PrivateFormat.PKCS8,
@@ -1610,10 +1949,14 @@ def federation_keygen(
                 )
             else:  # ed25519
                 priv = ed25519.Ed25519PrivateKey.generate()
-                public_pem = priv.public_key().public_bytes(
-                    serialization.Encoding.PEM,
-                    serialization.PublicFormat.SubjectPublicKeyInfo,
-                ).decode()
+                public_pem = (
+                    priv.public_key()
+                    .public_bytes(
+                        serialization.Encoding.PEM,
+                        serialization.PublicFormat.SubjectPublicKeyInfo,
+                    )
+                    .decode()
+                )
                 private_raw = priv.private_bytes(
                     serialization.Encoding.PEM,
                     serialization.PrivateFormat.PKCS8,
@@ -1631,13 +1974,15 @@ def federation_keygen(
                 db.add(ikp)
                 action = "rotated"
             else:
-                db.add(InstanceKeypair(
-                    id=1,
-                    key_id_url=key_id_url,
-                    public_key_pem=public_pem,
-                    private_key_enc=enc,
-                    algorithm=algorithm,
-                ))
+                db.add(
+                    InstanceKeypair(
+                        id=1,
+                        key_id_url=key_id_url,
+                        public_key_pem=public_pem,
+                        private_key_enc=enc,
+                        algorithm=algorithm,
+                    )
+                )
                 action = "created"
             await db.commit()
             typer.echo(f"Instance key {action}: {key_id_url} ({algorithm})")
@@ -1651,18 +1996,22 @@ def federation_follower_list(
     direction: str = typer.Option("inbound", "--direction", "-d", help="inbound|outbound"),
 ) -> None:
     """Lists followers (inbound) or following (outbound) of an account."""
+
     async def _list() -> None:
         from sqlalchemy import func, select
 
         from arborpress.core.db import get_db_session
         from arborpress.models.user import Follower, FollowerDirection, User
+
         try:
             dir_enum = FollowerDirection(direction)
         except ValueError:
             typer.echo("Invalid direction. Allowed: inbound, outbound", err=True)
             raise typer.Exit(1) from None
         async for db in get_db_session():
-            result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
+            result = await db.execute(
+                select(User).where(func.lower(User.username) == username.lower())
+            )
             user = result.scalar_one_or_none()
             if not user:
                 typer.echo(f"User {username!r} not found.", err=True)
@@ -1713,6 +2062,7 @@ def mail_process(
 def mail_status() -> None:
     """Shows mail configuration and queue status (§13)."""
     from arborpress.core.site_settings import get_defaults
+
     mail = get_defaults("mail")
     typer.echo(f"Backend:  {mail.get('backend', 'none')}")
     if mail.get("backend", "none") == "smtp":
@@ -1794,6 +2144,7 @@ async def _run_db_migration_operation[T](
 async def _seed(*, force: bool = False) -> dict[str, int]:
     from arborpress.core.db import get_db_session
     from arborpress.core.seed import seed_database
+
     async for session in get_db_session():
         return await seed_database(session, force=force)
     return {}
@@ -1802,6 +2153,7 @@ async def _seed(*, force: bool = False) -> dict[str, int]:
 def _bootstrap_plugins() -> None:
     cfg = get_settings()
     from arborpress.plugins.registry import get_registry
+
     reg = get_registry()
     for d in cfg.plugin_dirs():
         reg.load_directory(d)
@@ -1834,6 +2186,7 @@ def _load_plugin_cli_extensions() -> None:
 # WebAuthn recovery (RP-ID lock)
 # ---------------------------------------------------------------------------
 
+
 @webauthn_app.command("status")
 def webauthn_status() -> None:
     """Show resolved RP ID, locked value, and credential count."""
@@ -1859,9 +2212,9 @@ def webauthn_status() -> None:
 
         async for db in _gds():
             wa = await get_webauthn_settings(db)
-            count = (await db.execute(
-                select(func.count()).select_from(WebAuthnCredential)
-            )).scalar_one() or 0
+            count = (
+                await db.execute(select(func.count()).select_from(WebAuthnCredential))
+            ).scalar_one() or 0
             rp_name = await resolve_rp_name(db)
             return wa, count, rp_name
 
@@ -1876,9 +2229,7 @@ def webauthn_status() -> None:
 
 @webauthn_app.command("unlock-rp-id")
 def webauthn_cli_unlock(
-    confirm: str = typer.Option(
-        ..., "--confirm", help="Must equal the new resolved rp.id."
-    ),
+    confirm: str = typer.Option(..., "--confirm", help="Must equal the new resolved rp.id."),
 ) -> None:
     """Operator escape hatch: confirm an RP-ID change from the shell.
 
@@ -1900,8 +2251,7 @@ def webauthn_cli_unlock(
 
     if confirm != resolved:
         typer.echo(
-            f"ERROR: --confirm {confirm!r} does not match the current "
-            f"resolved rp.id {resolved!r}.",
+            f"ERROR: --confirm {confirm!r} does not match the current resolved rp.id {resolved!r}.",
             err=True,
         )
         raise typer.Exit(1)
