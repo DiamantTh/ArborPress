@@ -600,6 +600,91 @@ files = [
 ]
 
 [[package]]
+name = "bzip3"
+version = "0.1.10"
+description = "bz3 compress and decompress"
+optional = true
+python-versions = ">=3.6"
+groups = ["main"]
+markers = "extra == \"backup-bz3\""
+files = [
+    {file = "bzip3-0.1.10-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e81ea34fba59a893f09465624045a6fa734adcf6321cdec586697340df369bbd"},
+    {file = "bzip3-0.1.10-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:dae3a8d744a0c3008128713187be6f457287e753e431ebacc554f9e1a4479e3b"},
+    {file = "bzip3-0.1.10-cp310-cp310-manylinux_2_38_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:881d78b34d557427d80d9670adb13efbb32fc8d0738f62b38735bb930a94a450"},
+    {file = "bzip3-0.1.10-cp310-cp310-musllinux_1_2_aarch64.whl", hash = "sha256:86486c3df21651e3d67eda4dde7101e340e8d41cea765106279972244bb6f228"},
+    {file = "bzip3-0.1.10-cp310-cp310-musllinux_1_2_riscv64.whl", hash = "sha256:c63b986cf4a71ea882bb91bd2bdc20a6d8898f3b92c784107ccb32a29f565ad9"},
+    {file = "bzip3-0.1.10-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:d71561e01ed805b164ae65d83b46171828dce3470ae9fe2dfe2ed5f7e4691859"},
+    {file = "bzip3-0.1.10-cp310-cp310-win32.whl", hash = "sha256:c2f48114a8d72cc78b9f5e7c470231d8649a4aed01982ff57f182799a6478776"},
+    {file = "bzip3-0.1.10-cp310-cp310-win_amd64.whl", hash = "sha256:5fdbbe10d0b2ebc1d58e7cf862cf8b953df09fc5bfb03897f1ea707a31a7abe8"},
+    {file = "bzip3-0.1.10-cp310-cp310-win_arm64.whl", hash = "sha256:922f8dec0ca19a8167e7da94c7aa2c7270a96b1f906ebd86729983cbded34547"},
+    {file = "bzip3-0.1.10-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:af22da84bf1b953246db99d963d0735cbd10c817a467d9111f34966dc2fb40b0"},
+    {file = "bzip3-0.1.10-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fe1f0bc3fd5b5efb7c0dff1841e3910ad496f7396f662979c4796b0919dd4fae"},
+    {file = "bzip3-0.1.10-cp311-cp311-manylinux_2_38_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:ebbb21eafa59243c3271b527eb2e03f1bc1b306c28a9df60ebf8bf697359ff96"},
+    {file = "bzip3-0.1.10-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:2d469dc7f840f7011628e6ca282dd9a87d6a6f55d7506e756c7a9ee42087a22e"},
+    {file = "bzip3-0.1.10-cp311-cp311-musllinux_1_2_riscv64.whl", hash = "sha256:083ef4365f759710a161d93051761457ec9582b42b9f8cd12c70a70ce866a24b"},
+    {file = "bzip3-0.1.10-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:302a891cb9c8b41a32ed37ee6799bf29febbe483e5b1a91b773f5160bd5759c4"},
+    {file = "bzip3-0.1.10-cp311-cp311-win32.whl", hash = "sha256:133e7b7df09ed73e34047127ba7c5781bc4abcd1f301db27693561a1432b34cb"},
+    {file = "bzip3-0.1.10-cp311-cp311-win_amd64.whl", hash = "sha256:88c505f5c6c2e9744f3c5fb958234c304de1bfbcf795843e6875923411e05015"},
+    {file = "bzip3-0.1.10-cp311-cp311-win_arm64.whl", hash = "sha256:74da5f6dfd96d21eef060bd59dc1d22ab2e04698097233d713c418fc3253f854"},
+    {file = "bzip3-0.1.10-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:f9d71b9319de1fe7f948f4edde7b698b4def28bcfac6a17ef91bf68cd0327291"},
+    {file = "bzip3-0.1.10-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:019bba0c8c2dd5e239a061d7318169993de5395c56ef3e3f8474bdb88fe1b8bf"},
+    {file = "bzip3-0.1.10-cp312-cp312-manylinux_2_38_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:0ecce6e7fbc6209ba07d89a3b211101a0f5fa3cfd2d286d9b1534f9f6af2dbf7"},
+    {file = "bzip3-0.1.10-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:170254118571daa9ee69d2ce6c8a6c4f01195223b843e3dc4328f241bac38733"},
+    {file = "bzip3-0.1.10-cp312-cp312-musllinux_1_2_riscv64.whl", hash = "sha256:733442c1c6d1a0e939d8e08fee1fa461ca80cdefe498ddd292720af729eb4b01"},
+    {file = "bzip3-0.1.10-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:e05c9eac31f49cf0935b32775023f8390004ff6b27997d932aebfc6576288da8"},
+    {file = "bzip3-0.1.10-cp312-cp312-win32.whl", hash = "sha256:eb274b6ead92775173b44b821823acf83901108dd22e3d9be889c4a684180755"},
+    {file = "bzip3-0.1.10-cp312-cp312-win_amd64.whl", hash = "sha256:0ad3b440f8dcb1a69bfd550365d2d3d5c92f415f7763fe32b70a5ec60275a5c4"},
+    {file = "bzip3-0.1.10-cp312-cp312-win_arm64.whl", hash = "sha256:cf478ab1365a4f492cb70d37a9a03b42e1d265fcf74d2b146be2650c2f782954"},
+    {file = "bzip3-0.1.10-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:43d9f64b2f366f98db6d4368c40515715a8bbdcf8d843d0ce62a968312fd8e52"},
+    {file = "bzip3-0.1.10-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:150c97877c5e89860d145f63672451ed97c69318d36adc42d75a50d67a840bdb"},
+    {file = "bzip3-0.1.10-cp313-cp313-manylinux_2_38_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:9f35505a6b1631bece4cf3879f3c9278ed6438a4fe6aa7235f10ce99ef91fa97"},
+    {file = "bzip3-0.1.10-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:556ac7d25945812c75f21b4d664205861d4a2051a7ff812b5c6c59de85b05e74"},
+    {file = "bzip3-0.1.10-cp313-cp313-musllinux_1_2_riscv64.whl", hash = "sha256:fbc935cd50895e50299945847e93b97e89770bcd9c13637d481d5d8ed30d767b"},
+    {file = "bzip3-0.1.10-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:df58128f60a4ba865226347f9469ab08e8e37b9d5d95c34de549c2c6be210e35"},
+    {file = "bzip3-0.1.10-cp313-cp313-win32.whl", hash = "sha256:55ae61c67509677fe8ce8e93510b5388187d73d87a158a16ffeeda8d34157975"},
+    {file = "bzip3-0.1.10-cp313-cp313-win_amd64.whl", hash = "sha256:d8f3193c7eab9e44ba8a366ec6011f24f8625c822f80840194d58801bcb4a5ec"},
+    {file = "bzip3-0.1.10-cp313-cp313-win_arm64.whl", hash = "sha256:f86f8e0d3183de1fb5560a81093036234ca2ca670ef9cee1cb8af1b014c6f25e"},
+    {file = "bzip3-0.1.10-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:62f872ec82e0236ee94860ec4059ff9a10d1a3f66aa49b01a50f96b424a68372"},
+    {file = "bzip3-0.1.10-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:168453b3e1289be7ce7c3058452eefa4a27aba4a37e57f1fcb62485daf0555e5"},
+    {file = "bzip3-0.1.10-cp314-cp314-manylinux_2_38_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:4d3b42d5f287fb758baa3e2a0fe7790a97432324f0907ca2f0a06633bfcf7aef"},
+    {file = "bzip3-0.1.10-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:3e5a55f53331e0d054ccacb208c772f09cfb00fa13ebc0c29f4a4972ba9422f3"},
+    {file = "bzip3-0.1.10-cp314-cp314-musllinux_1_2_riscv64.whl", hash = "sha256:0bcf0074803bb6d81d31f2a956607ae33f9986055b44a42f3becc3c68c3c43f6"},
+    {file = "bzip3-0.1.10-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:145d6488815429941d8af59c50ccb81df91d728f22c41a5707726de9ff4aaf5b"},
+    {file = "bzip3-0.1.10-cp314-cp314-win32.whl", hash = "sha256:f7dfde626ed7cebb001953a9de5248a5540b16f653f8041c35ade836b323a57b"},
+    {file = "bzip3-0.1.10-cp314-cp314-win_amd64.whl", hash = "sha256:073059b44b98f4650ce2f037f4dfe43befcc5ae9a1e5ce3a6a48f14be6004ec2"},
+    {file = "bzip3-0.1.10-cp314-cp314-win_arm64.whl", hash = "sha256:5c35c2774fbe545e5ad3664f4f395d6f1c3f1c11f0685efae0d6686da07574dc"},
+    {file = "bzip3-0.1.10-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:f8a86e325d9098eff9afa79ef8061c2dff65ff8a8e4881b743e5ae588c466ccb"},
+    {file = "bzip3-0.1.10-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:caa27da3ca32f24cad4fdcd85e716bfa7aadb2743a0c1cbc9c51fbc3babeb839"},
+    {file = "bzip3-0.1.10-cp314-cp314t-manylinux_2_38_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:80c442aea25593d2d6a3bab4464097b0b480817bcd72ec79f967eca7222a34f3"},
+    {file = "bzip3-0.1.10-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:a1a0a300189c86f0a0108355ffabdb53d471c5c5b9a08875abdc1f29e2943464"},
+    {file = "bzip3-0.1.10-cp314-cp314t-musllinux_1_2_riscv64.whl", hash = "sha256:470c80c4252c650bf2ee2a46c4ab5a1a0cb9a7b1f8bf539a46a13666550ef068"},
+    {file = "bzip3-0.1.10-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:3a836de13a96e07c0ae3ac7c36559086823f19d8f197431ca71edecc8012fd75"},
+    {file = "bzip3-0.1.10-cp314-cp314t-win32.whl", hash = "sha256:77001b4d4448e635e7dd9918361d3804348831df854dc0ac8fc0bf6b27dc1c0b"},
+    {file = "bzip3-0.1.10-cp314-cp314t-win_amd64.whl", hash = "sha256:a7b40ea7d937dda2d1a00a22bd3498cb8b27ab2ef75e25218b125a11db44ce71"},
+    {file = "bzip3-0.1.10-cp314-cp314t-win_arm64.whl", hash = "sha256:c34ff8f9d6b07cdb2314c1b25135ce83fd095402e30041c494f5e301d294f275"},
+    {file = "bzip3-0.1.10-cp38-cp38-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:4eaa13a885afbe0995d4b236fba87e866a331c740b9ca9fb7db7e27717b10ae5"},
+    {file = "bzip3-0.1.10-cp38-cp38-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:966b0fa2eb471053b443da2db1aaca7e840a51165cb8fc19d0fdb404cb02cb4a"},
+    {file = "bzip3-0.1.10-cp38-cp38-manylinux_2_38_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:b498fee3fb80800072b42020c2a694097f9287b00d7d2aa513ef53a6ae4df3d2"},
+    {file = "bzip3-0.1.10-cp38-cp38-musllinux_1_2_aarch64.whl", hash = "sha256:51c221c2ad49ddb99dd8897873fbbc724334f53dae82e6962aebe36a00cff1e2"},
+    {file = "bzip3-0.1.10-cp38-cp38-musllinux_1_2_riscv64.whl", hash = "sha256:5e208b793f10c5b5ead07ab649a3f2123e3de15977d6b0cec6a832b5ec9e0ab3"},
+    {file = "bzip3-0.1.10-cp38-cp38-musllinux_1_2_x86_64.whl", hash = "sha256:3d2b6babe5263f1c418223550026c033f79099b324be4c9042da120127576353"},
+    {file = "bzip3-0.1.10-cp38-cp38-win32.whl", hash = "sha256:d6a80f9378b93766825c72ad78b520aa863674339696b1b7a9f22c96f7107b26"},
+    {file = "bzip3-0.1.10-cp38-cp38-win_amd64.whl", hash = "sha256:6783523c7ac1f40b935de00ecbfe8b3a4d89d7ad99bdf68d8f72126f58ebe65f"},
+    {file = "bzip3-0.1.10-cp39-cp39-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:ff62ededf36e0950b54284c5f4ffbba223e9c09b603ae7ffba23742f65c7f3c8"},
+    {file = "bzip3-0.1.10-cp39-cp39-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:bd1df1b75e2baba84f9db69498fe8065cde9ca87422048a08aeaae17d764551b"},
+    {file = "bzip3-0.1.10-cp39-cp39-manylinux_2_38_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:222890c81a8c17c9ab30282ae3e444164e4c709f886dbf7a2d18704413063800"},
+    {file = "bzip3-0.1.10-cp39-cp39-musllinux_1_2_aarch64.whl", hash = "sha256:96411bdc00401c499c76edc19e8491c38ecf4b6c77dc210bc243da079ebf5831"},
+    {file = "bzip3-0.1.10-cp39-cp39-musllinux_1_2_riscv64.whl", hash = "sha256:5e9911095dca5dfd155f288bee8265fb15cb0c4f7278eb7c0dd5e80bebafebf4"},
+    {file = "bzip3-0.1.10-cp39-cp39-musllinux_1_2_x86_64.whl", hash = "sha256:f1f03018c5e102efcb4bd3fdbe43fcfa0e24d3dd11c8ebdc72fb6ec073d76869"},
+    {file = "bzip3-0.1.10-cp39-cp39-win32.whl", hash = "sha256:5ae8682dd69cd7e24f1cb61d243746c2f5a518eadee3ce172f986696c2578677"},
+    {file = "bzip3-0.1.10-cp39-cp39-win_amd64.whl", hash = "sha256:20c86ea56f59f45ba0699d150b4e9b48dba1a1ccbcd1e1287e16ad596d11c725"},
+    {file = "bzip3-0.1.10-cp39-cp39-win_arm64.whl", hash = "sha256:afb062218f64cf00221eb559c740ba4e0369d4446016d974bca207e4141a82d7"},
+]
+
+[package.dependencies]
+cffi = ">=1.0.0"
+
+[[package]]
 name = "camel-converter"
 version = "6.0.0"
 description = "Converts a string from snake case to camel case or camel case to snake case"
@@ -4119,6 +4204,7 @@ files = [
 
 [extras]
 all = ["aiomcache", "aiosqlite", "elasticsearch", "geoip2", "markdownify", "meilisearch-python-sdk", "redis", "typesense", "valkey"]
+backup-bz3 = ["bzip3"]
 cache-memcached = ["aiomcache"]
 cache-redis = ["redis"]
 cache-valkey = ["valkey"]
@@ -4132,4 +4218,4 @@ wysiwyg = ["markdownify"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.14"
-content-hash = "03d29d0231aa444d355e3c3f31686dcf8061c593792f9f8981c9fae430431b81"
+content-hash = "022d583874138d4758e6831770f6522ba6d1ce8a0378a2af7f8fe3d11fbb33c1"

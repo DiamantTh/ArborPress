@@ -67,6 +67,12 @@ sqlite = [
     "aiosqlite>=0.20,<1",
 ]
 
+# Optional Python binding for parallel BZip3 backup compression. The normal
+# runtime and the default BZip2 backup path do not install or require it.
+backup-bz3 = [
+    "bzip3>=0.1.10,<0.2",
+]
+
 # WYSIWYG-Editor HTML→Markdown (optionaler Konverter für TipTap; nur für den
 # tatsächlich ausgewählten Editor erforderlich).
 wysiwyg = [
