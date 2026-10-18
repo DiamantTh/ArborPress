@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import fields
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import typer
 
@@ -30,6 +30,8 @@ from arborpress.runtime.paths import (
 
 if TYPE_CHECKING:
     from cryptography.fernet import Fernet
+
+    from arborpress.themes.manifest import ThemeRecord, ThemeRegistry
 
 # ---------------------------------------------------------------------------
 # App-Instanz + Sub-Apps
@@ -51,6 +53,7 @@ federation_app = typer.Typer(help="Federation / ActivityPub (§5, §14)", no_arg
 mail_app = typer.Typer(help="Mail queue (§13)", no_args_is_help=True)
 plugin_app = typer.Typer(help="Plugin management (§15)", no_args_is_help=True)
 webauthn_app = typer.Typer(help="WebAuthn / Passkey recovery (§17)", no_args_is_help=True)
+themes_app = typer.Typer(help="Theme diagnostics (read-only)", no_args_is_help=True)
 
 app.add_typer(db_app, name="db")
 app.add_typer(user_app, name="user")
@@ -62,6 +65,7 @@ app.add_typer(federation_app, name="federation")
 app.add_typer(mail_app, name="mail")
 app.add_typer(plugin_app, name="plugin")
 app.add_typer(webauthn_app, name="webauthn")
+app.add_typer(themes_app, name="themes")
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +89,11 @@ def main_callback(
     import arborpress.core.config as config_mod
 
     config_mod.reset_settings()
+    from arborpress.core.site_settings import invalidate_cache
+    from arborpress.themes.manifest import reset_theme_registry
+
+    invalidate_cache()
+    reset_theme_registry()
     if config is not None:
         config_mod.get_settings(config)
 
@@ -101,6 +110,117 @@ def show_paths(
         return
     for name, value in values.items():
         typer.echo(f"{name.replace('_', ' ')}: {value}")
+
+
+def _theme_payload(record: ThemeRecord, active: dict[str, str]) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "name": record.name,
+        "version": record.version,
+        "type": record.type,
+        "source": record.source,
+        "parent": record.manifest.parent if record.manifest else None,
+        "status": record.status,
+        "diagnostics": record.diagnostics,
+        "active_public": (
+            record.status == "valid"
+            and record.type == "public"
+            and record.id == active.get("active", "default")
+        ),
+        "active_admin": (
+            record.status == "valid"
+            and record.type == "admin"
+            and record.id == active.get("admin_active", "arbor-admin")
+        ),
+    }
+
+
+def _effective_theme_selection(
+    registry: ThemeRegistry, configured: dict[str, str]
+) -> dict[str, str]:
+    return {
+        "active": registry.get_or_default(configured.get("active", "default"), "public").id,
+        "admin_active": registry.get_or_default(
+            configured.get("admin_active", "arbor-admin"), "admin"
+        ).id,
+    }
+
+
+def _read_theme_selection() -> dict[str, str]:
+    """Read current persisted selections, falling back safely to defaults."""
+    from arborpress.core.config import is_installed
+    from arborpress.core.db import get_db_session
+    from arborpress.core.site_settings import get_defaults, get_section
+
+    defaults = get_defaults("theme")
+    default_selection = {
+        "active": str(defaults.get("active", "default")),
+        "admin_active": str(defaults.get("admin_active", "arbor-admin")),
+    }
+    # Avoid creating an empty SQLite database simply to list package themes on
+    # a fresh, not-yet-installed prefix.
+    if not is_installed():
+        return default_selection
+
+    async def _read() -> dict[str, str]:
+        try:
+            async for db in get_db_session():
+                settings = await get_section("theme", db)
+                return {
+                    "active": str(settings.get("active", "default")),
+                    "admin_active": str(settings.get("admin_active", "arbor-admin")),
+                }
+        except Exception:
+            return default_selection
+        return default_selection
+
+    return asyncio.run(_read())
+
+
+@themes_app.command("list")
+def themes_list(
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """List built-in and instance themes with validation diagnostics."""
+    from arborpress.themes.manifest import get_theme_registry
+
+    registry = get_theme_registry()
+    active = _effective_theme_selection(registry, _read_theme_selection())
+    payload = [_theme_payload(record, active) for record in registry.records()]
+    if as_json:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    for item in payload:
+        marker = " [active]" if item["active_public"] or item["active_admin"] else ""
+        typer.echo(
+            f"{item['id']}\t{item['type'] or '-'}\t{item['source']}\t"
+            f"{item['status']}{marker}\t{item['name']}"
+        )
+        for diagnostic in item["diagnostics"]:
+            typer.echo(f"  ! {diagnostic}")
+
+
+@themes_app.command("inspect")
+def themes_inspect(
+    theme_id: str,
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """Show manifest status and compatibility details for one theme."""
+    from arborpress.themes.manifest import get_theme_registry
+
+    record = get_theme_registry().record(theme_id)
+    if record is None:
+        typer.echo(f"Theme {theme_id!r} was not found.", err=True)
+        raise typer.Exit(code=2)
+    item = _theme_payload(
+        record,
+        _effective_theme_selection(get_theme_registry(), _read_theme_selection()),
+    )
+    if as_json:
+        typer.echo(json.dumps(item, indent=2, sort_keys=True))
+        return
+    for key, value in item.items():
+        typer.echo(f"{key}: {value}")
 
 
 # ---------------------------------------------------------------------------
