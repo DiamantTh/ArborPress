@@ -10,11 +10,13 @@ from arborpress.backups.compression import CompressionSettings
 from arborpress.backups.encryption import (
     BackupKey,
     EncryptionError,
+    context_from_manifest,
     create_encryption_context,
     decrypt_file_to_path,
     encrypt_file,
     generate_keyfile,
     load_keyfile,
+    parse_envelope_header,
     verify_envelope_header,
 )
 from arborpress.backups.service import create_backup
@@ -149,6 +151,18 @@ def test_keyfile_generation_format_permissions_and_collision(tmp_path: Path) -> 
         manifest_version=2,
     )
     assert decrypted.read_bytes() == source.read_bytes()
+    wrong = context_from_manifest(
+        BackupKey("keyfile", os.urandom(32)), context.parameters
+    )
+    with pytest.raises(EncryptionError, match="authentication"):
+        decrypt_file_to_path(
+            encrypted,
+            tmp_path / "wrong-keyfile.out",
+            context=wrong,
+            backup_id="20261018-120000",
+            relative_path="data/payload.apenc",
+            manifest_version=2,
+        )
 
 
 def test_nonce_is_unique_for_multiple_component_files(tmp_path: Path) -> None:
@@ -267,3 +281,31 @@ async def test_encrypted_bz3_backup_when_optional_backend_is_installed(tmp_path:
         ).verification_level
         == "full-cryptographic"
     )
+
+
+@pytest.mark.asyncio
+async def test_each_encrypted_media_segment_has_its_own_authenticated_envelope(
+    tmp_path: Path,
+) -> None:
+    paths = ArborPressPaths.from_prefix(tmp_path / "prefix")
+    ensure_instance_layout(paths)
+    (paths.media / "first.bin").write_bytes(b"1234")
+    (paths.media / "second.bin").write_bytes(b"5678")
+    key = BackupKey("passphrase", b"segmented media encryption phrase")
+    backup = await create_backup(
+        paths=paths,
+        components=("media",),
+        key=key,
+        media_segment_size=5,
+        created_at=datetime(2026, 10, 18, 12, tzinfo=UTC),
+    )
+    media = next(component for component in backup.manifest.components if component.name == "media")
+    assert [item.segment for item in media.files] == [1, 2]
+    nonces = set()
+    for item in media.files:
+        with (backup.directory / item.path).open("rb") as stream:
+            version, algorithm, nonce = parse_envelope_header(stream)
+        assert (version, algorithm) == (1, 1)
+        nonces.add(nonce)
+    assert len(nonces) == 2
+    assert verify_backup_set(backup.directory, key=key).verification_level == "full-cryptographic"
