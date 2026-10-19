@@ -33,6 +33,7 @@ from quart import (
 from quart.typing import ResponseReturnValue
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from arborpress.auth.password_tools import (
     assess_password_strength,
@@ -156,7 +157,11 @@ async def _role_context() -> dict:
     """Provides user_role and has_role for all admin templates."""
     from arborpress.auth.roles import has_min_role
 
-    return {"user_role": session.get("user_role", "viewer"), "has_role": has_min_role}
+    return {
+        "user_role": session.get("user_role", "viewer"),
+        "current_user_id": str(session.get("user_id") or ""),
+        "has_role": has_min_role,
+    }
 
 
 @admin_bp.errorhandler(TemplateError)
@@ -1409,94 +1414,314 @@ async def stepup_status():
 
 
 @admin_bp.get("/comments")
-async def comments_list():
+async def comments_list() -> ResponseReturnValue:
     _require_session()
-    require_role("editor")
-    """Alle Kommentare die auf Freischaltung warten (status=CONFIRMED)."""
-    from arborpress.models.content import Comment, CommentStatus
+    require_role("moderator")
+    from datetime import datetime
 
+    from arborpress.comments import REASON_CATALOG
+    from arborpress.models.content import (
+        Comment,
+        CommentModerationAppeal,
+        CommentRevision,
+        CommentRevisionStatus,
+        CommentStatus,
+        ModerationDecision,
+    )
+
+    selected = request.args.get("type", "all")
+    if selected not in {"all", "comments", "revisions", "appeals"}:
+        selected = "all"
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except ValueError:
+        page = 1
+    offset = (page - 1) * 50
+    since_raw = (request.args.get("since") or "").strip()
+    try:
+        since = datetime.fromisoformat(since_raw) if since_raw else None
+    except ValueError:
+        abort(400)
     async for db in get_db_session():
-        stmt = (
-            select(Comment)
-            .where(Comment.status == CommentStatus.PENDING_MODERATION)
-            .order_by(Comment.confirmed_at.asc())
-        )
-        result = await db.execute(stmt)
-        pending = result.scalars().all()
-
-        # All comments for overview (newest first)
-        all_stmt = select(Comment).order_by(Comment.created_at.desc()).limit(200)
-        all_result = await db.execute(all_stmt)
-        all_comments = all_result.scalars().all()
-
+        pending = []
+        revisions = []
+        appeals: list[
+            tuple[CommentModerationAppeal, ModerationDecision, Comment, CommentRevision | None]
+        ] = []
+        queue_has_more = False
+        if selected in {"all", "comments"}:
+            pending_result = await db.execute(
+                select(Comment)
+                .where(
+                    Comment.status == CommentStatus.PENDING_MODERATION,
+                    *([Comment.created_at >= since] if since else []),
+                )
+                .options(selectinload(Comment.post))
+                .order_by(Comment.confirmed_at.asc(), Comment.id)
+                .offset(offset)
+                .limit(51)
+            )
+            pending = list(pending_result.scalars().all())
+            queue_has_more = queue_has_more or len(pending) > 50
+            pending = pending[:50]
+        if selected in {"all", "revisions"}:
+            revision_result = await db.execute(
+                select(CommentRevision)
+                .join(Comment, Comment.id == CommentRevision.comment_id)
+                .where(
+                    CommentRevision.status == CommentRevisionStatus.PENDING,
+                    Comment.status == CommentStatus.APPROVED,
+                    *([CommentRevision.created_at >= since] if since else []),
+                )
+                .options(selectinload(CommentRevision.comment).selectinload(Comment.post))
+                .order_by(CommentRevision.created_at, CommentRevision.id)
+                .offset(offset)
+                .limit(51)
+            )
+            revisions = list(revision_result.scalars().all())
+            queue_has_more = queue_has_more or len(revisions) > 50
+            revisions = revisions[:50]
+        if selected in {"all", "appeals"}:
+            appeal_result = await db.execute(
+                select(CommentModerationAppeal, ModerationDecision)
+                .join(
+                    ModerationDecision, ModerationDecision.id == CommentModerationAppeal.decision_id
+                )
+                .where(
+                    CommentModerationAppeal.state == "pending",
+                    *([CommentModerationAppeal.created_at >= since] if since else []),
+                )
+                .order_by(CommentModerationAppeal.created_at, CommentModerationAppeal.id)
+                .offset(offset)
+                .limit(51)
+            )
+            appeals = []
+            for appeal, decision in appeal_result.all():
+                if decision.target_type == "comment":
+                    target = await db.get(Comment, decision.target_id)
+                    target_revision = None
+                else:
+                    target_revision = await db.get(CommentRevision, decision.target_id)
+                    target = (
+                        await db.get(Comment, target_revision.comment_id)
+                        if target_revision
+                        else None
+                    )
+                if target is not None:
+                    appeals.append((appeal, decision, target, target_revision))
+            queue_has_more = queue_has_more or len(appeals) > 50
+            appeals = appeals[:50]
     return await render_template(
         "admin/comments.html",
         pending=pending,
-        all_comments=all_comments,
+        revisions=revisions,
+        appeals=appeals,
+        selected_type=selected,
+        page=page,
+        has_prev=page > 1,
+        has_next=queue_has_more,
+        since=since_raw,
+        reasons=REASON_CATALOG,
+        noindex=True,
     )
 
 
-@admin_bp.post("/comments/<comment_id>/approve")
-async def comment_approve(comment_id: str):
+@admin_bp.get("/comments/transparency")
+async def comments_transparency() -> ResponseReturnValue:
     _require_session()
-    require_role("editor")
-    """Kommentar freischalten."""
-    from datetime import UTC
-    from datetime import datetime as dt
+    require_role("moderator")
+    from datetime import UTC, date, datetime, timedelta
 
-    from arborpress.models.content import Comment, CommentStatus
+    from arborpress.comments import moderation_transparency
+
+    today = datetime.now(UTC).date()
+    try:
+        end_day = (
+            date.fromisoformat(request.args.get("end", "")) if request.args.get("end") else today
+        )
+        start_day = (
+            date.fromisoformat(request.args.get("start", ""))
+            if request.args.get("start")
+            else end_day - timedelta(days=30)
+        )
+    except ValueError:
+        abort(400)
+    if start_day >= end_day or (end_day - start_day).days > 366:
+        abort(400)
+    async for db in get_db_session():
+        report = await moderation_transparency(
+            db,
+            start=datetime.combine(start_day, datetime.min.time()),
+            end=datetime.combine(end_day + timedelta(days=1), datetime.min.time()),
+        )
+    return await render_template("admin/comment_transparency.html", report=report, noindex=True)
+
+
+@admin_bp.get("/comments/<comment_id>")
+async def comment_detail(comment_id: str) -> ResponseReturnValue:
+    _require_session()
+    require_role("moderator")
+    from arborpress.comments import REASON_CATALOG, decisions_for_target
+    from arborpress.models.content import (
+        Comment,
+        CommentModerationAppeal,
+        CommentRevision,
+    )
 
     async for db in get_db_session():
-        stmt = select(Comment).where(Comment.id == comment_id)
-        result = await db.execute(stmt)
-        comment = result.scalar_one_or_none()
+        comment = await db.get(Comment, comment_id)
         if comment is None:
             abort(404)
-        comment.status = CommentStatus.APPROVED
-        now = dt.now(UTC).replace(tzinfo=None)
-        comment.approved_at = now
-        comment.published_at = now
-        await db.commit()
+        revisions_result = await db.execute(
+            select(CommentRevision)
+            .where(CommentRevision.comment_id == comment.id)
+            .order_by(CommentRevision.revision_number)
+        )
+        revisions = list(revisions_result.scalars().all())
+        decisions = await decisions_for_target(db, target_type="comment", target_ids=[comment.id])
+        if revisions:
+            decisions += await decisions_for_target(
+                db, target_type="revision", target_ids=[revision.id for revision in revisions]
+            )
+        decisions.sort(key=lambda item: (item.created_at, item.id))
+        decision_ids = [item.id for item in decisions]
+        appeals_result = await db.execute(
+            select(CommentModerationAppeal).where(
+                CommentModerationAppeal.decision_id.in_(decision_ids or [""])
+            )
+        )
+        appeals = {str(item.decision_id): item for item in appeals_result.scalars().all()}
+    return await render_template(
+        "admin/comment_detail.html",
+        comment=comment,
+        revisions=revisions,
+        decisions=decisions,
+        appeals=appeals,
+        reasons=REASON_CATALOG,
+        noindex=True,
+    )
 
-    return redirect(url_for("admin.comments_list"))
+
+async def _apply_comment_decision(
+    comment_id: str, outcome: str, default_reason: str
+) -> ResponseReturnValue:
+    from quart import flash
+
+    from arborpress.comments import ModerationError, moderate_comment
+
+    form = await request.form
+    actor_id = str(session.get("user_id") or "")
+    async for db in get_db_session():
+        try:
+            decision = await moderate_comment(
+                db,
+                comment_id=comment_id,
+                actor_user_id=actor_id,
+                outcome=outcome,
+                reason_code=(form.get("reason_code") or default_reason).strip(),
+                human_reason=form.get("human_reason"),
+                rule_reference=form.get("rule_reference"),
+                restriction_type=form.get("restriction_type") or None,
+            )
+            await db.commit()
+        except ModerationError as exc:
+            await db.rollback()
+            await flash(str(exc), "error")
+            return redirect(url_for("admin.comment_detail", comment_id=comment_id), code=303)
+        await flash(f"Moderation decision recorded ({decision.reason_code}).", "success")
+    return redirect(url_for("admin.comment_detail", comment_id=comment_id), code=303)
+
+
+@admin_bp.post("/comments/<comment_id>/approve")
+async def comment_approve(comment_id: str) -> ResponseReturnValue:
+    _require_session()
+    require_role("moderator")
+    return await _apply_comment_decision(comment_id, "approve", "no_violation")
 
 
 @admin_bp.post("/comments/<comment_id>/reject")
-async def comment_reject(comment_id: str):
+async def comment_reject(comment_id: str) -> ResponseReturnValue:
     _require_session()
-    require_role("editor")
-    """Kommentar ablehnen."""
-    from arborpress.models.content import Comment, CommentStatus
-
-    async for db in get_db_session():
-        stmt = select(Comment).where(Comment.id == comment_id)
-        result = await db.execute(stmt)
-        comment = result.scalar_one_or_none()
-        if comment is None:
-            abort(404)
-        comment.status = CommentStatus.REJECTED
-        await db.commit()
-
-    return redirect(url_for("admin.comments_list"))
+    require_role("moderator")
+    return await _apply_comment_decision(comment_id, "reject", "rule_violation")
 
 
 @admin_bp.post("/comments/<comment_id>/spam")
-async def comment_spam(comment_id: str):
+async def comment_spam(comment_id: str) -> ResponseReturnValue:
     _require_session()
-    require_role("editor")
-    """Kommentar als Spam markieren."""
-    from arborpress.models.content import Comment, CommentStatus
+    require_role("moderator")
+    return await _apply_comment_decision(comment_id, "spam", "spam")
 
+
+@admin_bp.post("/comments/<comment_id>/decision")
+async def comment_decision(comment_id: str) -> ResponseReturnValue:
+    _require_session()
+    require_role("moderator")
+    form = await request.form
+    outcome = (form.get("outcome") or "").strip()
+    if outcome not in {"approve", "reject", "spam", "delete", "restore"}:
+        abort(400)
+    return await _apply_comment_decision(comment_id, outcome, "rule_violation")
+
+
+@admin_bp.post("/comment-revisions/<revision_id>/decision")
+async def comment_revision_decision(revision_id: str) -> ResponseReturnValue:
+    _require_session()
+    require_role("moderator")
+    from quart import flash
+
+    from arborpress.comments import ModerationError, moderate_revision
+
+    form = await request.form
+    outcome = (form.get("outcome") or "").strip()
+    if outcome not in {"approve", "reject"}:
+        abort(400)
     async for db in get_db_session():
-        stmt = select(Comment).where(Comment.id == comment_id)
-        result = await db.execute(stmt)
-        comment = result.scalar_one_or_none()
-        if comment is None:
-            abort(404)
-        comment.status = CommentStatus.SPAM
-        await db.commit()
+        try:
+            await moderate_revision(
+                db,
+                revision_id=revision_id,
+                actor_user_id=str(session.get("user_id") or ""),
+                outcome=cast(Literal["approve", "reject"], outcome),
+                reason_code=(form.get("reason_code") or "rule_violation").strip(),
+                human_reason=form.get("human_reason"),
+                rule_reference=form.get("rule_reference"),
+            )
+            await db.commit()
+        except ModerationError as exc:
+            await db.rollback()
+            await flash(str(exc), "error")
+    return redirect(url_for("admin.comments_list", type="revisions"), code=303)
 
-    return redirect(url_for("admin.comments_list"))
+
+@admin_bp.post("/comment-appeals/<appeal_id>/review")
+async def comment_appeal_review(appeal_id: str) -> ResponseReturnValue:
+    _require_session()
+    require_role("moderator")
+    from quart import flash
+
+    from arborpress.comments import ModerationError, review_comment_appeal
+
+    form = await request.form
+    outcome = (form.get("outcome") or "").strip()
+    if outcome not in {"upheld", "overturned"}:
+        abort(400)
+    async for db in get_db_session():
+        try:
+            appeal = await review_comment_appeal(
+                db,
+                appeal_id=appeal_id,
+                reviewer_user_id=str(session.get("user_id") or ""),
+                outcome=cast(Literal["upheld", "overturned"], outcome),
+                reviewer_reason=form.get("reviewer_reason", ""),
+            )
+            await db.commit()
+        except ModerationError as exc:
+            await db.rollback()
+            await flash(str(exc), "error")
+        else:
+            await flash(f"Appeal {appeal.state}.", "success")
+    return redirect(url_for("admin.comments_list", type="appeals"), code=303)
 
 
 # ---------------------------------------------------------------------------
@@ -1699,7 +1924,12 @@ async def site_settings_save():
                     "edit_window_minutes": max(0, int(form.get("edit_window_minutes") or 30)),
                     "max_user_edits": max(0, int(form.get("max_user_edits") or 2)),
                     "trusted_edit_bypass": form.get("trusted_edit_bypass") == "1",
-                    "confirmation_ttl_hours": min(168, max(1, int(form.get("confirmation_ttl_hours") or 24))),
+                    "confirmation_ttl_hours": min(
+                        168, max(1, int(form.get("confirmation_ttl_hours") or 24))
+                    ),
+                    "appeal_window_days": min(
+                        90, max(1, int(form.get("appeal_window_days") or 14))
+                    ),
                     "allow_anonymous": form.get("allow_anonymous") == "1",
                     "allow_replies": form.get("allow_replies") == "1",
                     "allow_quotes": form.get("allow_quotes") == "1",
@@ -1829,15 +2059,13 @@ async def _locked_theme_settings(db: AsyncSession) -> dict[str, Any]:
     from arborpress.models.settings import SiteSetting
 
     row = (
-        await db.execute(
-            select(SiteSetting).where(SiteSetting.key == "theme").with_for_update()
-        )
+        await db.execute(select(SiteSetting).where(SiteSetting.key == "theme").with_for_update())
     ).scalar_one_or_none()
     merged = get_defaults("theme")
     if row is not None:
         try:
             stored = json.loads(row.value)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             stored = {}
         if isinstance(stored, dict):
             merged.update(stored)
@@ -1871,9 +2099,7 @@ def _theme_effective_ids(registry: Any, settings: Mapping[str, Any]) -> dict[str
     }
 
 
-def _theme_fallback_reasons(
-    registry: Any, settings: Mapping[str, Any]
-) -> dict[str, str | None]:
+def _theme_fallback_reasons(registry: Any, settings: Mapping[str, Any]) -> dict[str, str | None]:
     reasons: dict[str, str | None] = {}
     for kind, key, default_id in (
         ("public", "active", "default"),
@@ -2239,9 +2465,7 @@ async def theme_preview_stop() -> ResponseReturnValue:
 
 
 @admin_bp.get("/themes/<theme_id>/edit/<kind>/<path:relative>")
-async def theme_file_edit(
-    theme_id: str, kind: str, relative: str
-) -> ResponseReturnValue:
+async def theme_file_edit(theme_id: str, kind: str, relative: str) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from arborpress.themes.management import (
@@ -2287,9 +2511,7 @@ async def theme_file_edit(
 
 
 @admin_bp.post("/themes/<theme_id>/edit/<kind>/<path:relative>")
-async def theme_file_save(
-    theme_id: str, kind: str, relative: str
-) -> ResponseReturnValue:
+async def theme_file_save(theme_id: str, kind: str, relative: str) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from quart import flash
@@ -2335,9 +2557,7 @@ async def theme_file_save(
 
 
 @admin_bp.post("/themes/<theme_id>/override/reset/<kind>/<path:relative>")
-async def theme_override_reset(
-    theme_id: str, kind: str, relative: str
-) -> ResponseReturnValue:
+async def theme_override_reset(theme_id: str, kind: str, relative: str) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from quart import flash
@@ -2430,9 +2650,7 @@ async def theme_manifest_save(theme_id: str) -> ResponseReturnValue:
 
 
 @admin_bp.post("/themes/<theme_id>/revisions/<revision_id>/restore")
-async def theme_revision_restore(
-    theme_id: str, revision_id: str
-) -> ResponseReturnValue:
+async def theme_revision_restore(theme_id: str, revision_id: str) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     from quart import flash

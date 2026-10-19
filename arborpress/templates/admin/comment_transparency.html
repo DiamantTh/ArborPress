@@ -1,0 +1,14 @@
+{% extends "admin/_base.html" %}
+{% block title %}Moderationstransparenz – Admin{% endblock %}
+{% block admin_content %}
+<p><a href="{{ url_for('admin.comments_list') }}">← Moderationsqueue</a></p>
+<h1>Anonymisierte Moderationsaggregation</h1>
+<p>Zeitraum: {{ report.start }} bis {{ report.end }} (Ende exklusiv). Diese interne Auswertung enthält keine einzelnen Kommentare.</p>
+<h2>Entscheidungen</h2>
+{% if report.decisions %}<table>
+  <thead><tr><th>Reason</th><th>Restriction</th><th>Quelle</th><th>Outcome</th><th>Anzahl</th></tr></thead>
+  <tbody>{% for row in report.decisions %}<tr><td>{{ row.reason_code }}</td><td>{{ row.restriction_type }}</td><td>{{ row.decision_source }}</td><td>{{ row.outcome }}</td><td>{{ row.count }}</td></tr>{% endfor %}</tbody>
+</table>{% else %}<p>Keine Entscheidungen im Zeitraum.</p>{% endif %}
+<h2>Berufungen</h2>
+<ul>{% for state, count in report.appeals.items() %}<li>{{ state }}: {{ count }}</li>{% else %}<li>Keine Berufungen im Zeitraum.</li>{% endfor %}</ul>
+{% endblock %}

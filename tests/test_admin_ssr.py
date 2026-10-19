@@ -252,14 +252,14 @@ async def test_theme_options_form_saves_and_rejects_stale_concurrent_edit(
     theme_root = get_runtime_paths().themes / "options-ssr"
     theme_root.mkdir(parents=True)
     (theme_root / "theme.toml").write_text(
-        '''name = "Options SSR"
+        """name = "Options SSR"
 version = "1.0.0"
 type = "public"
 [options.accent]
 type = "color"
 label = "Accent"
 default = "#123456"
-''',
+""",
         encoding="utf-8",
     )
     get_theme_registry().load()
@@ -293,9 +293,7 @@ default = "#123456"
 
     from arborpress.themes.management import list_revisions
 
-    revision = next(
-        item for item in list_revisions("options-ssr") if item["kind"] == "options"
-    )
+    revision = next(item for item in list_revisions("options-ssr") if item["kind"] == "options")
     restored = await client.post(
         f"/admin/themes/options-ssr/revisions/{revision['id']}/restore",
         form={"_csrf": token.group(1)},
@@ -323,12 +321,12 @@ async def test_broken_admin_theme_preview_recovers_to_builtin_fallback(
     request.addfinalizer(lambda: shutil.rmtree(theme_root, ignore_errors=True))
     (theme_root / "templates/admin").mkdir(parents=True)
     (theme_root / "theme.toml").write_text(
-        '''name = "Broken admin preview"
+        """name = "Broken admin preview"
 version = "1.0.0"
 type = "admin"
 capabilities = ["templates"]
 templates = ["admin/dashboard.html"]
-''',
+""",
         encoding="utf-8",
     )
     (theme_root / "templates/admin/dashboard.html").write_text(
@@ -369,3 +367,74 @@ def test_settings_passed_to_theme_templates_are_secret_redacted() -> None:
         "nested": [{"private_key": "", "label": "safe"}],
     }
     assert safe["mail"]["smtp_password"] != source["mail"]["smtp_password"]
+
+
+@pytest.mark.asyncio
+async def test_comment_moderation_queue_detail_and_decision_are_server_rendered(
+    client: QuartClient,
+    test_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from arborpress.models.content import Comment, CommentStatus, Post, PostStatus
+
+    await _login_admin(client, test_engine, monkeypatch)
+    factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    suffix = uuid.uuid4().hex[:10]
+    async with factory() as db:
+        post = Post(
+            short_id=uuid.uuid4().hex[:8],
+            slug=f"moderate-{suffix}",
+            title="Moderation detail article",
+            body_md="",
+            body_html="",
+            status=PostStatus.PUBLISHED,
+        )
+        db.add(post)
+        await db.flush()
+        comment = Comment(
+            post_id=post.id,
+            author_name="<script>guest()</script>",
+            author_email="private@example.test",
+            body="<script>comment()</script>",
+            status=CommentStatus.PENDING_MODERATION,
+        )
+        db.add(comment)
+        await db.commit()
+        comment_id = str(comment.id)
+
+    queue_response = await client.get("/admin/comments?type=comments")
+    assert queue_response.status_code == 200
+    queue = await queue_response.get_data(as_text=True)
+    assert "Ausstehende Kommentare" in queue
+    assert "&lt;script&gt;guest()&lt;/script&gt;" in queue
+    assert "private@example.test" not in queue
+
+    detail_response = await client.get(f"/admin/comments/{comment_id}")
+    assert detail_response.status_code == 200
+    detail = await detail_response.get_data(as_text=True)
+    assert "Moderation detail article" in detail
+    assert "&lt;script&gt;comment()&lt;/script&gt;" in detail
+    assert "private@example.test" in detail
+    csrf = re.search(r'<input type="hidden" name="_csrf" value="([0-9a-f]+)">', detail)
+    assert csrf is not None
+
+    rejected_csrf = await client.post(
+        f"/admin/comments/{comment_id}/decision",
+        form={"outcome": "approve", "reason_code": "no_violation"},
+    )
+    assert rejected_csrf.status_code == 403
+
+    response = await client.post(
+        f"/admin/comments/{comment_id}/decision",
+        form={
+            "_csrf": csrf.group(1),
+            "outcome": "approve",
+            "reason_code": "no_violation",
+        },
+    )
+    assert response.status_code == 303
+    async with factory() as db:
+        updated = await db.get(Comment, comment_id)
+        assert updated is not None and updated.status == CommentStatus.APPROVED

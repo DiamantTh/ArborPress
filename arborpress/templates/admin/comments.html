@@ -1,221 +1,88 @@
 {% extends "admin/_base.html" %}
-
-{% block title %}Kommentare – Admin{% endblock %}
-
+{% block title %}Kommentar-Moderation – Admin{% endblock %}
 {% block admin_content %}
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem">
-  <h1 style="font-size:1.5rem;font-weight:800">Kommentar-Moderation</h1>
-  <span style="background:#fef3c7;color:#92400e;padding:.3rem .8rem;border-radius:999px;font-size:.82rem;font-weight:600">
-    {{ pending|length }} zur Freischaltung
-  </span>
-</div>
-
-{# ---- Freizuschaltende Kommentare ---------------------------------------- #}
-{% if pending %}
-<section style="margin-bottom:2.5rem">
-  <h2 style="font-size:1.1rem;font-weight:700;margin-bottom:1rem;
-             border-bottom:2px solid #fde68a;padding-bottom:.4rem;color:#92400e">
-    ⏳ Warten auf Freischaltung ({{ pending|length }})
-  </h2>
-  {% for comment in pending %}
-  <div style="background:#fff;border:1px solid #e2e8f0;border-radius:.5rem;
-              padding:1.25rem;margin-bottom:1rem;box-shadow:0 1px 3px rgba(0,0,0,.07)">
-    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem">
-      <div>
-        <strong>{{ comment.author_name }}</strong>
-        {% if comment.author_email %}<span style="color:#6b7280;font-size:.85rem">&lt;{{ comment.author_email }}&gt;</span>{% endif %}
-        {% if comment.author_url %}
-          <a href="{{ comment.author_url }}" target="_blank" rel="noopener"
-             style="font-size:.8rem;margin-left:.5rem">🔗</a>
-        {% endif %}
-      </div>
-      <div style="font-size:.8rem;color:#6b7280">
-        Artikel: <a href="{{ url_for('public.post_detail', slug=comment.post.slug) }}"
-                    target="_blank"><strong>{{ comment.post.title }}</strong></a>
-        &nbsp;·&nbsp;
-        Bestätigt: {{ comment.confirmed_at.strftime('%d.%m.%Y %H:%M') if comment.confirmed_at }}
-      </div>
-    </div>
-
-    <blockquote style="border-left:3px solid #2563eb;padding:.5rem 1rem;
-                       background:#f8f9fa;border-radius:0 .35rem .35rem 0;
-                       font-size:.95rem;margin-bottom:1rem;white-space:pre-wrap">{{ comment.body }}</blockquote>
-
-    {# ---- IP / RDAP Info ---- #}
-    <details style="margin-bottom:1rem;font-size:.82rem">
-      <summary style="cursor:pointer;color:#4b5563;user-select:none">
-        🌐 Netzwerk-Info
-        {% if comment.ip_address %} · {{ comment.ip_address }}{% endif %}
-        {% if comment.country_code %}
-          · <span title="{{ comment.country_code }}">{{ comment.country_code | country_flag }}</span>
-        {% endif %}
-      </summary>
-      <div style="margin-top:.5rem;padding:.75rem;background:#f8f9fa;
-                  border:1px solid #e2e8f0;border-radius:.35rem">
-        {% if comment.ip_address %}
-          <div><strong>IP:</strong> <code>{{ comment.ip_address }}</code></div>
-        {% endif %}
-        {% if comment.user_agent %}
-          <div style="margin-top:.25rem;word-break:break-all">
-            <strong>User-Agent:</strong> {{ comment.user_agent }}
-          </div>
-        {% endif %}
-        {% if comment.rdap_json %}
-          {% set rdap = comment.rdap_json | from_json %}
-          <hr style="margin:.5rem 0;border:none;border-top:1px solid #e2e8f0">
-          {% if rdap.org %}
-            <div><strong>Organisation:</strong> {{ rdap.org }}</div>
-          {% endif %}
-          {% if rdap.name %}
-            <div><strong>Netzname:</strong> {{ rdap.name }}</div>
-          {% endif %}
-          {% if rdap.handle %}
-            <div><strong>Handle:</strong> {{ rdap.handle }}</div>
-          {% endif %}
-          {% if rdap.range %}
-            <div><strong>IP-Range:</strong> {{ rdap.range }}</div>
-          {% endif %}
-          {% if rdap.country %}
-            <div><strong>Land (RIR):</strong>
-              {{ rdap.country | country_flag }} {{ rdap.country }}
-            </div>
-          {% endif %}
-          {% if rdap.rir %}
-            <div><strong>RIR:</strong> {{ rdap.rir }}</div>
-          {% endif %}
-          {% if rdap.type %}
-            <div><strong>Typ:</strong> {{ rdap.type }}</div>
-          {% endif %}
-          {% if rdap.abuse_email %}
-            <div><strong>Abuse-Kontakt:</strong>
-              <a href="mailto:{{ rdap.abuse_email }}">{{ rdap.abuse_email }}</a>
-            </div>
-          {% endif %}
-          {% if rdap.remarks %}
-            <div style="margin-top:.25rem;color:#6b7280">
-              <em>{{ rdap.remarks }}</em>
-            </div>
-          {% endif %}
-        {% elif comment.ip_address %}
-          <div style="color:#9ca3af;margin-top:.25rem">RDAP-Daten noch nicht geladen.</div>
-        {% endif %}
-      </div>
-    </details>
-
-    <div style="display:flex;gap:.75rem;flex-wrap:wrap">
-      <form method="post"
-            action="{{ url_for('admin.comment_approve', comment_id=comment.id) }}">
-        {{ csrf_input() }}
-        <button type="submit"
-                style="background:#16a34a;color:#fff;border:none;padding:.4rem 1rem;
-                       border-radius:.35rem;font-weight:600;cursor:pointer;font-size:.88rem">
-          ✓ Freischalten
-        </button>
-      </form>
-      <form method="post"
-            action="{{ url_for('admin.comment_reject', comment_id=comment.id) }}">
-        {{ csrf_input() }}
-        <button type="submit"
-                style="background:#dc2626;color:#fff;border:none;padding:.4rem 1rem;
-                       border-radius:.35rem;font-weight:600;cursor:pointer;font-size:.88rem">
-          ✗ Ablehnen
-        </button>
-      </form>
-      <form method="post"
-            action="{{ url_for('admin.comment_spam', comment_id=comment.id) }}">
-        {{ csrf_input() }}
-        <button type="submit"
-                style="background:#6b7280;color:#fff;border:none;padding:.4rem 1rem;
-                       border-radius:.35rem;font-weight:600;cursor:pointer;font-size:.88rem">
-          🚫 Spam
-        </button>
-      </form>
-    </div>
-  </div>
+<header class="admin-page-header">
+  <h1>Kommentar-Moderation</h1>
+  <a href="{{ url_for('admin.comments_transparency') }}">Transparenz-Auswertung</a>
+</header>
+<nav aria-label="Moderationsfilter" class="comment-queue-filters">
+  {% for key, label in [('all', 'Alle'), ('comments', 'Kommentare'), ('revisions', 'Änderungen'), ('appeals', 'Berufungen')] %}
+    <a href="{{ url_for('admin.comments_list', type=key) }}" {% if selected_type == key %}aria-current="page"{% endif %}>{{ label }}</a>
   {% endfor %}
+  <form method="get" action="{{ url_for('admin.comments_list') }}">
+    <input type="hidden" name="type" value="{{ selected_type }}">
+    <label>Ab Datum <input type="date" name="since" value="{{ since or '' }}"></label>
+    <button type="submit">Filtern</button>
+  </form>
+</nav>
+
+{% if selected_type in ('all', 'comments') %}
+<section aria-labelledby="pending-comments-heading">
+  <h2 id="pending-comments-heading">Ausstehende Kommentare <span>{{ pending|length }}</span></h2>
+  {% if pending %}<ol class="moderation-queue">
+    {% for comment in pending %}<li>
+      <h3><a href="{{ url_for('admin.comment_detail', comment_id=comment.id) }}">{{ comment.author_name }}</a></h3>
+      <p>{{ comment.post.title }} · {{ comment.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+      <blockquote>{{ comment.body }}</blockquote>
+      <a href="{{ url_for('admin.comment_detail', comment_id=comment.id) }}">Details und Entscheidung</a>
+    </li>{% endfor %}
+  </ol>{% else %}<p>Keine ausstehenden Kommentare.</p>{% endif %}
 </section>
-{% else %}
-<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:.5rem;
-            padding:1.25rem;margin-bottom:2rem;color:#166534">
-  ✓ Keine Kommentare zur Freischaltung. Super!
-</div>
 {% endif %}
 
-{# ---- Alle Kommentare (Übersicht) ---------------------------------------- #}
-<section>
-  <h2 style="font-size:1.1rem;font-weight:700;margin-bottom:1rem;
-             border-bottom:1px solid #e2e8f0;padding-bottom:.4rem">
-    Alle Kommentare (letzte 200)
-  </h2>
-  {% if all_comments %}
-  <table style="width:100%;border-collapse:collapse;font-size:.88rem">
-    <thead>
-      <tr style="background:#f8f9fa">
-        <th style="text-align:left;padding:.5rem .75rem;border-bottom:2px solid #e2e8f0">Autor</th>
-        <th style="text-align:left;padding:.5rem .75rem;border-bottom:2px solid #e2e8f0">Artikel</th>
-        <th style="text-align:left;padding:.5rem .75rem;border-bottom:2px solid #e2e8f0">Status</th>
-        <th style="text-align:left;padding:.5rem .75rem;border-bottom:2px solid #e2e8f0">Erstellt</th>
-        <th style="padding:.5rem .75rem;border-bottom:2px solid #e2e8f0"></th>
-      </tr>
-    </thead>
-    <tbody>
-    {% for c in all_comments %}
-    {% set status_colors = {
-      'pending':   '#fef3c7,#92400e',
-      'confirmed': '#eff6ff,#1d4ed8',
-      'approved':  '#f0fdf4,#166534',
-      'rejected':  '#fef2f2,#991b1b',
-      'spam':      '#f3f4f6,#4b5563',
-    } %}
-    <tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:.5rem .75rem">
-        <strong>{{ c.author_name }}</strong>
-        {% if c.country_code %}
-          <span title="{{ c.country_code }}">{{ c.country_code | country_flag }}</span>
-        {% endif %}
-        <br>
-        {% if c.author_email %}<span style="color:#6b7280;font-size:.8rem">{{ c.author_email }}</span>{% endif %}
-        {% if c.ip_address %}
-          <br><code style="font-size:.75rem;color:#9ca3af">{{ c.ip_address }}</code>
-        {% endif %}
-      </td>
-      <td style="padding:.5rem .75rem">{{ c.post.title }}</td>
-      <td style="padding:.5rem .75rem">
-        <span style="padding:.15rem .6rem;border-radius:999px;font-size:.78rem;font-weight:600;
-                     background:{{ status_colors.get(c.status.value, '#e2e8f0,#374151').split(',')[0] }};
-                     color:{{ status_colors.get(c.status.value, '#e2e8f0,#374151').split(',')[1] }}">
-          {{ c.status.value }}
-        </span>
-      </td>
-      <td style="padding:.5rem .75rem;color:#6b7280;font-size:.8rem">
-        {{ c.created_at.strftime('%d.%m.%Y') }}
-      </td>
-      <td style="padding:.5rem .75rem">
-        {% if c.status.value == 'confirmed' %}
-        <form method="post"
-              action="{{ url_for('admin.comment_approve', comment_id=c.id) }}"
-              style="display:inline">
-          {{ csrf_input() }}
-          <button type="submit"
-                  style="background:#16a34a;color:#fff;border:none;padding:.25rem .65rem;
-                         border-radius:.25rem;font-size:.8rem;cursor:pointer">✓</button>
-        </form>
-        <form method="post"
-              action="{{ url_for('admin.comment_reject', comment_id=c.id) }}"
-              style="display:inline">
-          {{ csrf_input() }}
-          <button type="submit"
-                  style="background:#dc2626;color:#fff;border:none;padding:.25rem .65rem;
-                         border-radius:.25rem;font-size:.8rem;cursor:pointer">✗</button>
-        </form>
-        {% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p style="color:#6b7280">Noch keine Kommentare vorhanden.</p>
-  {% endif %}
+{% if selected_type in ('all', 'revisions') %}
+<section aria-labelledby="pending-revisions-heading">
+  <h2 id="pending-revisions-heading">Ausstehende Änderungen <span>{{ revisions|length }}</span></h2>
+  {% if revisions %}<ol class="moderation-queue">
+    {% for revision in revisions %}<li>
+      <h3><a href="{{ url_for('admin.comment_detail', comment_id=revision.comment_id) }}">{{ revision.comment.author_name }} · Änderung {{ revision.revision_number }}</a></h3>
+      <p>{{ revision.comment.post.title }} · {{ revision.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+      <details><summary>Fassungen vergleichen</summary>
+        <h4>Veröffentlicht</h4><pre>{{ revision.previous_body }}</pre>
+        <h4>Vorgeschlagen</h4><pre>{{ revision.body }}</pre>
+      </details>
+      <form method="post" action="{{ url_for('admin.comment_revision_decision', revision_id=revision.id) }}">
+        {{ csrf_input() }}<input type="hidden" name="outcome" value="approve">
+        <input type="hidden" name="reason_code" value="no_violation">
+        <button type="submit">Änderung freigeben</button>
+      </form>
+      <form method="post" action="{{ url_for('admin.comment_revision_decision', revision_id=revision.id) }}">
+        {{ csrf_input() }}<input type="hidden" name="outcome" value="reject">
+        <label>Grund <select name="reason_code">{% for code, reason in reasons.items() %}<option value="{{ code }}">{{ reason.label }}</option>{% endfor %}</select></label>
+        <label>Erklärung <textarea name="human_reason" maxlength="2000"></textarea></label>
+        <button type="submit">Änderung ablehnen</button>
+      </form>
+    </li>{% endfor %}
+  </ol>{% else %}<p>Keine ausstehenden Änderungen.</p>{% endif %}
 </section>
+{% endif %}
+
+{% if selected_type in ('all', 'appeals') %}
+<section aria-labelledby="pending-appeals-heading">
+  <h2 id="pending-appeals-heading">Ausstehende Berufungen <span>{{ appeals|length }}</span></h2>
+  {% if appeals %}<ol class="moderation-queue">
+    {% for appeal, decision, comment, revision in appeals %}<li>
+      <h3>{{ comment.author_name }} · {{ reasons.get(decision.reason_code).label if reasons.get(decision.reason_code) else decision.reason_code }}</h3>
+      <p>{{ comment.post.title }} · Eingereicht {{ appeal.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+      <blockquote>{{ appeal.statement }}</blockquote>
+      {% if revision %}<details><summary>Vorgeschlagene Revision ansehen</summary><pre>{{ revision.previous_body }}</pre><pre>{{ revision.body }}</pre></details>{% endif %}
+      {% if decision.actor_user_id == current_user_id %}<p role="note">Du hast die ursprüngliche Entscheidung getroffen. Selbstprüfung ist nur zulässig, wenn kein anderer aktiver Moderator verfügbar ist.</p>{% endif %}
+      <form method="post" action="{{ url_for('admin.comment_appeal_review', appeal_id=appeal.id) }}">
+        {{ csrf_input() }}
+        <label>Review-Begründung <textarea name="reviewer_reason" required maxlength="2000"></textarea></label>
+        <button name="outcome" value="upheld">Entscheidung bestätigen</button>
+        <button name="outcome" value="overturned">Entscheidung aufheben</button>
+      </form>
+    </li>{% endfor %}
+  </ol>{% else %}<p>Keine offenen Berufungen.</p>{% endif %}
+</section>
+{% endif %}
+
+{% if has_prev or has_next %}
+<nav aria-label="Seiten der Moderationsqueue" class="pagination">
+  {% if has_prev %}<a rel="prev" href="{{ url_for('admin.comments_list', type=selected_type, page=page - 1, since=since) }}">Vorherige</a>{% endif %}
+  <span>Seite {{ page }}</span>
+  {% if has_next %}<a rel="next" href="{{ url_for('admin.comments_list', type=selected_type, page=page + 1, since=since) }}">Nächste</a>{% endif %}
+</nav>
+{% endif %}
 {% endblock %}

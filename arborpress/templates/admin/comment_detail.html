@@ -1,0 +1,80 @@
+{% extends "admin/_base.html" %}
+{% block title %}Kommentarentscheidung – Admin{% endblock %}
+{% block admin_content %}
+<p><a href="{{ url_for('admin.comments_list') }}">← Zur Moderationsqueue</a></p>
+<h1>Kommentar-Details</h1>
+<dl>
+  <dt>Autor</dt><dd>{{ comment.author_name }}</dd>
+  <dt>Status</dt><dd>{{ comment.status.value }}</dd>
+  <dt>Artikel</dt><dd><a href="{{ url_for('public.post_detail', slug=comment.post.slug) }}">{{ comment.post.title }}</a></dd>
+  <dt>Thread</dt><dd>{% if comment.parent_id %}<a href="{{ url_for('admin.comment_detail', comment_id=comment.parent_id) }}">Parent {{ comment.parent_id }}</a>{% else %}Root{% endif %}</dd>
+  <dt>Zitat</dt><dd>{% if comment.quote_of_id %}<a href="{{ url_for('admin.comment_detail', comment_id=comment.quote_of_id) }}">{{ comment.quote_of_id }}</a>{% else %}Keines{% endif %}</dd>
+  <dt>Erstellt</dt><dd>{{ comment.created_at.isoformat() }}</dd>
+  {% if comment.author_email %}<dt>Gast-E-Mail</dt><dd>{{ comment.author_email }}</dd>{% endif %}
+</dl>
+<h2>Aktuelle Fassung</h2><div class="comment-body">{{ comment.body }}</div>
+{% if comment.ip_address %}<details><summary>Interne Netzwerkdetails</summary><p>{{ comment.ip_address }}</p><p>{{ comment.user_agent }}</p></details>{% endif %}
+
+{% if comment.status.value in ('pending_moderation', 'approved', 'rejected', 'spam', 'deleted') %}
+<section aria-labelledby="decision-heading">
+  <h2 id="decision-heading">Moderationsentscheidung</h2>
+  <form method="post" action="{{ url_for('admin.comment_decision', comment_id=comment.id) }}">
+    {{ csrf_input() }}
+    <label>Aktion
+      <select name="outcome" required>
+        {% if comment.status.value == 'pending_moderation' %}
+          <option value="approve">Freigeben</option><option value="reject">Ablehnen</option><option value="spam">Als Spam markieren</option>
+        {% elif comment.status.value == 'approved' %}
+          <option value="delete">Entfernen</option><option value="spam">Als Spam markieren</option>
+        {% else %}<option value="restore">Wiederherstellen</option>{% endif %}
+      </select>
+    </label>
+    <label>Reason Code
+      <select name="reason_code" required>{% for code, item in reasons.items() %}<option value="{{ code }}">{{ item.label }}</option>{% endfor %}</select>
+    </label>
+    <label>Begründung <textarea name="human_reason" maxlength="2000"></textarea></label>
+    <label>Regel-/Rechtsreferenz <input name="rule_reference" maxlength="256"></label>
+    <button type="submit">Entscheidung speichern</button>
+  </form>
+</section>
+{% endif %}
+
+<section aria-labelledby="revision-history-heading">
+  <h2 id="revision-history-heading">Interne Revisionshistorie</h2>
+  {% if revisions %}<ol>
+    {% for revision in revisions %}<li>
+      <h3>Revision {{ revision.revision_number }} · {{ revision.status.value }} · {{ revision.created_at.isoformat() }}</h3>
+      <p>Editor: {{ revision.editor_user_id or 'gelöschtes Konto / system' }}</p>
+      <details><summary>Snapshot ansehen</summary>
+        <h4>Vorher</h4><pre>{{ revision.previous_body }}</pre>
+        <h4>Vorschlag</h4><pre>{{ revision.body }}</pre>
+      </details>
+      {% if revision.status.value == 'pending' %}
+      <form method="post" action="{{ url_for('admin.comment_revision_decision', revision_id=revision.id) }}">
+        {{ csrf_input() }}
+        <label>Reason Code <select name="reason_code">{% for code, item in reasons.items() %}<option value="{{ code }}">{{ item.label }}</option>{% endfor %}</select></label>
+        <label>Begründung <textarea name="human_reason" maxlength="2000"></textarea></label>
+        <button name="outcome" value="approve">Freigeben</button>
+        <button name="outcome" value="reject">Ablehnen</button>
+      </form>
+      {% endif %}
+    </li>{% endfor %}
+  </ol>{% else %}<p>Keine Revisionen vorhanden.</p>{% endif %}
+</section>
+
+<section aria-labelledby="decision-history-heading">
+  <h2 id="decision-history-heading">Entscheidungsverlauf</h2>
+  {% if decisions %}<ol>
+    {% for decision in decisions %}<li>
+      <strong>{{ decision.target_type }} · {{ decision.outcome }}</strong>
+      — {{ reasons.get(decision.reason_code).label if reasons.get(decision.reason_code) else decision.reason_code }}
+      <time>{{ decision.created_at.isoformat() }}</time>
+      <p>{{ decision.human_reason or '' }}</p>
+      {% if decision.rule_reference %}<p>Referenz: {{ decision.rule_reference }}</p>{% endif %}
+      <small>Quelle: {{ decision.decision_source }} · Actor-ID intern: {{ decision.actor_user_id or 'automated' }}</small>
+      {% set appeal = appeals.get(decision.id) %}
+      {% if appeal %}<p>Berufung: {{ appeal.state }} — {{ appeal.reviewer_reason or '' }}</p>{% endif %}
+    </li>{% endfor %}
+  </ol>{% else %}<p>Noch keine Entscheidungen.</p>{% endif %}
+</section>
+{% endblock %}

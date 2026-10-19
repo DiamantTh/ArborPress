@@ -83,6 +83,7 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "max_user_edits": 2,
         "trusted_edit_bypass": False,
         "confirmation_ttl_hours": 24,
+        "appeal_window_days": 14,
         "notify_admin_email": "",
         "rate_limit_per_hour": 10,
         "blocklist": "",  # newline-separated keywords / emails / IPs

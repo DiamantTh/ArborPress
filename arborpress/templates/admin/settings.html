@@ -245,6 +245,11 @@
         <input type="number" name="confirmation_ttl_hours" min="1" max="168"
                value="{{ sections.comments.get('confirmation_ttl_hours', 24) }}">
       </label>
+      <label>
+        Berufungsfrist (Tage)
+        <input type="number" name="appeal_window_days" min="1" max="90"
+               value="{{ sections.comments.get('appeal_window_days', 14) }}">
+      </label>
     </div>
     <label class="checkbox">
       <input type="checkbox" name="trusted_edit_bypass" value="1"
