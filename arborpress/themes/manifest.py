@@ -40,6 +40,7 @@ _PUBLIC_TEMPLATE_OVERRIDES = frozenset(
     {
         "index.html",
         "post.html",
+        "author_profile.html",
         "page.html",
         "tag.html",
         "search.html",

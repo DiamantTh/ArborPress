@@ -39,6 +39,7 @@ _TEMPLATE_NAMES = {
         {
             "index.html",
             "post.html",
+            "author_profile.html",
             "page.html",
             "tag.html",
             "search.html",

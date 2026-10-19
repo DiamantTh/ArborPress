@@ -19,6 +19,7 @@ import logging
 import mimetypes
 import os
 from email.utils import formatdate as _rfc822
+from typing import Any
 
 from quart import (
     Blueprint,
@@ -32,7 +33,7 @@ from quart import (
 )
 from quart.typing import ResponseReturnValue
 from slugify import slugify
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
 from arborpress.core.config import get_settings
@@ -213,6 +214,7 @@ async def post_detail(slug: str):
         can_edit_comment,
         resolve_comment_policy,
     )
+    from arborpress.content.authors import authors_for_posts
     from arborpress.core.captcha import get_captcha_challenge, get_effective_captcha_type
     from arborpress.core.site_settings import get_section
     from arborpress.models.content import (
@@ -249,6 +251,17 @@ async def post_detail(slug: str):
             if old_post:
                 return redirect(url_for("public.post_detail", slug=old_post.slug), 301)
             abort(404)
+
+        authors_by_post = await authors_for_posts(db, [str(post.id)])
+        post_authors: list[Any] = authors_by_post.get(str(post.id), [])
+        if not post_authors and post.author is not None:
+            # Compatibility for pre-migration fixtures and legacy null-edge data.
+            post_authors = [(post.author, "primary", 0)]
+        comment_author_ids = {
+            str(item.user_id) for item in post_authors if hasattr(item, "user_id")
+        }
+        if not comment_author_ids and post.author_id:
+            comment_author_ids.add(str(post.author_id))
 
         # private: Artikel ist komplett gesperrt
         if post.visibility == PostVisibility.PRIVATE:
@@ -475,6 +488,8 @@ async def post_detail(slug: str):
         comment_hidden_own=own_hidden_comments,
         comment_appeal_days=appeal_days,
         comment_active_user=active_user,
+        post_authors=post_authors,
+        comment_author_ids=comment_author_ids,
         comment_reply_target=reply_target,
         comment_quote_target=quote_target,
         comment_edit_target=edit_target,
@@ -725,24 +740,45 @@ async def author_profile(handle: str):
     if user is None:
         abort(404)
 
-    # Posts by this user – publicly linked only
-    from arborpress.models.content import Post, PostStatus, PostVisibility
+    # Publicly published posts where the user is primary or coauthor.
+    from arborpress.models.content import Post, PostAuthorRelation, PostStatus, PostVisibility
+
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except ValueError:
+        abort(400)
+    per_page = 20
 
     async for db in get_db_session():
+        authored = or_(
+            PostAuthorRelation.user_id == str(user.id),
+            Post.author_id == str(user.id),
+        )
         posts_stmt = (
-            select(Post)
+            select(Post).distinct()
+            .outerjoin(PostAuthorRelation, PostAuthorRelation.post_id == Post.id)
             .where(
-                Post.author_id == user.id,
+                authored,
                 Post.status == PostStatus.PUBLISHED,
                 Post.visibility == PostVisibility.PUBLIC,
             )
             .order_by(Post.published_at.desc())
-            .limit(20)
+            .offset((page - 1) * per_page)
+            .limit(per_page + 1)
         )
         posts_result = await db.execute(posts_stmt)
-        posts = posts_result.scalars().all()
+        rows = list(posts_result.scalars().all())
+        has_next = len(rows) > per_page
+        posts = rows[:per_page]
 
-    return await _render("index.html", posts=posts, pagination=None, author=user)
+    return await _render(
+        "author_profile.html",
+        posts=posts,
+        author=user,
+        page=page,
+        has_next=has_next,
+        noindex=False,
+    )
 
 
 @public_bp.get("/@<handle>/p/<slug>")
@@ -752,7 +788,7 @@ async def author_post(handle: str, slug: str):
     if canonical != slug:
         return redirect(url_for("public.author_post", handle=handle, slug=canonical), 301)
 
-    from arborpress.models.content import Post, PostStatus
+    from arborpress.models.content import Post, PostAuthorRelation, PostStatus
     from arborpress.models.user import AccountType, User
 
     async for db in get_db_session():
@@ -767,8 +803,15 @@ async def author_post(handle: str, slug: str):
 
         post_stmt = select(Post).where(
             Post.slug == canonical,
-            Post.author_id == author.id,
             Post.status == PostStatus.PUBLISHED,
+            or_(
+                Post.author_id == author.id,
+                Post.id.in_(
+                    select(PostAuthorRelation.post_id).where(
+                        PostAuthorRelation.user_id == str(author.id)
+                    )
+                ),
+            ),
         )
         post_result = await db.execute(post_stmt)
         post = post_result.scalar_one_or_none()

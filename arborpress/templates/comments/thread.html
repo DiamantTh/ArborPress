@@ -24,7 +24,7 @@
           <a href="{{ comment.author_url | e }}" rel="nofollow noopener" target="_blank">{{ comment.author_name }}</a>
           {% else %}{{ comment.author_name }}{% endif %}
         </strong>
-        {% if post.author_id and comment.author_user_id and comment.author_user_id == post.author_id %}
+        {% if comment.author_user_id and comment.author_user_id in comment_author_ids %}
           <span class="comment__author-marker">Autor</span>
         {% endif %}
         {% if comment.is_edited %}<span class="comment__edited">bearbeitet</span>{% endif %}

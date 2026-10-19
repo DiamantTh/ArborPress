@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ author.display_name }}{% endblock %}
+{% block head %}<link rel="canonical" href="{{ config.web.base_url }}/@{{ author.username }}">{% endblock %}
+{% block content %}
+<header class="author-profile">
+  <h1>{{ author.display_name }}</h1>
+  <p class="author-profile__handle">@{{ author.username }}</p>
+  {% if author.bio %}<p class="author-profile__bio">{{ author.bio | e | nl2br }}</p>{% endif %}
+</header>
+<section aria-labelledby="author-posts-heading">
+  <h2 id="author-posts-heading">Veröffentlichte Beiträge</h2>
+  <div class="post-list">
+    {% for post in posts %}
+    <article class="post-card">
+      <h3><a href="{{ url_for('public.post_detail', slug=post.slug) }}">{{ post.title }}</a></h3>
+      {% if post.published_at %}<time datetime="{{ post.published_at.isoformat() }}">{{ post.published_at.strftime('%d.%m.%Y') }}</time>{% endif %}
+      {% if post.excerpt %}<p>{{ post.excerpt }}</p>{% endif %}
+    </article>
+    {% else %}<p>Keine veröffentlichten Beiträge.</p>{% endfor %}
+  </div>
+</section>
+{% if page > 1 or has_next %}
+<nav class="pagination" aria-label="Seitennavigation">
+  {% if page > 1 %}<a rel="prev" href="{{ url_for('public.author_profile', handle=author.username, page=page - 1) }}">Vorherige</a>{% endif %}
+  <span>Seite {{ page }}</span>
+  {% if has_next %}<a rel="next" href="{{ url_for('public.author_profile', handle=author.username, page=page + 1) }}">Nächste</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}
