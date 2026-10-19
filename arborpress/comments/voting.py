@@ -38,7 +38,9 @@ async def cast_comment_vote(
     actor = await db.get(User, str(user_id))
     if actor is None or not actor.is_active:
         raise CommentVoteError("An active registered account is required to vote.")
-    comment = await db.get(Comment, comment_id)
+    comment = (
+        await db.execute(select(Comment).where(Comment.id == comment_id).with_for_update())
+    ).scalar_one_or_none()
     if comment is None or comment.status != CommentStatus.APPROVED:
         raise CommentVoteError("Only published comments can be voted on.")
     if comment.author_user_id is not None and str(comment.author_user_id) == str(user_id):

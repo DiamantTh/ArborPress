@@ -24,7 +24,7 @@ from arborpress.core.migrations import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pre_alembic_phase1_schema.sql"
-CURRENT_HEAD = "0002_comment_core"
+CURRENT_HEAD = "0003_comment_moderation_appeals"
 
 
 def _sqlite_engine(path: Path) -> AsyncEngine:
@@ -149,7 +149,7 @@ async def test_empty_database_upgrade_noop_and_repeated_install(tmp_path: Path) 
         assert status.is_current
         assert status.current_revisions == (CURRENT_HEAD,)
         before = await _schema_snapshot(engine)
-        assert len(before) == 27
+        assert len(before) == 29
         assert "webauthn_credentials" in before
 
         async with engine.connect() as connection:
@@ -294,7 +294,8 @@ async def test_comment_core_migration_maps_legacy_states_and_hashes_pending_toke
                 (
                     await connection.execute(
                         sa.text(
-                            "SELECT id, status, confirmation_token_hash, confirmation_expires_at, published_at "
+                            "SELECT id, status, confirmation_token_hash, confirmation_expires_at, "
+                            "published_at "
                             "FROM comments ORDER BY id"
                         )
                     )
@@ -416,8 +417,8 @@ async def test_known_older_revision_is_reported_as_behind_head(
     versions = tmp_path / "extra_versions"
     versions.mkdir()
     (versions / "0002_test_next.py").write_text(
-        "revision = '0002_test_next'\n"
-        "down_revision = '0002_comment_core'\n"
+        "revision = '0004_test_next'\n"
+        "down_revision = '0003_comment_moderation_appeals'\n"
         "branch_labels = None\n"
         "depends_on = None\n"
         "def upgrade(): pass\n"
@@ -436,7 +437,7 @@ async def test_known_older_revision_is_reported_as_behind_head(
         status = await schema_status(engine)
         assert status.state == "behind"
         assert status.current_revisions == (BASELINE_REVISION,)
-        assert status.head_revision == "0002_test_next"
+        assert status.head_revision == "0004_test_next"
     finally:
         await engine.dispose()
 

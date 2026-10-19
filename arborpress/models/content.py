@@ -22,6 +22,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    false,
     func,
     true,
 )
@@ -68,8 +69,9 @@ class PostVisibility(enum.StrEnum):
     hidden  – accessible via direct URL, but NOT in lists/search/tags
     private – fully locked (HTTP 404 for anonymous visitors)
     """
-    PUBLIC  = "public"
-    HIDDEN  = "hidden"
+
+    PUBLIC = "public"
+    HIDDEN = "hidden"
     PRIVATE = "private"
 
 
@@ -82,9 +84,7 @@ class Post(Base):
 
     __tablename__ = "posts"
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     # §6 stable short-ID for /o/{id}
     short_id: Mapped[str] = mapped_column(String(12), unique=True, nullable=False)
     author_id: Mapped[str] = mapped_column(
@@ -144,9 +144,7 @@ class Post(Base):
     tags: Mapped[list[Tag]] = relationship(secondary=post_tags, lazy="selectin")
     # Public rendering needs the author's public identity without issuing a
     # lazy query after the request-scoped database session has closed.
-    author: Mapped[User | None] = relationship(
-        "User", foreign_keys=[author_id], lazy="selectin"
-    )
+    author: Mapped[User | None] = relationship("User", foreign_keys=[author_id], lazy="selectin")
 
     @staticmethod
     def calc_reading_time(body_md: str, body_json: dict | None = None) -> int:
@@ -173,7 +171,9 @@ class Post(Base):
                     prose_parts.append(data.get("text", ""))
                 elif btype == "list":
                     for item in data.get("items", []):
-                        prose_parts.append(item if isinstance(item, str) else item.get("content", ""))
+                        prose_parts.append(
+                            item if isinstance(item, str) else item.get("content", "")
+                        )
                 elif btype in ("code", "raw"):
                     code_block_count += 1
                 elif btype == "table":
@@ -204,7 +204,7 @@ class Post(Base):
 
 class PageType(enum.StrEnum):
     CUSTOM = "custom"
-    IMPRESSUM = "impressum"   # §1 system pages
+    IMPRESSUM = "impressum"  # §1 system pages
     PRIVACY = "privacy"
     RULES = "rules"
 
@@ -217,9 +217,7 @@ class Page(Base):
 
     __tablename__ = "pages"
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     slug: Mapped[str] = mapped_column(String(256), nullable=False)
     slug_old: Mapped[str | None] = mapped_column(String(256), nullable=True)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
@@ -269,9 +267,7 @@ class Comment(Base):
 
     __tablename__ = "comments"
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     post_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("posts.id", ondelete="CASCADE"), nullable=False
     )
@@ -279,7 +275,7 @@ class Comment(Base):
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
     # Autor-Angaben (kein Account erforderlich)
-    author_name: Mapped[str]  = mapped_column(String(128), nullable=False)
+    author_name: Mapped[str] = mapped_column(String(128), nullable=False)
     author_email: Mapped[str | None] = mapped_column(String(256), nullable=True)
     author_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
@@ -291,14 +287,18 @@ class Comment(Base):
             native_enum=False,
             length=32,
             values_callable=lambda items: [item.value for item in items],
-        ), nullable=False, default=CommentStatus.PENDING_CONFIRMATION
+        ),
+        nullable=False,
+        default=CommentStatus.PENDING_CONFIRMATION,
     )
     # Only a SHA-256 token digest is persisted; the random URL token is mail-only.
-    confirmation_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    confirmation_token_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
     confirmation_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     confirmation_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    approved_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -314,7 +314,7 @@ class Comment(Base):
     mod_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    user_agent:  Mapped[str | None] = mapped_column(String(512), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     # GeoIP-derived country code (ISO 3166-1 alpha-2, e.g. "DE") – used for flag display
     country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
@@ -375,7 +375,9 @@ class CommentRevision(Base):
             native_enum=False,
             length=16,
             values_callable=lambda items: [item.value for item in items],
-        ), nullable=False, default=CommentRevisionStatus.PENDING
+        ),
+        nullable=False,
+        default=CommentRevisionStatus.PENDING,
     )
     # Non-NULL only while this is the one pending author proposal for a comment.
     pending_key: Mapped[str | None] = mapped_column(String(36), nullable=True)
@@ -383,6 +385,7 @@ class CommentRevision(Base):
         Boolean, nullable=False, default=True, server_default=true()
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    comment: Mapped[Comment] = relationship("Comment", lazy="selectin")
 
 
 class CommentVote(Base):
@@ -409,6 +412,75 @@ class CommentVote(Base):
     )
 
 
+class ModerationDecision(Base):
+    """Immutable moderation record for a comment or one of its revisions."""
+
+    __tablename__ = "moderation_decisions"
+    __table_args__ = (
+        CheckConstraint("target_type IN ('comment', 'revision')", name="ck_moderation_target_type"),
+        CheckConstraint(
+            "decision_source IN ('human', 'automated', 'assisted')",
+            name="ck_moderation_decision_source",
+        ),
+        Index("ix_moderation_target_created", "target_type", "target_id", "created_at"),
+        Index("ix_moderation_reason_created", "reason_code", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    target_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    actor_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(48), nullable=False)
+    human_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rule_reference: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    restriction_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    decision_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    supersedes_decision_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("moderation_decisions.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class CommentModerationAppeal(Base):
+    """One author appeal against a concrete immutable moderation decision."""
+
+    __tablename__ = "comment_moderation_appeals"
+    __table_args__ = (
+        UniqueConstraint("decision_id", name="uq_comment_appeal_decision"),
+        CheckConstraint(
+            "state IN ('pending', 'upheld', 'overturned', 'dismissed')",
+            name="ck_comment_appeal_state",
+        ),
+        Index("ix_comment_appeal_state_created", "state", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    decision_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("moderation_decisions.id", ondelete="RESTRICT"), nullable=False
+    )
+    appellant_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    reviewer_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    reviewer_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    replacement_decision_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("moderation_decisions.id", ondelete="SET NULL"), nullable=True
+    )
+    self_review_exception: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+
+
 # Register comments back-reference on Post
 Post.comments = relationship(
     "Comment",
@@ -427,9 +499,7 @@ class Media(Base):
 
     __tablename__ = "media"
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     uploader_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -456,9 +526,7 @@ class OEmbedCache(Base):
 
     __tablename__ = "oembed_cache"
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     # Original post URL (unique key)
     url: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
     provider_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -482,8 +550,10 @@ post_categories = Table(
     Base.metadata,
     Column("post_id", String(36), ForeignKey("posts.id", ondelete="CASCADE"), primary_key=True),
     Column(
-        "category_id", Integer,
-        ForeignKey("categories.id", ondelete="CASCADE"), primary_key=True,
+        "category_id",
+        Integer,
+        ForeignKey("categories.id", ondelete="CASCADE"),
+        primary_key=True,
     ),
 )
 
@@ -538,6 +608,7 @@ Post.categories = relationship(
 # Post revisions (version history with diff)
 # ---------------------------------------------------------------------------
 
+
 class PostRevision(Base):
     """Version history of a blog post.
 
@@ -551,9 +622,7 @@ class PostRevision(Base):
 
     __tablename__ = "post_revisions"
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     post_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("posts.id", ondelete="CASCADE"), nullable=False
     )
@@ -582,18 +651,22 @@ class PostRevision(Base):
         """
         old_lines = old_md.splitlines(keepends=True)
         new_lines = new_md.splitlines(keepends=True)
-        diff = list(difflib.unified_diff(
-            old_lines, new_lines,
-            fromfile="revision-prev",
-            tofile="revision-new",
-            lineterm="",
-        ))
+        diff = list(
+            difflib.unified_diff(
+                old_lines,
+                new_lines,
+                fromfile="revision-prev",
+                tofile="revision-new",
+                lineterm="",
+            )
+        )
         return "".join(diff)
 
 
 # ---------------------------------------------------------------------------
 # Post access tokens (multiple per post for password-protected posts)
 # ---------------------------------------------------------------------------
+
 
 class PostAccessToken(Base):
     """Access token for password-protected posts.
@@ -612,9 +685,7 @@ class PostAccessToken(Base):
 
     __tablename__ = "post_access_tokens"
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     post_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("posts.id", ondelete="CASCADE"), nullable=False
     )

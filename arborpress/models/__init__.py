@@ -4,11 +4,13 @@ from arborpress.models.audit import AuditEvent  # noqa: F401
 from arborpress.models.content import (  # noqa: F401
     Category,
     Comment,
+    CommentModerationAppeal,
     CommentRevision,
     CommentRevisionStatus,
     CommentStatus,
     CommentVote,
     Media,
+    ModerationDecision,
     OEmbedCache,
     Page,
     PageType,

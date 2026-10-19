@@ -160,6 +160,15 @@ async def create_comment(
     )
     db.add(comment)
     await db.flush()
+    if status in {CommentStatus.APPROVED, CommentStatus.SPAM}:
+        from arborpress.comments.moderation import record_automatic_decision
+
+        await record_automatic_decision(
+            db,
+            target_id=comment.id,
+            outcome="spam" if status == CommentStatus.SPAM else "approve",
+            reason_code="spam" if status == CommentStatus.SPAM else "automated_policy",
+        )
     from arborpress.core.audit import write_audit_event
 
     await write_audit_event(
@@ -259,6 +268,12 @@ async def confirm_guest_comment(
         raise CommentTokenError("Confirmation link is invalid or expired.")
     await db.flush()
     await db.refresh(comment)
+    if next_state == CommentStatus.APPROVED:
+        from arborpress.comments.moderation import record_automatic_decision
+
+        await record_automatic_decision(
+            db, target_id=comment.id, outcome="approve", reason_code="automated_policy"
+        )
     from arborpress.core.audit import write_audit_event
 
     await write_audit_event(

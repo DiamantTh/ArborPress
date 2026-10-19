@@ -297,27 +297,41 @@ def _expected_schema_errors(
 def _is_supported_pre_comment_schema(connection: Connection) -> bool:
     """Recognize the published pre-7A schema for safe legacy adoption.
 
-    The 7A Alembic upgrade owns the structural differences.  This deliberately
-    checks that no unrelated table/column drift is being hidden by the relaxed
-    comparison.
+    The comment-core and moderation Alembic upgrades own the structural
+    differences. This deliberately checks that no unrelated table/column drift
+    is being hidden by the relaxed comparison.
     """
     inspector = sa.inspect(connection)
     expected = {table.name for table in Base.metadata.sorted_tables}
     actual = _table_names(inspector)
-    if actual != expected - {"comment_revisions", "comment_votes"}:
+    if actual != expected - {
+        "comment_revisions",
+        "comment_votes",
+        "moderation_decisions",
+        "comment_moderation_appeals",
+    }:
         return False
     allowed_columns = {
         "comments": {
-            "author_user_id", "confirmation_token_hash", "confirmation_expires_at",
+            "author_user_id",
+            "confirmation_token_hash",
+            "confirmation_expires_at",
             "confirmation_sent_at",
-            "published_at", "edited_at", "parent_id",
+            "published_at",
+            "edited_at",
+            "parent_id",
         },
         "posts": {"comments_enabled", "guest_confirmation_required", "comment_moderation_mode"},
         "users": {"comment_trusted"},
     }
     errors = _expected_schema_errors(connection, allow_extra_tables=False)
     for error in errors:
-        if error in {"missing table comment_revisions", "missing table comment_votes"}:
+        if error in {
+            "missing table comment_revisions",
+            "missing table comment_votes",
+            "missing table moderation_decisions",
+            "missing table comment_moderation_appeals",
+        }:
             continue
         if error == "unexpected column comments.confirmation_token":
             continue
@@ -362,7 +376,9 @@ async def _inspect_status(connection: AsyncConnection) -> SchemaStatus:
             if errors:
                 if _is_supported_pre_comment_schema(sync_connection):
                     return SchemaStatus(
-                        "legacy", (), head,
+                        "legacy",
+                        (),
+                        head,
                         "Matches the supported pre-7A comment schema; Alembic will upgrade it.",
                     )
                 detail = "; ".join(errors[:8])
