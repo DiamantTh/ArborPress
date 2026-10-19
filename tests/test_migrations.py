@@ -334,12 +334,90 @@ async def test_comment_core_migration_maps_legacy_states_and_hashes_pending_toke
             ).one()
             unassigned_count = await connection.scalar(
                 sa.text(
-                    "SELECT COUNT(*) FROM post_author_relations "
-                    "WHERE post_id='unassigned-post'"
+                    "SELECT COUNT(*) FROM post_author_relations WHERE post_id='unassigned-post'"
                 )
             )
         assert author_row == ("legacy-user", "primary", 0)
         assert unassigned_count == 0
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_authorship_revision_downgrade_preserves_legacy_primary_projection(
+    tmp_path: Path,
+) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from arborpress.content.authors import replace_post_authors
+    from arborpress.models.authorization import ObjectRelation, ObjectRelationName
+    from arborpress.models.content import Post
+    from arborpress.models.user import AccountType, User, UserRole
+
+    engine = _sqlite_engine(tmp_path / "authors-downgrade.db")
+    try:
+        await upgrade_database(engine)
+        factory = async_sessionmaker(bind=engine, expire_on_commit=False)
+        async with factory() as db:
+            author = User(
+                username="migration-author",
+                display_name="Migration Author",
+                account_type=AccountType.PUBLIC,
+                role=UserRole.AUTHOR,
+                is_active=True,
+            )
+            post = Post(
+                short_id="migration1",
+                slug="migration-author-post",
+                title="Migration post",
+                body_md="",
+                body_html="",
+            )
+            db.add_all([author, post])
+            await db.flush()
+            await replace_post_authors(
+                db,
+                post_id=str(post.id),
+                primary_user_id=str(author.id),
+                coauthor_user_ids=[],
+                actor_user_id=str(author.id),
+            )
+            db.add(
+                ObjectRelation(
+                    subject_user_id=str(author.id),
+                    object_type="content",
+                    object_id=str(post.id),
+                    relation=ObjectRelationName.EDITOR,
+                )
+            )
+            await db.commit()
+            post_id, author_id = str(post.id), str(author.id)
+
+        await downgrade_database("0003_comment_moderation_appeals", engine)
+        async with engine.connect() as connection:
+            restored_legacy_author = await connection.scalar(
+                sa.text("SELECT author_id FROM posts WHERE id=:post_id"),
+                {"post_id": post_id},
+            )
+            remaining_tables = await connection.run_sync(
+                lambda sync_connection: set(sa.inspect(sync_connection).get_table_names())
+            )
+        assert restored_legacy_author == author_id
+        assert "post_author_relations" not in remaining_tables
+        assert "object_relations" not in remaining_tables
+
+        await upgrade_database(engine)
+        async with engine.connect() as connection:
+            migrated_author = (
+                await connection.execute(
+                    sa.text(
+                        "SELECT user_id, role, position FROM post_author_relations "
+                        "WHERE post_id=:post_id"
+                    ),
+                    {"post_id": post_id},
+                )
+            ).one()
+        assert migrated_author == (author_id, "primary", 0)
     finally:
         await engine.dispose()
 
