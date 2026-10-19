@@ -179,7 +179,29 @@ a.tag { background: var(--color-primary); color: #fff; border-radius: var(--radi
   padding: 1.25rem;
   margin-bottom: 1rem;
   background: var(--color-surface);
+  margin-inline-start: calc(var(--comment-depth, 0) * 1.15rem);
 }
+.comment-list .comment-list { margin: .85rem 0 0; }
+.comment__moderated { color: var(--color-muted); font-style: italic; margin: 0; }
+.comment__author-marker, .comment__edited {
+  display: inline-block; border: 1px solid var(--color-border); border-radius: 999px;
+  padding: 0 .45rem; color: var(--color-muted); font-size: .72rem;
+}
+.comment__actions, .comment__vote-form { display: flex; gap: .65rem; align-items: center; flex-wrap: wrap; }
+.comment__actions { margin-top: .8rem; font-size: .85rem; }
+.comment__actions a { color: var(--color-primary); }
+.comment__vote-form { display: inline-flex; }
+.comment__vote-form button { cursor: pointer; }
+.comment__vote-form button[aria-pressed="true"] { color: var(--color-primary); font-weight: 700; }
+.comment__decision, .comment-author-status {
+  border-inline-start: 3px solid var(--color-accent); margin: .8rem 0; padding: .5rem .8rem;
+  background: var(--color-bg-alt); overflow-wrap: anywhere;
+}
+.comment__decision form, .comment-confirmation-result form { display: grid; gap: .5rem; margin-top: .5rem; }
+.comment__decision textarea { width: 100%; }
+.comment-form__context { padding: .6rem .8rem; background: var(--color-bg-alt); }
+.comment-form-wrapper { scroll-margin-top: 2rem; }
+.comment-confirmation-result { max-width: 38rem; margin: 2rem auto; padding: 1rem; }
 
 /* Zitat-Block innerhalb eines Kommentars */
 .comment__quote {
@@ -293,6 +315,8 @@ a.tag { background: var(--color-primary); color: #fff; border-radius: var(--radi
   .comment-form__row { grid-template-columns: 1fr; }
   .comment__header { flex-direction: column; }
   .comment__cite-btn { margin-left: 0; }
+  .comment { margin-inline-start: calc(var(--comment-depth, 0) * .4rem); padding: .85rem; }
+  .comment-list .comment-list { padding-inline-start: .35rem; }
 }
 /* Verwandte Artikel */
 .related-posts { margin: 2.5rem 0; border-top: 2px solid var(--color-border); padding-top: 1.5rem; }

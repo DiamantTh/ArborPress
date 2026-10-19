@@ -30,6 +30,7 @@ from quart import (
     session,
     url_for,
 )
+from quart.typing import ResponseReturnValue
 from slugify import slugify
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -50,6 +51,7 @@ _PER_PAGE = 20
 # RDAP background task
 # ---------------------------------------------------------------------------
 
+
 async def _rdap_background(comment_id: str, ip_str: str) -> None:
     """Look up RDAP data for *ip_str* and store it on the comment (best-effort)."""
     import json as _json
@@ -67,6 +69,7 @@ async def _rdap_background(comment_id: str, ip_str: str) -> None:
             from sqlalchemy import select as _select
 
             from arborpress.models.content import Comment as _Comment
+
             stmt = _select(_Comment).where(_Comment.id == comment_id)
             row = (await _db.execute(stmt)).scalar_one_or_none()
             if row is None:
@@ -97,14 +100,23 @@ async def _get_footer_pages() -> list:
     """
     try:
         from arborpress.models.content import Page, PageType, PostVisibility
+
         async for db in get_db_session():
-            stmt = select(Page).where(
-                Page.page_type.in_([
-                    PageType.IMPRESSUM, PageType.PRIVACY, PageType.RULES,
-                ]),
-                Page.is_published == True,  # noqa: E712
-                Page.visibility == PostVisibility.PUBLIC,
-            ).order_by(Page.page_type)
+            stmt = (
+                select(Page)
+                .where(
+                    Page.page_type.in_(
+                        [
+                            PageType.IMPRESSUM,
+                            PageType.PRIVACY,
+                            PageType.RULES,
+                        ]
+                    ),
+                    Page.is_published == True,  # noqa: E712
+                    Page.visibility == PostVisibility.PUBLIC,
+                )
+                .order_by(Page.page_type)
+            )
             result = await db.execute(stmt)
             return result.scalars().all()
     except Exception:
@@ -135,6 +147,7 @@ async def index():
 
     try:
         from arborpress.models.content import PostVisibility
+
         async for db in get_db_session():
             stmt = (
                 select(Post)
@@ -147,9 +160,13 @@ async def index():
             if lang:
                 stmt = stmt.where(Post.lang == lang)
 
-            total_stmt = select(func.count()).select_from(Post).where(
-                Post.status == PostStatus.PUBLISHED,
-                Post.visibility == PostVisibility.PUBLIC,
+            total_stmt = (
+                select(func.count())
+                .select_from(Post)
+                .where(
+                    Post.status == PostStatus.PUBLISHED,
+                    Post.visibility == PostVisibility.PUBLIC,
+                )
             )
             if lang:
                 total_stmt = total_stmt.where(Post.lang == lang)
@@ -171,9 +188,7 @@ async def index():
                 prev_num=page - 1,
                 next_num=page + 1,
             )
-            return await _render(
-                "index.html", posts=posts, pagination=pagination, lang=lang
-            )
+            return await _render("index.html", posts=posts, pagination=pagination, lang=lang)
     except Exception as exc:
         log.warning("Index-Abfrage fehlgeschlagen: %s", exc)
         return await _render("index.html", posts=[], pagination=None)
@@ -191,19 +206,37 @@ async def post_detail(slug: str):
     if canonical != slug:
         return redirect(url_for("public.post_detail", slug=canonical), 301)
 
+    from arborpress.comments import (
+        REASON_CATALOG,
+        CommentVoteCounts,
+        build_comment_thread,
+        can_edit_comment,
+        resolve_comment_policy,
+    )
     from arborpress.core.captcha import get_captcha_challenge, get_effective_captcha_type
     from arborpress.core.site_settings import get_section
-    from arborpress.models.content import Comment, Post, PostStatus, PostVisibility
+    from arborpress.models.content import (
+        Comment,
+        CommentModerationAppeal,
+        CommentRevision,
+        CommentStatus,
+        CommentVote,
+        ModerationDecision,
+        Post,
+        PostStatus,
+        PostVisibility,
+    )
+    from arborpress.models.user import User
 
     async for db in get_db_session():
         # Load post (status=published is sufficient; visibility is checked separately)
-        comments_load = selectinload(Post.comments)  # type: ignore[attr-defined]
-        stmt = select(Post).where(
-            Post.slug == canonical,
-            Post.status == PostStatus.PUBLISHED,
-        ).options(
-            selectinload(Post.author),
-            comments_load.selectinload(Comment.quoted),
+        stmt = (
+            select(Post)
+            .where(
+                Post.slug == canonical,
+                Post.status == PostStatus.PUBLISHED,
+            )
+            .options(selectinload(Post.author))
         )
         result = await db.execute(stmt)
         post = result.scalar_one_or_none()
@@ -223,15 +256,182 @@ async def post_detail(slug: str):
         # hidden: Artikel ist erreichbar, aber nicht verlinkt – kein abort
 
         captcha_section = await get_section("captcha", db)
-        captcha_type    = get_effective_captcha_type(post.captcha_type, captcha_section)
-        captcha_ctx     = get_captcha_challenge(captcha_type, captcha_section)
+        captcha_type = get_effective_captcha_type(post.captcha_type, captcha_section)
+        captcha_ctx = get_captcha_challenge(captcha_type, captcha_section)
+        comment_settings = await get_section("comments", db)
+        comment_policy = resolve_comment_policy(post, comment_settings)
+        comments_result = await db.execute(
+            select(Comment)
+            .where(
+                Comment.post_id == post.id,
+                Comment.status.in_([CommentStatus.APPROVED, CommentStatus.DELETED]),
+            )
+            .options(selectinload(Comment.quoted), selectinload(Comment.author_user))
+            .order_by(Comment.created_at, Comment.id)
+        )
+        visible_comments = list(comments_result.scalars().all())
+        comment_threads = build_comment_thread(visible_comments)
+        comment_ids = [str(comment.id) for comment in visible_comments]
+        vote_counts: dict[str, CommentVoteCounts] = {
+            comment_id: CommentVoteCounts(upvotes=0, downvotes=0) for comment_id in comment_ids
+        }
+        if comment_ids:
+            vote_rows = await db.execute(
+                select(CommentVote.comment_id, CommentVote.value, func.count(CommentVote.id))
+                .join(Comment, Comment.id == CommentVote.comment_id)
+                .where(
+                    CommentVote.comment_id.in_(comment_ids),
+                    Comment.status == CommentStatus.APPROVED,
+                )
+                .group_by(CommentVote.comment_id, CommentVote.value)
+            )
+            mutable_counts = {comment_id: {1: 0, -1: 0} for comment_id in comment_ids}
+            for comment_id, vote_value, total in vote_rows.all():
+                mutable_counts[str(comment_id)][int(vote_value)] = int(total)
+            vote_counts = {
+                comment_id: CommentVoteCounts(upvotes=counts[1], downvotes=counts[-1])
+                for comment_id, counts in mutable_counts.items()
+            }
+        active_user_id = str(session.get("user_id") or "") or None
+        active_user = await db.get(User, active_user_id) if active_user_id else None
+        own_votes: dict[str, int] = {}
+        if active_user_id and comment_ids:
+            votes_result = await db.execute(
+                select(CommentVote.comment_id, CommentVote.value).where(
+                    CommentVote.user_id == active_user_id,
+                    CommentVote.comment_id.in_(comment_ids),
+                )
+            )
+            own_votes = {str(comment_id): int(value) for comment_id, value in votes_result.all()}
+
+        editable_comments: set[str] = set()
+        if active_user is not None:
+            for visible_comment in visible_comments:
+                if str(visible_comment.author_user_id or "") != active_user_id:
+                    continue
+                editable, _ = await can_edit_comment(
+                    db,
+                    comment=visible_comment,
+                    actor_user=active_user,
+                    policy=comment_policy,
+                )
+                if editable:
+                    editable_comments.add(str(visible_comment.id))
+
+        # Appeal and decision details are visible only to the signed-in author.
+        author_decisions: dict[
+            str,
+            list[tuple[ModerationDecision, CommentModerationAppeal | None, dt.datetime]],
+        ] = {}
+        own_pending_comments: list[Comment] = []
+        own_hidden_comments: list[Comment] = []
+        appeal_days = max(1, min(90, int(comment_settings.get("appeal_window_days", 14))))
+        if active_user_id:
+            own_pending_result = await db.execute(
+                select(Comment)
+                .where(
+                    Comment.post_id == post.id,
+                    Comment.author_user_id == active_user_id,
+                    Comment.status.in_(
+                        [CommentStatus.PENDING_CONFIRMATION, CommentStatus.PENDING_MODERATION]
+                    ),
+                )
+                .order_by(Comment.created_at.desc())
+            )
+            own_pending_comments = list(own_pending_result.scalars().all())
+            own_hidden_result = await db.execute(
+                select(Comment)
+                .where(
+                    Comment.post_id == post.id,
+                    Comment.author_user_id == active_user_id,
+                    Comment.status.in_([CommentStatus.REJECTED, CommentStatus.SPAM]),
+                )
+                .order_by(Comment.created_at.desc())
+            )
+            own_hidden_comments = list(own_hidden_result.scalars().all())
+            own_comment_ids = list(
+                {
+                    str(item.id)
+                    for item in [*visible_comments, *own_pending_comments, *own_hidden_comments]
+                }
+            )
+            if own_comment_ids:
+                own_revisions_result = await db.execute(
+                    select(CommentRevision)
+                    .join(Comment, Comment.id == CommentRevision.comment_id)
+                    .where(
+                        Comment.post_id == post.id,
+                        Comment.author_user_id == active_user_id,
+                    )
+                )
+                own_revisions = list(own_revisions_result.scalars().all())
+                revision_to_comment = {
+                    str(revision.id): str(revision.comment_id) for revision in own_revisions
+                }
+                decision_result = await db.execute(
+                    select(ModerationDecision)
+                    .where(
+                        (
+                            (ModerationDecision.target_type == "comment")
+                            & ModerationDecision.target_id.in_(own_comment_ids)
+                        )
+                        | (
+                            (ModerationDecision.target_type == "revision")
+                            & ModerationDecision.target_id.in_(revision_to_comment or [""])
+                        ),
+                    )
+                    .order_by(ModerationDecision.created_at.desc())
+                )
+                decisions = list(decision_result.scalars().all())
+                decision_ids = [item.id for item in decisions]
+                appeals_by_decision: dict[str, CommentModerationAppeal] = {}
+                if decision_ids:
+                    appeals_result = await db.execute(
+                        select(CommentModerationAppeal).where(
+                            CommentModerationAppeal.decision_id.in_(decision_ids)
+                        )
+                    )
+                    appeals_by_decision = {
+                        str(item.decision_id): item for item in appeals_result.scalars().all()
+                    }
+                for item in decisions:
+                    comment_id = (
+                        item.target_id
+                        if item.target_type == "comment"
+                        else revision_to_comment.get(item.target_id)
+                    )
+                    if comment_id is None:
+                        continue
+                    author_decisions.setdefault(comment_id, []).append(
+                        (
+                            item,
+                            appeals_by_decision.get(item.id),
+                            item.created_at + dt.timedelta(days=appeal_days),
+                        )
+                    )
+        requested_parent = request.args.get("reply_to", "")
+        requested_quote = request.args.get("quote", "")
+        requested_edit = request.args.get("edit", "")
+        target_by_id = {str(comment.id): comment for comment in visible_comments}
+        reply_target = target_by_id.get(requested_parent)
+        quote_target = target_by_id.get(requested_quote)
+        edit_target = target_by_id.get(requested_edit)
+        if reply_target and reply_target.status != CommentStatus.APPROVED:
+            reply_target = None
+        if quote_target and quote_target.status != CommentStatus.APPROVED:
+            quote_target = None
+        if (
+            edit_target is None
+            or active_user_id is None
+            or str(edit_target.author_user_id or "") != active_user_id
+            or str(edit_target.id) not in editable_comments
+        ):
+            edit_target = None
 
         # --- Related articles (tag overlap, max. 3) ---
         related_posts: list = []
         post_tag_ids = [t.id for t in (post.tags or [])]
         if post_tag_ids:
-            from sqlalchemy import func
-
             from arborpress.models.content import post_tags as _post_tags_table
 
             overlap_subq = (
@@ -250,7 +450,7 @@ async def post_detail(slug: str):
                 select(Post, overlap_subq.c.overlap)
                 .join(overlap_subq, Post.id == overlap_subq.c.post_id)
                 .where(
-                    Post.status     == PostStatus.PUBLISHED,
+                    Post.status == PostStatus.PUBLISHED,
                     Post.visibility == PostVisibility.PUBLIC,
                 )
                 .order_by(overlap_subq.c.overlap.desc(), Post.published_at.desc())
@@ -259,8 +459,27 @@ async def post_detail(slug: str):
             rel_result = await db.execute(rel_stmt)
             related_posts = [row[0] for row in rel_result.all()]
 
-    return await _render("post.html", post=post, captcha=captcha_ctx,
-                         related_posts=related_posts)
+    return await _render(
+        "post.html",
+        post=post,
+        captcha=captcha_ctx,
+        related_posts=related_posts,
+        comment_threads=comment_threads,
+        comment_count=len(visible_comments),
+        comment_policy=comment_policy,
+        comment_vote_counts=vote_counts,
+        comment_own_votes=own_votes,
+        comment_editable_ids=editable_comments,
+        comment_author_decisions=author_decisions,
+        comment_pending_own=own_pending_comments,
+        comment_hidden_own=own_hidden_comments,
+        comment_appeal_days=appeal_days,
+        comment_active_user=active_user,
+        comment_reply_target=reply_target,
+        comment_quote_target=quote_target,
+        comment_edit_target=edit_target,
+        comment_reason_catalog=REASON_CATALOG,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +560,7 @@ async def tag_archive(tag: str):
             abort(404)
 
         from arborpress.models.content import PostVisibility
+
         posts_stmt = (
             select(Post)
             .where(
@@ -377,6 +597,7 @@ async def search():
             async for db in get_db_session():
                 if caps and caps.fts_provider == "pg_fts":
                     from sqlalchemy import func, text
+
                     stmt = (
                         select(Post)
                         .where(
@@ -384,13 +605,15 @@ async def search():
                             Post.visibility == PostVisibility.PUBLIC,
                         )
                         .where(
-                            func.to_tsvector("simple", Post.title + " " + Post.body_md)
-                            .op("@@")(func.plainto_tsquery("simple", q))
+                            func.to_tsvector("simple", Post.title + " " + Post.body_md).op("@@")(
+                                func.plainto_tsquery("simple", q)
+                            )
                         )
                         .limit(50)
                     )
                 elif caps and caps.fts_provider == "mariadb_fulltext":
                     from sqlalchemy import text
+
                     stmt = (
                         select(Post)
                         .where(
@@ -404,6 +627,7 @@ async def search():
                 else:
                     # Fallback: LIKE (§12)
                     from arborpress.models.content import PostVisibility
+
                     stmt = (
                         select(Post)
                         .where(
@@ -503,6 +727,7 @@ async def author_profile(handle: str):
 
     # Posts by this user – publicly linked only
     from arborpress.models.content import Post, PostStatus, PostVisibility
+
     async for db in get_db_session():
         posts_stmt = (
             select(Post)
@@ -552,9 +777,10 @@ async def author_post(handle: str, slug: str):
         abort(404)
     # private: also blocked via author URL
     from arborpress.models.content import PostVisibility
+
     if post.visibility == PostVisibility.PRIVATE:
         abort(404)
-    return await _render("post.html", post=post)
+    return await post_detail(post.slug)
 
 
 # ---------------------------------------------------------------------------
@@ -597,7 +823,7 @@ async def post_comment_submit(slug: str):
         form = await request.form
 
         # --- Captcha- und Kommentar-Einstellungen laden ---
-        captcha_section  = await get_section("captcha", db)
+        captcha_section = await get_section("captcha", db)
         comments_section = await get_section("comments", db)
         policy = resolve_comment_policy(post, comments_section)
         if not policy.enabled:
@@ -618,11 +844,11 @@ async def post_comment_submit(slug: str):
         if author_user is not None:
             author_name = author_user.display_name
             author_email = author_user.email or ""
-        author_url   = (form.get("author_url",   "") or "").strip() or None
-        body         = (form.get("body",          "") or "").strip()[:10_000]
+        author_url = (form.get("author_url", "") or "").strip() or None
+        body = (form.get("body", "") or "").strip()[:10_000]
         # Parent and quote are deliberately independent references.
         parent_raw = (form.get("parent_id", "") or "").strip() or None
-        quote_of_raw = (form.get("quote_of_id",  "") or "").strip() or None
+        quote_of_raw = (form.get("quote_of_id", "") or "").strip() or None
 
         if not author_name or not body or (author_user is None and not author_email):
             await flash("Please fill in all required fields.", "error")
@@ -645,6 +871,7 @@ async def post_comment_submit(slug: str):
         # --- Netzfilter (IP whitelist/blocklist, RBL, Country) ---
         from arborpress.core.comment_filter import check_comment_ip
         from arborpress.core.site_settings import get_section as _get_section
+
         net_filter_section = await _get_section("comment_filter", db)
         net_action, net_reason, country_code = await check_comment_ip(
             request.remote_addr or "", net_filter_section
@@ -652,6 +879,7 @@ async def post_comment_submit(slug: str):
         if net_action == "block":
             # Hard block: reject without feedback (same UX as SPAM silent-accept)
             import logging as _log
+
             _log.getLogger("arborpress.comment_filter").info(
                 "Comment blocked | ip=%s reason=%s", request.remote_addr, net_reason
             )
@@ -664,6 +892,7 @@ async def post_comment_submit(slug: str):
             from datetime import timedelta
 
             from sqlalchemy import and_
+
             one_hour_ago = dt.now(UTC).replace(tzinfo=None) - timedelta(hours=1)
             ip = request.remote_addr or ""
             rl_stmt = select(Comment).where(
@@ -679,18 +908,16 @@ async def post_comment_submit(slug: str):
 
         # --- Check blocklist (soft-block: immediately mark as SPAM) ---
         blocklist_raw = comments_section.get("blocklist", "") or ""
-        blocklist     = [
-            term.strip().lower()
-            for term in blocklist_raw.splitlines()
-            if term.strip()
-        ]
-        _check_fields = " ".join([
-            author_name.lower(),
-            author_email.lower(),
-            (author_url or "").lower(),
-            body.lower(),
-            (request.remote_addr or "").lower(),
-        ])
+        blocklist = [term.strip().lower() for term in blocklist_raw.splitlines() if term.strip()]
+        _check_fields = " ".join(
+            [
+                author_name.lower(),
+                author_email.lower(),
+                (author_url or "").lower(),
+                body.lower(),
+                (request.remote_addr or "").lower(),
+            ]
+        )
         blocked = any(term in _check_fields for term in blocklist)
         # RBL "flag"-Aktion: ebenfalls als SPAM einstufen (stilles Akzeptieren)
         if net_action == "flag":
@@ -698,12 +925,20 @@ async def post_comment_submit(slug: str):
 
         try:
             creation = await create_comment(
-                db, post=post, policy=policy, author_name=author_name,
-                author_email=author_email or None, body=body,
+                db,
+                post=post,
+                policy=policy,
+                author_name=author_name,
+                author_email=author_email or None,
+                body=body,
                 author_url=author_url,
-                author_user=author_user, parent_id=parent_raw, quote_of_id=quote_of_raw,
-                spam=blocked, ip_address=request.remote_addr,
-                user_agent=request.headers.get("User-Agent", ""), country_code=country_code,
+                author_user=author_user,
+                parent_id=parent_raw,
+                quote_of_id=quote_of_raw,
+                spam=blocked,
+                ip_address=request.remote_addr,
+                user_agent=request.headers.get("User-Agent", ""),
+                country_code=country_code,
             )
         except CommentPolicyError as exc:
             await flash(str(exc), "error")
@@ -714,6 +949,7 @@ async def post_comment_submit(slug: str):
 
         # Fire RDAP lookup in background (stores result on comment.rdap_json)
         import asyncio as _asyncio
+
         _asyncio.ensure_future(_rdap_background(str(comment.id), request.remote_addr or ""))
 
         # Send confirmation mail (if backend != none and not blocked)
@@ -747,13 +983,14 @@ async def comment_confirm(token: str):
 
     Consumes one guest confirmation and applies the current moderation policy.
     """
-    from quart import abort
+    from quart import make_response
 
     from arborpress.comments import CommentTokenError, confirm_guest_comment
     from arborpress.core.mail import send_comment_notification
     from arborpress.core.site_settings import get_section
     from arborpress.models.content import CommentStatus
 
+    result = "invalid"
     async for db in get_db_session():
         try:
             settings = await get_section("comments", db)
@@ -761,16 +998,241 @@ async def comment_confirm(token: str):
             await db.commit()
         except CommentTokenError:
             await db.rollback()
+        else:
+            if comment.status == CommentStatus.PENDING_MODERATION:
+                await send_comment_notification(comment, comment.post)
+            result = "published" if comment.status == CommentStatus.APPROVED else "moderation"
+    response = await make_response(
+        redirect(url_for("public.comment_confirmation_result", state=result))
+    )
+    if result != "invalid":
+        session.pop("_flashes", None)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@public_bp.get("/comment/confirmation-result")
+async def comment_confirmation_result() -> ResponseReturnValue:
+    from quart import make_response
+
+    state = request.args.get("state", "invalid")
+    if state not in {"invalid", "published", "moderation", "resent"}:
+        state = "invalid"
+    response = await make_response(await _render("comment_confirmation_result.html", state=state))
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@public_bp.post("/comment/confirmation/resend")
+async def comment_confirmation_resend() -> ResponseReturnValue:
+    await validate_csrf()
+    from datetime import timedelta
+
+    from quart import flash, make_response
+
+    from arborpress.comments import CommentTokenError, issue_guest_confirmation
+    from arborpress.core.mail import send_comment_confirmation
+    from arborpress.core.site_settings import get_section
+    from arborpress.models.content import Comment, CommentStatus, Post
+
+    form = await request.form
+    raw_slug = (form.get("slug") or "").strip()
+    canonical = _canonical_slug(raw_slug) if raw_slug else ""
+    email = (form.get("author_email") or "").strip().lower()
+    try:
+        async for db in get_db_session():
+            settings = await get_section("comments", db)
+            # Generic UX: never disclose whether an address has a pending comment.
+            if is_valid_email(email):
+                recent = await db.execute(
+                    select(Comment)
+                    .where(
+                        Comment.author_email == email,
+                        Comment.status == CommentStatus.PENDING_CONFIRMATION,
+                        Comment.confirmation_sent_at
+                        >= dt.datetime.now(dt.UTC).replace(tzinfo=None) - timedelta(seconds=60),
+                    )
+                    .with_for_update()
+                )
+                if not recent.scalars().first():
+                    pending = await db.execute(
+                        select(Comment)
+                        .join(Post, Post.id == Comment.post_id)
+                        .where(
+                            Post.slug == canonical,
+                            Comment.author_email == email,
+                            Comment.status == CommentStatus.PENDING_CONFIRMATION,
+                        )
+                        .order_by(Comment.created_at.desc())
+                        .limit(1)
+                        .with_for_update()
+                    )
+                    comment = pending.scalar_one_or_none()
+                    if comment is not None:
+                        token = await issue_guest_confirmation(
+                            db,
+                            comment=comment,
+                            ttl_hours=int(settings.get("confirmation_ttl_hours", 24)),
+                        )
+                        await db.commit()
+                        await send_comment_confirmation(comment, comment.post, token)
+                    else:
+                        await db.rollback()
+                else:
+                    await db.rollback()
+            else:
+                await db.rollback()
+    except CommentTokenError:
+        # Cooldown, stale state and unknown address are intentionally indistinguishable.
+        pass
+    await flash(
+        "Falls für diese Adresse eine Bestätigung aussteht, wurde eine Nachricht versendet.",
+        "success",
+    )
+    response = await make_response(
+        redirect(url_for("public.comment_confirmation_result", state="resent"))
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@public_bp.post("/comment/<comment_id>/edit")
+async def comment_edit(comment_id: str) -> ResponseReturnValue:
+    await validate_csrf()
+    from quart import flash
+
+    from arborpress.comments import (
+        CommentPolicyError,
+        create_comment_revision,
+        resolve_comment_policy,
+    )
+    from arborpress.core.site_settings import get_section
+    from arborpress.models.content import Comment, Post
+    from arborpress.models.user import User
+
+    actor_id = str(session.get("user_id") or "")
+    if not actor_id:
+        abort(403)
+    form = await request.form
+    body = (form.get("body") or "").strip()
+    async for db in get_db_session():
+        comment = await db.get(Comment, comment_id)
+        actor = await db.get(User, actor_id)
+        if comment is None or actor is None:
             abort(404)
-        if comment.status == CommentStatus.PENDING_MODERATION:
-            await send_comment_notification(comment, comment.post)
+        post = await db.get(Post, comment.post_id)
+        if post is None:
+            abort(404)
+        settings = await get_section("comments", db)
+        policy = resolve_comment_policy(post, settings)
+        try:
+            revision = await create_comment_revision(
+                db,
+                comment_id=comment.id,
+                actor_user=actor,
+                body=body,
+                policy=policy,
+            )
+            await db.commit()
+        except CommentPolicyError as exc:
+            await db.rollback()
+            await flash(str(exc), "error")
+            return redirect(
+                url_for("public.post_detail", slug=post.slug) + f"?edit={comment.id}#comment-form"
+            )
+        await flash(
+            "Deine Änderung wurde veröffentlicht."
+            if revision.status.value == "approved"
+            else "Deine Änderung wartet auf Prüfung; die bisherige Fassung bleibt sichtbar.",
+            "success",
+        )
+    return redirect(url_for("public.post_detail", slug=post.slug) + f"#comment-{comment_id}")
 
-        already = comment.status != CommentStatus.PENDING_MODERATION
 
-    return await _render(
-        "comment_confirmed.html",
-        comment=comment,
-        already_processed=already,
+@public_bp.post("/comment/<comment_id>/vote")
+async def comment_vote(comment_id: str) -> ResponseReturnValue:
+    await validate_csrf()
+    from quart import flash
+
+    from arborpress.comments import CommentVoteError, cast_comment_vote
+
+    actor_id = str(session.get("user_id") or "")
+    if not actor_id:
+        abort(403)
+    form = await request.form
+    try:
+        value = int(form.get("value", "2"))
+    except ValueError:
+        value = 2
+    async for db in get_db_session():
+        from arborpress.models.content import Comment
+
+        comment = await db.get(Comment, comment_id)
+        if comment is None:
+            abort(404)
+        try:
+            await cast_comment_vote(db, user_id=actor_id, comment_id=comment_id, value=value)
+            await db.commit()
+        except CommentVoteError as exc:
+            await db.rollback()
+            await flash(str(exc), "error")
+        post_slug = comment.post.slug
+    return redirect(url_for("public.post_detail", slug=post_slug) + f"#comment-{comment_id}")
+
+
+@public_bp.post("/comment/appeals/<decision_id>")
+async def comment_appeal(decision_id: str) -> ResponseReturnValue:
+    await validate_csrf()
+    from quart import flash
+
+    from arborpress.comments import ModerationError, submit_comment_appeal
+    from arborpress.core.site_settings import get_section
+    from arborpress.models.content import Comment, ModerationDecision
+
+    actor_id = str(session.get("user_id") or "")
+    if not actor_id:
+        abort(403)
+    form = await request.form
+    async for db in get_db_session():
+        decision = await db.get(ModerationDecision, decision_id)
+        if decision is None:
+            abort(404)
+        if decision.target_type == "comment":
+            comment_id = decision.target_id
+        else:
+            from arborpress.models.content import CommentRevision
+
+            revision = await db.get(CommentRevision, decision.target_id)
+            if revision is None:
+                abort(404)
+            comment_id = revision.comment_id
+        comment = await db.get(Comment, comment_id)
+        if comment is None:
+            abort(404)
+        settings = await get_section("comments", db)
+        try:
+            await submit_comment_appeal(
+                db,
+                decision_id=decision_id,
+                appellant_user_id=actor_id,
+                statement=form.get("statement", ""),
+                appeal_window_days=int(settings.get("appeal_window_days", 14)),
+            )
+            await db.commit()
+        except ModerationError:
+            await db.rollback()
+            await flash(
+                "Die Berufung konnte nicht eingereicht werden. "
+                "Prüfe Frist, Berechtigung und Status.",
+                "error",
+            )
+        else:
+            await flash("Deine Berufung wurde eingereicht.", "success")
+    return redirect(
+        url_for("public.post_detail", slug=comment.post.slug) + f"#comment-{comment_id}"
     )
 
 
@@ -779,8 +1241,8 @@ async def comment_confirm(token: str):
 # ---------------------------------------------------------------------------
 
 _FEED_LIMIT = 20
-_RSS_MIME   = "application/rss+xml; charset=utf-8"
-_ATOM_MIME  = "application/atom+xml; charset=utf-8"
+_RSS_MIME = "application/rss+xml; charset=utf-8"
+_ATOM_MIME = "application/atom+xml; charset=utf-8"
 
 
 def _post_url(base: str, post) -> str:
@@ -804,12 +1266,7 @@ def _rfc822_ts(d: dt.datetime | None) -> str:
 
 def _xml_esc(s: str) -> str:
     """Minimal XML escaping for CDATA attributes."""
-    return (
-        s.replace("&", "&amp;")
-         .replace("<", "&lt;")
-         .replace(">", "&gt;")
-         .replace('"', "&quot;")
-    )
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
 async def _feed_posts():
@@ -820,7 +1277,7 @@ async def _feed_posts():
         stmt = (
             select(Post)
             .where(
-                Post.status     == PostStatus.PUBLISHED,
+                Post.status == PostStatus.PUBLISHED,
                 Post.visibility == PostVisibility.PUBLIC,
             )
             .order_by(Post.published_at.desc())
@@ -840,7 +1297,7 @@ async def rss_feed():
     """
     from arborpress.core.site_settings import get_section
 
-    cfg      = get_settings()
+    cfg = get_settings()
     base_url = cfg.web.base_url.rstrip("/")
 
     async for db in get_db_session():
@@ -849,26 +1306,24 @@ async def rss_feed():
     else:
         general = {}
 
-    title       = _xml_esc(general.get("site_title",       "ArborPress"))
+    title = _xml_esc(general.get("site_title", "ArborPress"))
     description = _xml_esc(general.get("site_description", ""))
-    language    = general.get("site_language", "de")
-    posts       = await _feed_posts()
+    language = general.get("site_language", "de")
+    posts = await _feed_posts()
 
-    now_rfc     = _rfc822_ts(dt.datetime.utcnow())
-    last_build  = _rfc822_ts(posts[0].published_at if posts else None)
+    now_rfc = _rfc822_ts(dt.datetime.utcnow())
+    last_build = _rfc822_ts(posts[0].published_at if posts else None)
 
     items = []
     for p in posts:
-        link    = _post_url(base_url, p)
+        link = _post_url(base_url, p)
         excerpt = _xml_esc((p.excerpt or "").strip())
-        desc_elem = (
-            f"<description>{excerpt}</description>" if excerpt else "<description/>"
-        )
+        desc_elem = f"<description>{excerpt}</description>" if excerpt else "<description/>"
         items.append(
             f"    <item>\n"
             f"      <title>{_xml_esc(p.title)}</title>\n"
             f"      <link>{link}</link>\n"
-            f"      <guid isPermaLink=\"true\">{link}</guid>\n"
+            f'      <guid isPermaLink="true">{link}</guid>\n'
             f"      <pubDate>{_rfc822_ts(p.published_at)}</pubDate>\n"
             f"      {desc_elem}\n"
             f"    </item>"
@@ -885,8 +1340,7 @@ async def rss_feed():
         f"    <lastBuildDate>{last_build}</lastBuildDate>\n"
         f"    <pubDate>{now_rfc}</pubDate>\n"
         f'    <atom:link href="{base_url}/feed.xml" rel="self" '
-        f'type="application/rss+xml"/>\n'
-        + "\n".join(items) + "\n"
+        f'type="application/rss+xml"/>\n' + "\n".join(items) + "\n"
         "  </channel>\n"
         "</rss>"
     )
@@ -902,7 +1356,7 @@ async def atom_feed():
     """
     from arborpress.core.site_settings import get_section
 
-    cfg      = get_settings()
+    cfg = get_settings()
     base_url = cfg.web.base_url.rstrip("/")
 
     async for db in get_db_session():
@@ -911,19 +1365,19 @@ async def atom_feed():
     else:
         general = {}
 
-    title   = _xml_esc(general.get("site_title", "ArborPress"))
-    posts   = await _feed_posts()
+    title = _xml_esc(general.get("site_title", "ArborPress"))
+    posts = await _feed_posts()
     updated = _rfc3339(posts[0].published_at if posts else None)
 
     entries = []
     for p in posts:
-        link    = _post_url(base_url, p)
+        link = _post_url(base_url, p)
         excerpt = _xml_esc((p.excerpt or "").strip())
         entries.append(
             f"  <entry>\n"
             f"    <id>{link}</id>\n"
             f"    <title>{_xml_esc(p.title)}</title>\n"
-            f"    <link href=\"{link}\"/>\n"
+            f'    <link href="{link}"/>\n'
             f"    <updated>{_rfc3339(p.published_at)}</updated>\n"
             + (f"    <summary>{excerpt}</summary>\n" if excerpt else "")
             + "  </entry>"
@@ -936,8 +1390,7 @@ async def atom_feed():
         f"  <title>{title}</title>\n"
         f"  <updated>{updated}</updated>\n"
         f'  <link href="{base_url}/" rel="alternate"/>\n'
-        f'  <link href="{base_url}/feed/atom.xml" rel="self"/>\n'
-        + "\n".join(entries) + "\n"
+        f'  <link href="{base_url}/feed/atom.xml" rel="self"/>\n' + "\n".join(entries) + "\n"
         "</feed>"
     )
     return Response(xml, content_type=_ATOM_MIME)

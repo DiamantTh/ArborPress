@@ -78,7 +78,12 @@ async def test_public_guest_submission_stores_only_hash_and_confirmation_consume
         assert not hasattr(comment, "confirmation_token")
 
     confirm = await client.get(f"/comment/confirm/{sent['token']}")
-    assert confirm.status_code == 200
+    assert confirm.status_code == 302
+    assert sent["token"] not in confirm.headers.get("Location", "")
+    assert confirm.headers.get("Cache-Control") == "no-store"
+    result_page = await client.get(confirm.headers["Location"])
+    assert result_page.status_code == 200
+    assert b"wartet jetzt auf Moderation" in await result_page.get_data()
     async with factory() as db:
         comment = (await db.execute(select(Comment).where(Comment.post_id == post_id))).scalar_one()
         assert comment.status == CommentStatus.PENDING_MODERATION

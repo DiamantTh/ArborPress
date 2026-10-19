@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Kommentarbestätigung{% endblock %}
+{% block content %}
+<main class="comment-confirmation-result" aria-labelledby="confirmation-title">
+  {% if state == 'published' %}
+    <h1 id="confirmation-title">E-Mail bestätigt</h1>
+    <p>Dein Kommentar ist veröffentlicht.</p>
+  {% elif state == 'moderation' %}
+    <h1 id="confirmation-title">E-Mail bestätigt</h1>
+    <p>Danke. Dein Kommentar wartet jetzt auf Moderation und erscheint nach der Freigabe.</p>
+  {% elif state == 'resent' %}
+    <h1 id="confirmation-title">Anfrage verarbeitet</h1>
+    <p>Falls zu dieser Kombination eine Bestätigung aussteht, wurde eine Nachricht versendet.</p>
+  {% else %}
+    <h1 id="confirmation-title">Bestätigung nicht möglich</h1>
+    <p>Der Link ist ungültig, abgelaufen oder wurde bereits verwendet. Wenn du eine Bestätigung erwartest, kannst du sie erneut anfordern.</p>
+    <form method="post" action="{{ url_for('public.comment_confirmation_resend') }}">
+      {{ csrf_input() }}
+      <label>Artikel-Slug
+        <input name="slug" required maxlength="256" autocomplete="url">
+      </label>
+      <label>E-Mail-Adresse
+        <input type="email" name="author_email" required maxlength="256" autocomplete="email">
+      </label>
+      <button type="submit">Bestätigung erneut anfordern</button>
+    </form>
+  {% endif %}
+  <p><a href="{{ url_for('public.index') }}">Zur Startseite</a></p>
+</main>
+{% endblock %}

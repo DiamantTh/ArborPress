@@ -43,6 +43,7 @@ _TEMPLATE_NAMES = {
             "tag.html",
             "search.html",
             "comment_confirmed.html",
+            "comment_confirmation_result.html",
         }
     ),
     "admin": frozenset(
@@ -90,9 +91,7 @@ def theme_preview_fingerprint(registry: ThemeRegistry, theme_id: str) -> str:
         resources.extend(
             (theme.template_dir / name, True, MAX_TEMPLATE_BYTES) for name in theme.templates
         )
-        resources.extend(
-            (theme.theme_dir / name, True, MAX_CSS_BYTES) for name in theme.assets.css
-        )
+        resources.extend((theme.theme_dir / name, True, MAX_CSS_BYTES) for name in theme.assets.css)
         for resource, hash_content, size_limit in resources:
             try:
                 resolved = resource.resolve(strict=True)
@@ -165,14 +164,14 @@ def _resolve_declared_file(
                 root = candidate.template_dir if kind == "template" else candidate.theme_dir
                 path = _resolve_inside(root, relative)
                 return candidate, path
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 raise ThemeManagementError("Theme resource escapes its declared root.") from None
     if kind == "template":
         core_root = Path(__file__).resolve().parents[1] / "templates"
         if relative in _TEMPLATE_NAMES[theme.type]:
             try:
                 return theme, _resolve_inside(core_root, relative)
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 pass
     return None
 
@@ -687,9 +686,7 @@ def save_override(
         _atomic_write(derived.theme_dir, "theme.toml", manifest_before)
         if local_before is None:
             if target_path.is_symlink():
-                raise ThemeManagementError(
-                    "Theme editor refuses symbolic-link targets."
-                ) from None
+                raise ThemeManagementError("Theme editor refuses symbolic-link targets.") from None
             target_path.unlink(missing_ok=True)
         else:
             _atomic_write(derived.theme_dir, target_relative, local_before)

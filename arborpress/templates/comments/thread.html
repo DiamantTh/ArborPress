@@ -1,0 +1,77 @@
+{% macro render_threads(nodes, depth=0) %}
+<ol class="comment-list">
+  {% for node in nodes %}
+  {% set comment = node.comment %}
+  {% set counts = comment_vote_counts.get(comment.id) %}
+  <li class="comment" id="comment-{{ comment.id }}"
+      style="--comment-depth: {{ [depth, comment_policy.visible_max_depth - 1] | min }}">
+    {% if comment.status.value == 'deleted' %}
+      <p class="comment__moderated" role="note">Dieser Kommentar wurde moderiert.</p>
+    {% else %}
+      {% if comment.quote_of_id %}
+        {% if comment.quoted and comment.quoted.status.value == 'approved' %}
+        <blockquote class="comment__quote">
+          <cite><a href="#comment-{{ comment.quoted.id }}">{{ comment.quoted.author_name }}</a> zitierter Kommentar</cite>
+          <p>{{ comment.quoted.body | truncate(280) | e }}</p>
+        </blockquote>
+        {% else %}
+        <p class="comment__quote comment__quote--unavailable">Zitierter Kommentar ist nicht verfügbar.</p>
+        {% endif %}
+      {% endif %}
+      <header class="comment__header">
+        <strong class="comment__author">
+          {% if comment.author_url %}
+          <a href="{{ comment.author_url | e }}" rel="nofollow noopener" target="_blank">{{ comment.author_name }}</a>
+          {% else %}{{ comment.author_name }}{% endif %}
+        </strong>
+        {% if post.author_id and comment.author_user_id and comment.author_user_id == post.author_id %}
+          <span class="comment__author-marker">Autor</span>
+        {% endif %}
+        {% if comment.is_edited %}<span class="comment__edited">bearbeitet</span>{% endif %}
+        <time class="comment__date" datetime="{{ comment.published_at.isoformat() if comment.published_at else comment.created_at.isoformat() }}">
+          {{ (comment.published_at or comment.created_at).strftime('%d.%m.%Y, %H:%M') }}
+        </time>
+      </header>
+      <div class="comment__body">{{ comment.body | nl2br }}</div>
+      <div class="comment__actions">
+        <span class="comment__vote-counts" aria-label="Stimmen">
+          <span>▲ {{ counts.upvotes if counts else 0 }}</span>
+          <span>▼ {{ counts.downvotes if counts else 0 }}</span>
+        </span>
+        {% if comment_active_user and comment.author_user_id != comment_active_user.id %}
+        <form class="comment__vote-form" method="post" action="{{ url_for('public.comment_vote', comment_id=comment.id) }}">
+          {{ csrf_input() }}
+          <button type="submit" name="value" value="1" aria-pressed="{{ 'true' if comment_own_votes.get(comment.id) == 1 else 'false' }}" aria-label="Positiv bewerten">▲</button>
+          <button type="submit" name="value" value="-1" aria-pressed="{{ 'true' if comment_own_votes.get(comment.id) == -1 else 'false' }}" aria-label="Negativ bewerten">▼</button>
+          {% if comment_own_votes.get(comment.id) %}<button type="submit" name="value" value="0">Stimme entfernen</button>{% endif %}
+        </form>
+        {% endif %}
+        {% if comment_policy.allow_replies %}<a href="{{ url_for('public.post_detail', slug=post.slug, reply_to=comment.id) }}#comment-form">Antworten</a>{% endif %}
+        {% if comment_policy.allow_quotes %}<a href="{{ url_for('public.post_detail', slug=post.slug, quote=comment.id) }}#comment-form">Zitieren</a>{% endif %}
+        {% if comment.id in comment_editable_ids %}<a href="{{ url_for('public.post_detail', slug=post.slug, edit=comment.id) }}#comment-form">Bearbeiten</a>{% endif %}
+      </div>
+    {% endif %}
+    {% for decision, appeal, appeal_deadline in comment_author_decisions.get(comment.id, []) %}
+        <aside class="comment__decision" aria-label="Moderationsentscheidung">
+          <strong>{{ comment_reason_catalog.get(decision.reason_code).label if comment_reason_catalog.get(decision.reason_code) else decision.reason_code }}</strong>
+          {% if decision.human_reason %}<p>{{ decision.human_reason }}</p>{% endif %}
+          {% if decision.rule_reference %}<p>Referenz: {{ decision.rule_reference }}</p>{% endif %}
+          {% if appeal %}
+            <p>Appeal: {{ appeal.state }}{% if appeal.reviewer_reason %} — {{ appeal.reviewer_reason }}{% endif %}</p>
+          {% elif decision.outcome in ('reject', 'spam', 'delete') %}
+            <p>Berufungsfrist bis {{ appeal_deadline.strftime('%d.%m.%Y') }}.</p>
+            <form method="post" action="{{ url_for('public.comment_appeal', decision_id=decision.id) }}">
+              {{ csrf_input() }}
+              <label>Berufung begründen
+                <textarea name="statement" rows="3" maxlength="5000" required></textarea>
+              </label>
+              <button type="submit">Berufung einreichen</button>
+            </form>
+          {% endif %}
+        </aside>
+    {% endfor %}
+    {% if node.replies %}{{ render_threads(node.replies, depth + 1) }}{% endif %}
+  </li>
+  {% endfor %}
+</ol>
+{% endmacro %}

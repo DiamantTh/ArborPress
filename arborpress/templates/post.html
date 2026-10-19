@@ -74,61 +74,14 @@
 <section class="comments" id="comments">
   <h2 class="comments__heading">
     Kommentare
-    {% if post.comments %}
-      <span class="comments__count">{{ post.comments | length }}</span>
+    {% if comment_threads %}
+      <span class="comments__count">{{ comment_count }}</span>
     {% endif %}
   </h2>
 
-  {% if post.comments %}
-  <ol class="comment-list">
-    {% for comment in post.comments %}
-    <li class="comment" id="comment-{{ comment.id }}">
-
-      {# Zitat-Block: wird angezeigt, wenn dieser Kommentar auf einen anderen antwortet #}
-      {% if comment.quoted %}
-      <blockquote class="comment__quote">
-        <cite>
-          <a href="#comment-{{ comment.quoted.id }}">{{ comment.quoted.author_name | e }}</a>
-          schrieb:
-        </cite>
-        {# Nur Max. 3 Zeilen des zitierten Kommentars anzeigen #}
-        <p>{{ comment.quoted.body | e | truncate(300) }}</p>
-      </blockquote>
-      {% endif %}
-
-      <header class="comment__header">
-        <strong class="comment__author">
-          {% if comment.author_url %}
-            <a href="{{ comment.author_url | e }}" rel="nofollow noopener" target="_blank">
-              {{ comment.author_name | e }}
-            </a>
-          {% else %}
-            {{ comment.author_name | e }}
-          {% endif %}
-        </strong>
-        {% if comment.country_code %}
-          <span class="comment__flag" title="{{ comment.country_code }}" aria-hidden="true">{{ comment.country_code | country_flag }}</span>
-        {% endif %}
-        <time class="comment__date" datetime="{{ comment.created_at.isoformat() }}">
-          {{ comment.created_at.strftime('%d.%m.%Y, %H:%M') }} Uhr
-        </time>
-        {# Zitieren-Button: trägt Kommentar-ID in das Formular ein #}
-        <button type="button"
-                class="comment__cite-btn"
-                data-comment-quote disabled
-                data-comment-id="{{ comment.id }}"
-                data-author="{{ comment.author_name }}"
-                data-body="{{ comment.body | truncate(200) }}">
-          ↩ Zitieren
-        </button>
-      </header>
-
-      <div class="comment__body">
-        {{ comment.body | e | nl2br }}
-      </div>
-    </li>
-    {% endfor %}
-  </ol>
+  {% if comment_threads %}
+    {% from "comments/thread.html" import render_threads with context %}
+    {{ render_threads(comment_threads) }}
   {% else %}
   <p class="comments__empty">Noch keine Kommentare. Sei der Erste!</p>
   {% endif %}
@@ -142,41 +95,95 @@
 
   <div id="comment-form" class="comment-form-wrapper">
 
-    <h3 class="comments__subheading">Kommentar schreiben</h3>
+    {% if comment_active_user %}
+      <h3 class="comments__subheading">Kommentar als {{ comment_active_user.display_name }}</h3>
+    {% else %}
+      <h3 class="comments__subheading">Kommentar schreiben</h3>
+    {% endif %}
 
-    {# ── Moderationshinweis ── #}
-    <div class="comment-notice">
-      <span class="comment-notice__icon">📧</span>
-      <p>
-        <strong>Zweistufige Moderation</strong> –
-        Dein Kommentar wird erst nach <strong>E-Mail-Bestätigung</strong> durch dich
-        und anschließender <strong>Freischaltung</strong> durch den Betreiber veröffentlicht.
-        Deine E-Mail-Adresse bleibt privat.
-      </p>
-    </div>
+    {% if comment_reply_target %}
+      <p class="comment-form__context">Antwort an <strong>{{ comment_reply_target.author_name }}</strong>.
+        <a href="{{ url_for('public.post_detail', slug=post.slug) }}#comment-form">Antwort abbrechen</a></p>
+    {% elif comment_quote_target %}
+      <p class="comment-form__context">Zitat von <strong>{{ comment_quote_target.author_name }}</strong>.
+        <a href="{{ url_for('public.post_detail', slug=post.slug) }}#comment-form">Zitat entfernen</a></p>
+    {% elif comment_edit_target %}
+      <p class="comment-form__context">Kommentar bearbeiten. Die bisherige Fassung bleibt bis zur Freigabe sichtbar.
+        <a href="{{ url_for('public.post_detail', slug=post.slug) }}#comment-form">Bearbeitung abbrechen</a></p>
+    {% endif %}
+    {% if comment_pending_own %}
+      <aside class="comment-author-status" aria-live="polite">
+        {% for own_comment in comment_pending_own %}
+          <p>Dein Kommentar vom {{ own_comment.created_at.strftime('%d.%m.%Y') }}:
+            {% if own_comment.status.value == 'pending_confirmation' %}Bitte bestätige deine E-Mail-Adresse.{% else %}Wartet auf Moderation.{% endif %}
+          </p>
+        {% endfor %}
+      </aside>
+    {% endif %}
+    {% if comment_hidden_own %}
+      <section class="comment-author-status" aria-labelledby="comment-author-history-heading">
+        <h3 id="comment-author-history-heading">Deine nicht öffentlichen Kommentare</h3>
+        {% for own_comment in comment_hidden_own %}
+          <article>
+            <p>Status: {{ own_comment.status.value }} · {{ own_comment.created_at.strftime('%d.%m.%Y') }}</p>
+            {% for decision, appeal, appeal_deadline in comment_author_decisions.get(own_comment.id, []) %}
+              <p><strong>{{ comment_reason_catalog.get(decision.reason_code).label if comment_reason_catalog.get(decision.reason_code) else decision.reason_code }}</strong></p>
+              {% if decision.human_reason %}<p>{{ decision.human_reason }}</p>{% endif %}
+              {% if decision.rule_reference %}<p>Referenz: {{ decision.rule_reference }}</p>{% endif %}
+              {% if appeal %}
+                <p>Berufungsstatus: {{ appeal.state }}{% if appeal.reviewer_reason %} — {{ appeal.reviewer_reason }}{% endif %}</p>
+              {% elif decision.outcome in ('reject', 'spam', 'delete') %}
+                <p>Berufungsfrist bis {{ appeal_deadline.strftime('%d.%m.%Y') }}.</p>
+                <form method="post" action="{{ url_for('public.comment_appeal', decision_id=decision.id) }}">
+                  {{ csrf_input() }}
+                  <label>Berufung begründen <textarea name="statement" rows="3" maxlength="5000" required></textarea></label>
+                  <button type="submit">Berufung einreichen</button>
+                </form>
+              {% endif %}
+            {% endfor %}
+          </article>
+        {% endfor %}
+      </section>
+    {% endif %}
+    {% if not comment_policy.enabled and not comment_edit_target %}
+      <p class="comment-notice">Kommentare sind für diesen Artikel geschlossen.</p>
+    {% elif comment_edit_target %}
+      <p>Das Bearbeitungsfenster und dein Änderungslimit werden serverseitig geprüft.</p>
+    {% elif comment_policy.guest_confirmation_required and not comment_active_user %}
+      <p class="comment-notice">Nach dem Absenden musst du deine E-Mail-Adresse bestätigen; je nach Moderationsregel kann zusätzlich eine Prüfung nötig sein. Die Adresse wird nicht öffentlich angezeigt.</p>
+    {% elif comment_policy.moderation_mode != 'none' %}
+      <p class="comment-notice">Dein Kommentar kann vor der Veröffentlichung geprüft werden.</p>
+    {% endif %}
 
     {# Zitat-Vorschau (wird per JS befüllt) #}
-    <div id="quote-preview" class="comment-form__quote-preview"
-         role="status" aria-live="polite" hidden>
+    {% if comment_quote_target %}
+    <blockquote class="comment-form__quote-preview" role="status">
+      <strong>{{ comment_quote_target.author_name }}</strong>
+      <p>{{ comment_quote_target.body | truncate(280) | e }}</p>
+    </blockquote>
+    {% endif %}
+    <div id="quote-preview" class="comment-form__quote-preview" role="status" aria-live="polite" hidden>
       <div class="comment-form__quote-header">
         <span id="quote-label"></span>
         <button type="button" data-comment-quote-clear aria-label="Zitat entfernen">✕</button>
       </div>
       <blockquote id="quote-text"></blockquote>
     </div>
-    <p data-comment-quote-note>
-      Zum Übernehmen eines Zitats in das Formular ist Browser-JavaScript erforderlich.
-    </p>
+    <p data-comment-quote-note>Antworten und Zitieren funktionieren auch ohne JavaScript über die Links am Kommentar.</p>
 
+    {% if comment_policy.enabled or comment_edit_target %}
+    {% if comment_active_user or comment_policy.allow_guests %}
     <form method="POST"
-          action="{{ url_for('public.post_comment_submit', slug=post.slug) }}"
+          action="{{ url_for('public.comment_edit', comment_id=comment_edit_target.id) if comment_edit_target else url_for('public.post_comment_submit', slug=post.slug) }}"
           class="comment-form"
           id="comment-form-element">
       {# §10 CSRF-Schutz #}
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
       {# Verstecktes Feld für die Zitat-Referenz #}
-      <input type="hidden" name="quote_of_id" id="quote_of_id" value="">
+      <input type="hidden" name="parent_id" value="{{ comment_reply_target.id if comment_reply_target else '' }}">
+      <input type="hidden" name="quote_of_id" id="quote_of_id" value="{{ comment_quote_target.id if comment_quote_target else '' }}">
 
+      {% if not comment_active_user %}
       <div class="comment-form__row">
         <label>
           Name <span aria-hidden="true">*</span>
@@ -192,14 +199,15 @@
           <input type="url" name="author_url" maxlength="512" autocomplete="url">
         </label>
       </div>
+      {% endif %}
 
       <label>
         Kommentar <span aria-hidden="true">*</span>
-        <textarea name="body" id="comment-body" rows="6" required maxlength="10000"></textarea>
+        <textarea name="body" id="comment-body" rows="6" required maxlength="10000">{{ comment_edit_target.body if comment_edit_target else '' }}</textarea>
       </label>
 
       {# ── Captcha ── #}
-      {% if captcha and captcha.type not in ('none', None) %}
+      {% if not comment_edit_target and captcha and captcha.type not in ('none', None) %}
       <div class="captcha-wrapper">
         <div class="captcha-box">
           <div class="captcha-box__header">
@@ -266,17 +274,23 @@
       {% endif %}
 
       {# ── DSGVO-Zustimmung ── #}
+      {% if not comment_edit_target %}
       <label class="comment-form__consent">
         <input type="checkbox" name="consent" required>
         <span>Ich habe die
           <a href="/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a>
           gelesen und stimme der Verarbeitung meiner Daten für diesen Kommentar zu.</span>
       </label>
+      {% endif %}
 
       <div class="comment-form__actions">
-        <button type="submit" class="btn btn-primary">Kommentar einreichen</button>
+        <button type="submit" class="btn btn-primary">{{ 'Änderung senden' if comment_edit_target else 'Kommentar einreichen' }}</button>
       </div>
     </form>
+    {% else %}
+      <p>Für neue Kommentare ist eine Anmeldung erforderlich. <a href="{{ url_for('auth.login_page') }}">Anmelden</a></p>
+    {% endif %}
+    {% endif %}
   </div>
 </section>
 

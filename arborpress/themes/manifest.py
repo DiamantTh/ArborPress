@@ -44,6 +44,7 @@ _PUBLIC_TEMPLATE_OVERRIDES = frozenset(
         "tag.html",
         "search.html",
         "comment_confirmed.html",
+        "comment_confirmation_result.html",
     }
 )
 _ADMIN_TEMPLATE_OVERRIDES = frozenset(

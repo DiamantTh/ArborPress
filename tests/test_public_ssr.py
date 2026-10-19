@@ -130,7 +130,7 @@ async def test_article_and_comment_form_are_complete_without_javascript(
 
     assert response.status_code == 200
     html = await response.get_data(as_text=True)
-    assert "<article class=\"post\"" in html
+    assert '<article class="post"' in html
     assert "Server rendered article body" in html
     assert "SSR Author" in html
     suffix = first_slug.removeprefix("ssr-").removesuffix("-1")
@@ -139,20 +139,19 @@ async def test_article_and_comment_form_are_complete_without_javascript(
     assert f'action="/p/{first_slug}/comment"' in html
     assert 'name="_csrf"' in html
     assert "data-comment-quote" in html
-    assert "data-comment-quote disabled" in html
-    assert "Browser-JavaScript erforderlich" in html
+    assert "ohne JavaScript über die Links am Kommentar" in html
     assert 'aria-live="polite"' in html
     assert "onclick=" not in html
-    assert 'data-author="Visitor &#34;One&#34; &amp; &lt;tag&gt;"' in html
+    assert "Visitor &#34;One&#34; &amp; &lt;tag&gt;" in html
+    assert ">Antworten</a>" in html
+    assert ">Zitieren</a>" in html
     assert "/static/dist/assets/public-e5f6.js" in html
     assert "&lt;script&gt;" in html
     assert "<script>alert(1)</script>" not in html
 
 
 @pytest.mark.asyncio
-async def test_public_not_found_and_invalid_pagination_are_html_errors(
-    client, monkeypatch
-):
+async def test_public_not_found_and_invalid_pagination_are_html_errors(client, monkeypatch):
     monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
 
     missing = await client.get("/p/no-such-public-post")
