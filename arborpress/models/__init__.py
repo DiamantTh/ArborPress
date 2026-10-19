@@ -15,12 +15,15 @@ from arborpress.models.content import (  # noqa: F401
     Page,
     PageType,
     Post,
+    PostAuthorRelation,
+    PostAuthorRole,
     PostAccessToken,
     PostRevision,
     PostStatus,
     PostVisibility,
     Tag,
 )
+from arborpress.models.authorization import ObjectRelation, ObjectRelationName  # noqa: F401
 from arborpress.models.mail import MailQueue, MailStatus  # noqa: F401
 from arborpress.models.settings import SiteSetting  # noqa: F401
 from arborpress.models.user import (  # noqa: F401

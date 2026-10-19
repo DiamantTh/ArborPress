@@ -24,7 +24,7 @@ from arborpress.core.migrations import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pre_alembic_phase1_schema.sql"
-CURRENT_HEAD = "0003_comment_moderation_appeals"
+CURRENT_HEAD = "0004_authors_and_object_relations"
 
 
 def _sqlite_engine(path: Path) -> AsyncEngine:
@@ -149,7 +149,7 @@ async def test_empty_database_upgrade_noop_and_repeated_install(tmp_path: Path) 
         assert status.is_current
         assert status.current_revisions == (CURRENT_HEAD,)
         before = await _schema_snapshot(engine)
-        assert len(before) == 29
+        assert len(before) == 31
         assert "webauthn_credentials" in before
 
         async with engine.connect() as connection:
@@ -270,9 +270,16 @@ async def test_comment_core_migration_maps_legacy_states_and_hashes_pending_toke
     _load_legacy_fixture(database_path)
     with sqlite3.connect(database_path) as connection:
         connection.execute(
-            "INSERT INTO posts (id, short_id, slug, title, body_md, body_html, status, "
+            "INSERT INTO posts (id, short_id, author_id, slug, title, body_md, body_html, status, "
             "visibility, is_pinned, is_featured, noindex, reading_time_min) "
-            "VALUES ('post', 'short', 'post', 'Title', '', '', 'PUBLISHED', 'PUBLIC', 0, 0, 0, 1)"
+            "VALUES ('post', 'short', 'legacy-user', 'post', 'Title', '', '', 'PUBLISHED', "
+            "'PUBLIC', 0, 0, 0, 1)"
+        )
+        connection.execute(
+            "INSERT INTO posts (id, short_id, author_id, slug, title, body_md, body_html, status, "
+            "visibility, is_pinned, is_featured, noindex, reading_time_min) "
+            "VALUES ('unassigned-post', 'short-null', NULL, 'unassigned', 'Unassigned', '', '', "
+            "'DRAFT', 'PUBLIC', 0, 0, 0, 1)"
         )
         connection.executemany(
             "INSERT INTO comments (id, post_id, author_name, author_email, body, status, "
@@ -316,6 +323,23 @@ async def test_comment_core_migration_maps_legacy_states_and_hashes_pending_toke
         assert by_id["approved"]["published_at"] is not None
         assert by_id["rejected"]["status"] == "rejected"
         assert by_id["spam"]["status"] == "spam"
+        async with engine.connect() as connection:
+            author_row = (
+                await connection.execute(
+                    sa.text(
+                        "SELECT user_id, role, position FROM post_author_relations "
+                        "WHERE post_id='post'"
+                    )
+                )
+            ).one()
+            unassigned_count = await connection.scalar(
+                sa.text(
+                    "SELECT COUNT(*) FROM post_author_relations "
+                    "WHERE post_id='unassigned-post'"
+                )
+            )
+        assert author_row == ("legacy-user", "primary", 0)
+        assert unassigned_count == 0
     finally:
         await engine.dispose()
 
@@ -418,7 +442,7 @@ async def test_known_older_revision_is_reported_as_behind_head(
     versions.mkdir()
     (versions / "0002_test_next.py").write_text(
         "revision = '0004_test_next'\n"
-        "down_revision = '0003_comment_moderation_appeals'\n"
+        "down_revision = '0004_authors_and_object_relations'\n"
         "branch_labels = None\n"
         "depends_on = None\n"
         "def upgrade(): pass\n"

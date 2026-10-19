@@ -142,6 +142,13 @@ class Post(Base):
     )
 
     tags: Mapped[list[Tag]] = relationship(secondary=post_tags, lazy="selectin")
+    author_relations: Mapped[list[PostAuthorRelation]] = relationship(
+        "PostAuthorRelation",
+        back_populates="post",
+        cascade="all, delete-orphan",
+        order_by="PostAuthorRelation.position",
+        lazy="selectin",
+    )
     # Public rendering needs the author's public identity without issuing a
     # lazy query after the request-scoped database session has closed.
     author: Mapped[User | None] = relationship("User", foreign_keys=[author_id], lazy="selectin")
@@ -200,6 +207,52 @@ class Post(Base):
     @property
     def rendered_html(self) -> str:
         return self.body_html
+
+
+class PostAuthorRole(enum.StrEnum):
+    PRIMARY = "primary"
+    COAUTHOR = "coauthor"
+
+
+class PostAuthorRelation(Base):
+    """Editorial authorship, distinct from authorization relations."""
+
+    __tablename__ = "post_author_relations"
+    __table_args__ = (
+        UniqueConstraint("post_id", "user_id", name="uq_post_author_user"),
+        UniqueConstraint("post_id", "role", "position", name="uq_post_author_position"),
+        CheckConstraint("role IN ('primary', 'coauthor')", name="ck_post_author_role"),
+        CheckConstraint(
+            "(role = 'primary' AND position = 0) OR (role = 'coauthor' AND position > 0)",
+            name="ck_post_author_position",
+        ),
+        Index("ix_post_authors_user_post", "user_id", "post_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    post_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("posts.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    role: Mapped[PostAuthorRole] = mapped_column(
+        Enum(
+            PostAuthorRole,
+            native_enum=False,
+            length=16,
+            values_callable=lambda items: [item.value for item in items],
+        ),
+        nullable=False,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    added_by_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    post: Mapped[Post] = relationship("Post", back_populates="author_relations")
+    user: Mapped[User] = relationship("User", foreign_keys=[user_id], lazy="joined")
 
 
 class PageType(enum.StrEnum):
