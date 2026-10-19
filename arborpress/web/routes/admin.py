@@ -149,7 +149,24 @@ async def _session_guard() -> None:
             abort(redirect(url_for("auth.login_page")))
         await db.commit()
         break
-    require_role("author")
+    object_scoped_endpoints = {
+        "admin.post_edit",
+        "admin.post_edit_save",
+        "admin.post_authors_update",
+        "admin.post_relation_grant",
+        "admin.post_relation_revoke",
+        "admin.comments_list",
+        "admin.comments_transparency",
+        "admin.comment_detail",
+        "admin.comment_approve",
+        "admin.comment_reject",
+        "admin.comment_spam",
+        "admin.comment_decision",
+        "admin.comment_revision_decision",
+        "admin.comment_appeal_review",
+    }
+    if request.endpoint not in object_scoped_endpoints:
+        require_role("author")
 
 
 @admin_bp.context_processor
@@ -249,7 +266,35 @@ async def posts():
     from arborpress.models.content import Post
 
     async for db in get_db_session():
-        result = await db.execute(select(Post).order_by(Post.published_at.desc()).limit(100))
+        from arborpress.auth.permissions import can
+        from arborpress.models.user import User
+
+        actor = await db.get(User, str(session.get("user_id") or ""))
+        if not await can(db, actor, "content.edit"):
+            from arborpress.models.authorization import ObjectRelation
+            from arborpress.models.content import PostAuthorRelation
+
+            actor_id = str(actor.id) if actor else ""
+            assigned_authorship = select(PostAuthorRelation.post_id).where(
+                PostAuthorRelation.user_id == actor_id
+            )
+            assigned_editorship = select(ObjectRelation.object_id).where(
+                ObjectRelation.subject_user_id == actor_id,
+                ObjectRelation.object_type == "content",
+                ObjectRelation.relation == "editor",
+            )
+            result = await db.execute(
+                select(Post)
+                .where(
+                    Post.id.in_(assigned_authorship)
+                    | Post.id.in_(assigned_editorship)
+                    | (Post.author_id == actor_id)
+                )
+                .order_by(Post.updated_at.desc())
+                .limit(100)
+            )
+        else:
+            result = await db.execute(select(Post).order_by(Post.updated_at.desc()).limit(100))
         post_list = result.scalars().all()
     return await render_template("admin/posts.html", posts=post_list, noindex=True)
 
@@ -274,12 +319,15 @@ async def post_new_save():
     _require_session()
     import uuid as _uuid
 
+    from arborpress.content.authors import ensure_primary_author
     from arborpress.models.content import Post, PostRevision, PostStatus, PostVisibility
 
     form = await request.form
     title = (form.get("title") or "").strip()[:256]
     slug = (form.get("slug") or "").strip()[:128] or None
     status_val = form.get("status", "draft")
+    if status_val != "draft":
+        require_role("editor")
     visibility_val = form.get("visibility", "public")
     captcha_type = (form.get("captcha_type") or "").strip() or None
 
@@ -334,6 +382,12 @@ async def post_new_save():
         )
         db.add(post)
         await db.flush()  # ID vergeben, aber Transaktion offen halten
+        await ensure_primary_author(
+            db,
+            post=post,
+            user_id=str(session.get("user_id") or ""),
+            actor_user_id=str(session.get("user_id") or ""),
+        )
 
         # Erste Revision anlegen
         rev = PostRevision(
@@ -361,20 +415,47 @@ async def post_new_save():
 @admin_bp.get("/posts/<slug>/edit")
 async def post_edit(slug: str):
     _require_session()
+    from arborpress.auth.permissions import can, object_relations_for_post
+    from arborpress.content.authors import author_account_choices, post_authors
     from arborpress.core.captcha import CaptchaType
     from arborpress.models.content import Post, PostVisibility
+    from arborpress.models.user import User
 
     async for db in get_db_session():
         result = await db.execute(select(Post).where(Post.slug == slug))
         post = result.scalar_one_or_none()
     if post is None:
         abort(404)
+    async for db in get_db_session():
+        actor = await db.get(User, str(session.get("user_id") or ""))
+        if not await can(db, actor, "content.edit", post):
+            abort(403)
+        author_rows = await post_authors(db, str(post.id))
+        author_choices = await author_account_choices(
+            db, include_user_ids=[str(row.user_id) for row in author_rows]
+        )
+        can_manage_authors = await can(db, actor, "content.manage_authors", post)
+        can_manage_relations = await can(db, actor, "object_relations.manage", post)
+        relations = (
+            await object_relations_for_post(db, str(post.id)) if can_manage_relations else []
+        )
     return await render_template(
         "admin/post_edit.html",
         post=post,
         noindex=True,
         captcha_types=list(CaptchaType),
         visibility_options=list(PostVisibility),
+        author_rows=author_rows,
+        primary_author_id=next(
+            (row.user_id for row in author_rows if row.role.value == "primary"),
+            post.author_id,
+        ),
+        coauthor_ids=[row.user_id for row in author_rows if row.role.value == "coauthor"],
+        author_choices=author_choices,
+        can_manage_authors=can_manage_authors,
+        object_relations=relations,
+        can_manage_relations=can_manage_relations,
+        relation_choices=["editor", "comment_moderator"],
     )
 
 
@@ -383,7 +464,9 @@ async def post_edit_save(slug: str):
     _require_session()
     import uuid as _uuid
 
+    from arborpress.auth.permissions import can
     from arborpress.models.content import Post, PostRevision, PostStatus, PostVisibility
+    from arborpress.models.user import User
 
     form = await request.form
     action = form.get("action", "save")
@@ -393,8 +476,12 @@ async def post_edit_save(slug: str):
         post = result.scalar_one_or_none()
         if post is None:
             abort(404)
+        actor = await db.get(User, str(session.get("user_id") or ""))
+        if not await can(db, actor, "content.edit", post):
+            abort(403)
 
         if action == "delete":
+            require_role("editor")
             await db.delete(post)
             await db.commit()
             audit.info("POST deleted | slug=%s user=%s", slug, session.get("user_id", ""))
@@ -420,7 +507,10 @@ async def post_edit_save(slug: str):
         _pub_raw = (form.get("published_at") or "").strip()
         if _pub_raw:
             try:
-                post.published_at = _dt.fromisoformat(_pub_raw)
+                next_published_at = _dt.fromisoformat(_pub_raw)
+                if next_published_at != post.published_at:
+                    require_role("editor")
+                post.published_at = next_published_at
             except ValueError:
                 pass
 
@@ -440,11 +530,22 @@ async def post_edit_save(slug: str):
         post.captcha_type = captcha_type
         post.reading_time_min = Post.calc_reading_time(body_md, body_json)
         try:
-            post.status = PostStatus(status_val)
+            next_status = PostStatus(status_val)
+            if next_status != post.status:
+                require_role("editor")
+            if next_status in {PostStatus.PUBLISHED, PostStatus.SCHEDULED}:
+                from arborpress.content.authors import has_primary_author
+
+                if not await has_primary_author(db, str(post.id)):
+                    abort(400, "Published content requires exactly one primary author.")
+            post.status = next_status
         except ValueError:
             pass
         try:
-            post.visibility = PostVisibility(visibility_val)
+            next_visibility = PostVisibility(visibility_val)
+            if next_visibility != post.visibility:
+                require_role("editor")
+            post.visibility = next_visibility
         except ValueError:
             pass
 
@@ -480,6 +581,110 @@ async def post_edit_save(slug: str):
         )
 
     return redirect(url_for("admin.post_edit", slug=post.slug))
+
+
+@admin_bp.post("/posts/<slug>/authors")
+async def post_authors_update(slug: str) -> ResponseReturnValue:
+    _require_session()
+    from quart import flash
+
+    from arborpress.auth.permissions import can
+    from arborpress.content.authors import AuthorRelationError, replace_post_authors
+    from arborpress.models.content import Post
+    from arborpress.models.user import User
+
+    form = await request.form
+    submitted_coauthors = form.getlist("coauthor_ids")
+    requested_positions: dict[str, int] = {}
+    for fallback_position, user_id in enumerate(submitted_coauthors, start=1):
+        raw_position = form.get(f"coauthor_position_{user_id}", "")
+        try:
+            requested_positions[user_id] = int(raw_position) if raw_position else fallback_position
+        except ValueError:
+            await flash("Coauthor-Reihenfolge muss eine positive Zahl sein.", "error")
+            return redirect(url_for("admin.post_edit", slug=slug), code=303)
+    ordered_coauthors = sorted(
+        submitted_coauthors, key=lambda user_id: (requested_positions[user_id], user_id)
+    )
+    async for db in get_db_session():
+        post = (await db.execute(select(Post).where(Post.slug == slug))).scalar_one_or_none()
+        actor = await db.get(User, str(session.get("user_id") or ""))
+        if post is None:
+            abort(404)
+        if actor is None or not await can(db, actor, "content.manage_authors", post):
+            abort(403)
+        try:
+            await replace_post_authors(
+                db,
+                post_id=str(post.id),
+                primary_user_id=form.get("primary_user_id", ""),
+                coauthor_user_ids=ordered_coauthors,
+                actor_user_id=str(actor.id),
+            )
+            await db.commit()
+        except AuthorRelationError as exc:
+            await db.rollback()
+            await flash(str(exc), "error")
+            return redirect(url_for("admin.post_edit", slug=slug), code=303)
+        await flash("Autoren gespeichert.", "success")
+    return redirect(url_for("admin.post_edit", slug=slug), code=303)
+
+
+@admin_bp.post("/posts/<slug>/relations")
+async def post_relation_grant(slug: str) -> ResponseReturnValue:
+    _require_session()
+    from quart import flash
+
+    from arborpress.auth.permissions import grant_object_relation
+    from arborpress.models.content import Post
+    from arborpress.models.user import User
+
+    form = await request.form
+    async for db in get_db_session():
+        post = (await db.execute(select(Post).where(Post.slug == slug))).scalar_one_or_none()
+        actor = await db.get(User, str(session.get("user_id") or ""))
+        if post is None or actor is None:
+            abort(404)
+        try:
+            await grant_object_relation(
+                db,
+                actor=actor,
+                subject_user_id=form.get("subject_user_id", ""),
+                post=post,
+                relation=form.get("relation", ""),
+            )
+            await db.commit()
+        except ValueError as exc:
+            await db.rollback()
+            await flash(str(exc), "error")
+            return redirect(url_for("admin.post_edit", slug=slug), code=303)
+        await flash("Objektberechtigung hinzugefügt.", "success")
+    return redirect(url_for("admin.post_edit", slug=slug), code=303)
+
+
+@admin_bp.post("/posts/<slug>/relations/<relation_id>/revoke")
+async def post_relation_revoke(slug: str, relation_id: str) -> ResponseReturnValue:
+    _require_session()
+    from quart import flash
+
+    from arborpress.auth.permissions import revoke_object_relation
+    from arborpress.models.content import Post
+    from arborpress.models.user import User
+
+    async for db in get_db_session():
+        post = (await db.execute(select(Post).where(Post.slug == slug))).scalar_one_or_none()
+        actor = await db.get(User, str(session.get("user_id") or ""))
+        if post is None or actor is None:
+            abort(404)
+        try:
+            await revoke_object_relation(db, actor=actor, relation_id=relation_id, post=post)
+            await db.commit()
+        except ValueError as exc:
+            await db.rollback()
+            await flash(str(exc), "error")
+            return redirect(url_for("admin.post_edit", slug=slug), code=303)
+        await flash("Objektberechtigung entfernt.", "success")
+    return redirect(url_for("admin.post_edit", slug=slug), code=303)
 
 
 # ---------------------------------------------------------------------------
@@ -1416,10 +1621,11 @@ async def stepup_status():
 @admin_bp.get("/comments")
 async def comments_list() -> ResponseReturnValue:
     _require_session()
-    require_role("moderator")
     from datetime import datetime
 
+    from arborpress.auth.permissions import can, content_ids_for_relation
     from arborpress.comments import REASON_CATALOG
+    from arborpress.models.authorization import ObjectRelationName
     from arborpress.models.content import (
         Comment,
         CommentModerationAppeal,
@@ -1428,6 +1634,7 @@ async def comments_list() -> ResponseReturnValue:
         CommentStatus,
         ModerationDecision,
     )
+    from arborpress.models.user import User
 
     selected = request.args.get("type", "all")
     if selected not in {"all", "comments", "revisions", "appeals"}:
@@ -1443,6 +1650,17 @@ async def comments_list() -> ResponseReturnValue:
     except ValueError:
         abort(400)
     async for db in get_db_session():
+        actor = await db.get(User, str(session.get("user_id") or ""))
+        global_moderator = await can(db, actor, "comments.moderate")
+        scoped_content_ids = (
+            None
+            if global_moderator
+            else await content_ids_for_relation(
+                db, str(actor.id) if actor else "", ObjectRelationName.COMMENT_MODERATOR
+            )
+        )
+        if scoped_content_ids == []:
+            abort(403)
         pending = []
         revisions = []
         appeals: list[
@@ -1454,6 +1672,11 @@ async def comments_list() -> ResponseReturnValue:
                 select(Comment)
                 .where(
                     Comment.status == CommentStatus.PENDING_MODERATION,
+                    *(
+                        [Comment.post_id.in_(scoped_content_ids)]
+                        if scoped_content_ids is not None
+                        else []
+                    ),
                     *([Comment.created_at >= since] if since else []),
                 )
                 .options(selectinload(Comment.post))
@@ -1471,6 +1694,11 @@ async def comments_list() -> ResponseReturnValue:
                 .where(
                     CommentRevision.status == CommentRevisionStatus.PENDING,
                     Comment.status == CommentStatus.APPROVED,
+                    *(
+                        [Comment.post_id.in_(scoped_content_ids)]
+                        if scoped_content_ids is not None
+                        else []
+                    ),
                     *([CommentRevision.created_at >= since] if since else []),
                 )
                 .options(selectinload(CommentRevision.comment).selectinload(Comment.post))
@@ -1482,15 +1710,34 @@ async def comments_list() -> ResponseReturnValue:
             queue_has_more = queue_has_more or len(revisions) > 50
             revisions = revisions[:50]
         if selected in {"all", "appeals"}:
+            appeal_filters = [CommentModerationAppeal.state == "pending"]
+            if scoped_content_ids is not None:
+                comment_ids = select(Comment.id).where(Comment.post_id.in_(scoped_content_ids))
+                revision_ids = (
+                    select(CommentRevision.id)
+                    .join(Comment, Comment.id == CommentRevision.comment_id)
+                    .where(Comment.post_id.in_(scoped_content_ids))
+                )
+                comment_decision_ids = select(ModerationDecision.id).where(
+                    ModerationDecision.target_type == "comment",
+                    ModerationDecision.target_id.in_(comment_ids),
+                )
+                revision_decision_ids = select(ModerationDecision.id).where(
+                    ModerationDecision.target_type == "revision",
+                    ModerationDecision.target_id.in_(revision_ids),
+                )
+                appeal_filters.append(
+                    CommentModerationAppeal.decision_id.in_(comment_decision_ids)
+                    | CommentModerationAppeal.decision_id.in_(revision_decision_ids)
+                )
+            if since:
+                appeal_filters.append(CommentModerationAppeal.created_at >= since)
             appeal_result = await db.execute(
                 select(CommentModerationAppeal, ModerationDecision)
                 .join(
                     ModerationDecision, ModerationDecision.id == CommentModerationAppeal.decision_id
                 )
-                .where(
-                    CommentModerationAppeal.state == "pending",
-                    *([CommentModerationAppeal.created_at >= since] if since else []),
-                )
+                .where(*appeal_filters)
                 .order_by(CommentModerationAppeal.created_at, CommentModerationAppeal.id)
                 .offset(offset)
                 .limit(51)
@@ -1529,10 +1776,12 @@ async def comments_list() -> ResponseReturnValue:
 @admin_bp.get("/comments/transparency")
 async def comments_transparency() -> ResponseReturnValue:
     _require_session()
-    require_role("moderator")
     from datetime import UTC, date, datetime, timedelta
 
+    from arborpress.auth.permissions import can, content_ids_for_relation
     from arborpress.comments import moderation_transparency
+    from arborpress.models.authorization import ObjectRelationName
+    from arborpress.models.user import User
 
     today = datetime.now(UTC).date()
     try:
@@ -1549,10 +1798,22 @@ async def comments_transparency() -> ResponseReturnValue:
     if start_day >= end_day or (end_day - start_day).days > 366:
         abort(400)
     async for db in get_db_session():
+        actor = await db.get(User, str(session.get("user_id") or ""))
+        global_moderator = await can(db, actor, "comments.moderate")
+        scoped_content_ids = (
+            None
+            if global_moderator
+            else await content_ids_for_relation(
+                db, str(actor.id) if actor else "", ObjectRelationName.COMMENT_MODERATOR
+            )
+        )
+        if scoped_content_ids == []:
+            abort(403)
         report = await moderation_transparency(
             db,
             start=datetime.combine(start_day, datetime.min.time()),
             end=datetime.combine(end_day + timedelta(days=1), datetime.min.time()),
+            post_ids=scoped_content_ids,
         )
     return await render_template("admin/comment_transparency.html", report=report, noindex=True)
 
@@ -1560,18 +1821,25 @@ async def comments_transparency() -> ResponseReturnValue:
 @admin_bp.get("/comments/<comment_id>")
 async def comment_detail(comment_id: str) -> ResponseReturnValue:
     _require_session()
-    require_role("moderator")
+    from arborpress.auth.permissions import require_permission
     from arborpress.comments import REASON_CATALOG, decisions_for_target
     from arborpress.models.content import (
         Comment,
         CommentModerationAppeal,
         CommentRevision,
     )
+    from arborpress.models.user import User
 
     async for db in get_db_session():
         comment = await db.get(Comment, comment_id)
         if comment is None:
             abort(404)
+        await require_permission(
+            db,
+            await db.get(User, str(session.get("user_id") or "")),
+            "comments.moderate",
+            comment.post_id,
+        )
         revisions_result = await db.execute(
             select(CommentRevision)
             .where(CommentRevision.comment_id == comment.id)
@@ -1607,12 +1875,21 @@ async def _apply_comment_decision(
 ) -> ResponseReturnValue:
     from quart import flash
 
+    from arborpress.auth.permissions import require_permission
     from arborpress.comments import ModerationError, moderate_comment
+    from arborpress.models.content import Comment
+    from arborpress.models.user import User
 
     form = await request.form
     actor_id = str(session.get("user_id") or "")
     async for db in get_db_session():
         try:
+            comment = await db.get(Comment, comment_id)
+            if comment is None:
+                abort(404)
+            await require_permission(
+                db, await db.get(User, actor_id), "comments.moderate", comment.post_id
+            )
             decision = await moderate_comment(
                 db,
                 comment_id=comment_id,
@@ -1635,28 +1912,24 @@ async def _apply_comment_decision(
 @admin_bp.post("/comments/<comment_id>/approve")
 async def comment_approve(comment_id: str) -> ResponseReturnValue:
     _require_session()
-    require_role("moderator")
     return await _apply_comment_decision(comment_id, "approve", "no_violation")
 
 
 @admin_bp.post("/comments/<comment_id>/reject")
 async def comment_reject(comment_id: str) -> ResponseReturnValue:
     _require_session()
-    require_role("moderator")
     return await _apply_comment_decision(comment_id, "reject", "rule_violation")
 
 
 @admin_bp.post("/comments/<comment_id>/spam")
 async def comment_spam(comment_id: str) -> ResponseReturnValue:
     _require_session()
-    require_role("moderator")
     return await _apply_comment_decision(comment_id, "spam", "spam")
 
 
 @admin_bp.post("/comments/<comment_id>/decision")
 async def comment_decision(comment_id: str) -> ResponseReturnValue:
     _require_session()
-    require_role("moderator")
     form = await request.form
     outcome = (form.get("outcome") or "").strip()
     if outcome not in {"approve", "reject", "spam", "delete", "restore"}:
@@ -1667,10 +1940,12 @@ async def comment_decision(comment_id: str) -> ResponseReturnValue:
 @admin_bp.post("/comment-revisions/<revision_id>/decision")
 async def comment_revision_decision(revision_id: str) -> ResponseReturnValue:
     _require_session()
-    require_role("moderator")
     from quart import flash
 
+    from arborpress.auth.permissions import require_permission
     from arborpress.comments import ModerationError, moderate_revision
+    from arborpress.models.content import Comment, CommentRevision
+    from arborpress.models.user import User
 
     form = await request.form
     outcome = (form.get("outcome") or "").strip()
@@ -1678,6 +1953,16 @@ async def comment_revision_decision(revision_id: str) -> ResponseReturnValue:
         abort(400)
     async for db in get_db_session():
         try:
+            revision = await db.get(CommentRevision, revision_id)
+            comment = await db.get(Comment, revision.comment_id) if revision else None
+            if comment is None:
+                abort(404)
+            await require_permission(
+                db,
+                await db.get(User, str(session.get("user_id") or "")),
+                "comments.moderate",
+                comment.post_id,
+            )
             await moderate_revision(
                 db,
                 revision_id=revision_id,
@@ -1697,10 +1982,20 @@ async def comment_revision_decision(revision_id: str) -> ResponseReturnValue:
 @admin_bp.post("/comment-appeals/<appeal_id>/review")
 async def comment_appeal_review(appeal_id: str) -> ResponseReturnValue:
     _require_session()
-    require_role("moderator")
     from quart import flash
 
+    from arborpress.auth.permissions import (
+        other_comment_reviewer_available,
+        require_permission,
+    )
     from arborpress.comments import ModerationError, review_comment_appeal
+    from arborpress.models.content import (
+        Comment,
+        CommentModerationAppeal,
+        CommentRevision,
+        ModerationDecision,
+    )
+    from arborpress.models.user import User
 
     form = await request.form
     outcome = (form.get("outcome") or "").strip()
@@ -1708,12 +2003,36 @@ async def comment_appeal_review(appeal_id: str) -> ResponseReturnValue:
         abort(400)
     async for db in get_db_session():
         try:
+            appeal_record = await db.get(CommentModerationAppeal, appeal_id)
+            decision_record = (
+                await db.get(ModerationDecision, appeal_record.decision_id)
+                if appeal_record
+                else None
+            )
+            target_comment = None
+            if decision_record and decision_record.target_type == "comment":
+                target_comment = await db.get(Comment, decision_record.target_id)
+            elif decision_record:
+                revision = await db.get(CommentRevision, decision_record.target_id)
+                target_comment = await db.get(Comment, revision.comment_id) if revision else None
+            if target_comment is None:
+                abort(404)
+            reviewer_id = str(session.get("user_id") or "")
+            await require_permission(
+                db, await db.get(User, reviewer_id), "comments.moderate", target_comment.post_id
+            )
+            other_reviewer = await other_comment_reviewer_available(
+                db,
+                original_actor_id=decision_record.actor_user_id if decision_record else None,
+                post_id=str(target_comment.post_id),
+            )
             appeal = await review_comment_appeal(
                 db,
                 appeal_id=appeal_id,
-                reviewer_user_id=str(session.get("user_id") or ""),
+                reviewer_user_id=reviewer_id,
                 outcome=cast(Literal["upheld", "overturned"], outcome),
                 reviewer_reason=form.get("reviewer_reason", ""),
+                other_reviewer_available=other_reviewer,
             )
             await db.commit()
         except ModerationError as exc:

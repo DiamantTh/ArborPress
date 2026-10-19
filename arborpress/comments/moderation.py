@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from arborpress.models.content import (
@@ -475,6 +475,7 @@ async def review_comment_appeal(
     reviewer_user_id: str,
     outcome: Literal["upheld", "overturned"],
     reviewer_reason: str,
+    other_reviewer_available: bool | None = None,
 ) -> CommentModerationAppeal:
     appeal = (
         await db.execute(
@@ -491,13 +492,17 @@ async def review_comment_appeal(
     decision = await db.get(ModerationDecision, appeal.decision_id)
     if decision is None:
         raise ModerationError("The original decision is unavailable.")
-    other_reviewers = await db.scalar(
-        select(func.count(User.id)).where(
-            User.is_active.is_(True),
-            User.role.in_([UserRole.ADMIN, UserRole.EDITOR, UserRole.MODERATOR]),
-            User.id != decision.actor_user_id,
+    other_reviewers = other_reviewer_available
+    if other_reviewers is None:
+        other_reviewers = bool(
+            await db.scalar(
+                select(func.count(User.id)).where(
+                    User.is_active.is_(True),
+                    User.role.in_([UserRole.ADMIN, UserRole.EDITOR, UserRole.MODERATOR]),
+                    User.id != decision.actor_user_id,
+                )
+            )
         )
-    )
     self_exception = bool(
         decision.actor_user_id
         and str(decision.actor_user_id) == str(reviewer_user_id)
@@ -593,8 +598,39 @@ async def review_comment_appeal(
     return cast(CommentModerationAppeal, appeal)
 
 
-async def moderation_transparency(db: Any, *, start: datetime, end: datetime) -> dict[str, Any]:
+async def moderation_transparency(
+    db: Any, *, start: datetime, end: datetime, post_ids: Sequence[str] | None = None
+) -> dict[str, Any]:
     """Return anonymized, grouped decision and appeal counts for a time range."""
+    decision_filters = [
+        ModerationDecision.created_at >= start,
+        ModerationDecision.created_at < end,
+    ]
+    appeal_filters = [
+        CommentModerationAppeal.created_at >= start,
+        CommentModerationAppeal.created_at < end,
+    ]
+    if post_ids is not None:
+        comment_ids = select(Comment.id).where(Comment.post_id.in_(post_ids))
+        revision_ids = (
+            select(CommentRevision.id)
+            .join(Comment, Comment.id == CommentRevision.comment_id)
+            .where(Comment.post_id.in_(post_ids))
+        )
+        decision_filters.append(
+            or_(
+                and_(
+                    ModerationDecision.target_type == "comment",
+                    ModerationDecision.target_id.in_(comment_ids),
+                ),
+                and_(
+                    ModerationDecision.target_type == "revision",
+                    ModerationDecision.target_id.in_(revision_ids),
+                ),
+            )
+        )
+        decision_ids = select(ModerationDecision.id).where(*decision_filters)
+        appeal_filters.append(CommentModerationAppeal.decision_id.in_(decision_ids))
     decision_rows = await db.execute(
         select(
             ModerationDecision.reason_code,
@@ -603,7 +639,7 @@ async def moderation_transparency(db: Any, *, start: datetime, end: datetime) ->
             ModerationDecision.outcome,
             func.count(ModerationDecision.id),
         )
-        .where(ModerationDecision.created_at >= start, ModerationDecision.created_at < end)
+        .where(*decision_filters)
         .group_by(
             ModerationDecision.reason_code,
             ModerationDecision.restriction_type,
@@ -614,9 +650,7 @@ async def moderation_transparency(db: Any, *, start: datetime, end: datetime) ->
     )
     appeal_rows = await db.execute(
         select(CommentModerationAppeal.state, func.count(CommentModerationAppeal.id))
-        .where(
-            CommentModerationAppeal.created_at >= start, CommentModerationAppeal.created_at < end
-        )
+        .where(*appeal_filters)
         .group_by(CommentModerationAppeal.state)
     )
     return {

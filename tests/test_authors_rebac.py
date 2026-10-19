@@ -201,3 +201,41 @@ async def test_author_relation_does_not_leak_drafts_into_public_eligibility(db_s
         .all()
     )
     assert [row.id for row in public_posts] == [published.id]
+
+
+@pytest.mark.asyncio
+async def test_disabled_existing_author_is_preserved_but_cannot_be_added_anew(db_session):
+    disabled_author = _account()
+    other_author = _account()
+    existing_post, new_post = _post(), _post()
+    db_session.add_all([disabled_author, other_author, existing_post, new_post])
+    await db_session.flush()
+    await replace_post_authors(
+        db_session,
+        post_id=str(existing_post.id),
+        primary_user_id=str(disabled_author.id),
+        coauthor_user_ids=[],
+        actor_user_id=str(other_author.id),
+    )
+    disabled_author.is_active = False
+    await db_session.flush()
+
+    preserved = await replace_post_authors(
+        db_session,
+        post_id=str(existing_post.id),
+        primary_user_id=str(disabled_author.id),
+        coauthor_user_ids=[str(other_author.id)],
+        actor_user_id=str(other_author.id),
+    )
+    assert [row.user_id for row in preserved] == [
+        str(disabled_author.id),
+        str(other_author.id),
+    ]
+    with pytest.raises(AuthorRelationError, match="active"):
+        await replace_post_authors(
+            db_session,
+            post_id=str(new_post.id),
+            primary_user_id=str(other_author.id),
+            coauthor_user_ids=[str(disabled_author.id)],
+            actor_user_id=str(other_author.id),
+        )

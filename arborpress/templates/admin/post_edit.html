@@ -135,6 +135,73 @@
     <a href="{{ url_for('admin.posts') }}" class="btn">Abbrechen</a>
   </div>
 </form>
+
+{% if post and can_manage_authors %}
+<section class="admin-panel" aria-labelledby="post-authors-heading">
+  <h3 id="post-authors-heading">Autoren</h3>
+  <p>Ein Primary Author und geordnete Coauthors. Autorenbeziehungen vergeben keine Moderationsrechte.</p>
+  <form method="POST" action="{{ url_for('admin.post_authors_update', slug=post.slug) }}" class="admin-form">
+    {{ csrf_input() }}
+    <label>Primary Author
+      <select name="primary_user_id" required>
+        {% for account in author_choices %}
+        <option value="{{ account.id }}" {% if primary_author_id == account.id %}selected{% endif %}>
+          {{ account.display_name }} (@{{ account.username }}){% if not account.is_active %} — deaktiviert, bestehende Zuordnung{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <fieldset>
+      <legend>Coauthors (optional, Reihenfolge über Position)</legend>
+      {% for account in author_choices %}
+      <div class="form-row">
+        <label>
+          <input type="checkbox" name="coauthor_ids" value="{{ account.id }}" {% if account.id in coauthor_ids %}checked{% endif %}>
+          {{ account.display_name }} (@{{ account.username }}){% if not account.is_active %} — deaktiviert, bestehende Zuordnung{% endif %}
+        </label>
+        <label>Position
+          <input type="number" name="coauthor_position_{{ account.id }}" min="1"
+                 value="{% for author in author_rows if author.user_id == account.id and author.role.value == 'coauthor' %}{{ author.position }}{% endfor %}">
+        </label>
+      </div>
+      {% endfor %}
+    </fieldset>
+    <button type="submit" class="btn btn-primary">Autoren speichern</button>
+  </form>
+</section>
+{% endif %}
+
+{% if post and can_manage_relations %}
+<section class="admin-panel" aria-labelledby="post-relations-heading">
+  <h3 id="post-relations-heading">Objektbezogene Berechtigungen</h3>
+  <p>Diese Rechte gelten ausschließlich für diesen Beitrag und sind keine globalen Rollen.</p>
+  <ul>
+    {% for relation in object_relations %}
+    <li>{{ relation.subject.display_name }} (@{{ relation.subject.username }}) — {{ relation.relation }}
+      <form method="POST" action="{{ url_for('admin.post_relation_revoke', slug=post.slug, relation_id=relation.id) }}" class="inline-form">
+        {{ csrf_input() }}
+        <button type="submit" class="btn btn-danger">Entziehen</button>
+      </form>
+    </li>
+    {% else %}<li>Keine objektbezogenen Berechtigungen.</li>{% endfor %}
+  </ul>
+  <form method="POST" action="{{ url_for('admin.post_relation_grant', slug=post.slug) }}" class="admin-form">
+    {{ csrf_input() }}
+    <label>Account
+      <select name="subject_user_id" required>
+        {% for account in author_choices if account.is_active %}<option value="{{ account.id }}">{{ account.display_name }} (@{{ account.username }})</option>{% endfor %}
+      </select>
+    </label>
+    <label>Beziehung
+      <select name="relation" required>
+        <option value="editor">Editor für diesen Beitrag</option>
+        <option value="comment_moderator">Kommentar-Moderator für diesen Beitrag</option>
+      </select>
+    </label>
+    <button type="submit" class="btn btn-primary">Berechtigung hinzufügen</button>
+  </form>
+</section>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}{{ super() }}

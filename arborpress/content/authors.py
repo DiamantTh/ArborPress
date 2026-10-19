@@ -76,14 +76,19 @@ async def replace_post_authors(
     if len(set(coauthor_ids)) != len(coauthor_ids) or primary_id in coauthor_ids:
         raise AuthorRelationError("Authors must be unique; the primary author cannot be repeated.")
     user_ids = [primary_id, *coauthor_ids]
-    users_result = await db.execute(
-        select(User.id).where(User.id.in_(user_ids), User.is_active.is_(True))
-    )
-    found = {str(value) for value in users_result.scalars().all()}
-    if found != set(user_ids):
-        raise AuthorRelationError("Every author must be an active ArborPress account.")
-
     previous = await post_authors(db, post_id)
+    existing_user_ids = {str(row.user_id) for row in previous}
+    users_result = await db.execute(select(User.id, User.is_active).where(User.id.in_(user_ids)))
+    account_states = {str(user_id): bool(active) for user_id, active in users_result.all()}
+    if any(
+        user_id not in account_states
+        or (not account_states[user_id] and user_id not in existing_user_ids)
+        for user_id in user_ids
+    ):
+        raise AuthorRelationError(
+            "Every author must exist; new authors must be active ArborPress accounts."
+        )
+
     before = {row.user_id: (row.role.value, row.position) for row in previous}
     await db.execute(delete(PostAuthorRelation).where(PostAuthorRelation.post_id == post_id))
     await db.flush()
@@ -158,8 +163,12 @@ async def ensure_primary_author(
     )
 
 
-async def author_account_choices(db: AsyncSession) -> list[User]:
+async def author_account_choices(
+    db: AsyncSession, *, include_user_ids: Sequence[str] = ()
+) -> list[User]:
     result = await db.execute(
-        select(User).where(User.is_active.is_(True)).order_by(User.display_name, User.username)
+        select(User)
+        .where(User.is_active.is_(True) | User.id.in_(list(include_user_ids)))
+        .order_by(User.display_name, User.username)
     )
     return list(result.scalars().all())
