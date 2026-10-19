@@ -1,4 +1,4 @@
-# Comment core (Phase 7A)
+# Comment core and moderation (Phases 7A–7B)
 
 ArborPress stores guest and account comments in the same `comments` table.
 The state is explicit and independent of guest e-mail confirmation:
@@ -75,6 +75,42 @@ escape untrusted HTML. The account trust flag `User.comment_trusted` is local
 state for `trusted_bypass`; it does not grant any account or object
 authorization.
 
-Phase 7A provides the model and service foundation, not the complete
-moderation queue, revision UI, vote controls, appeals, Authors/Coauthors or
-RBAC/ReBAC experience. Those are follow-on work (7B/7C).
+## Decisions and appeals (Phase 7B)
+
+Alembic revision `0003_comment_moderation_appeals` adds immutable
+`ModerationDecision` rows for a `comment` or `revision` target and
+`CommentModerationAppeal` rows bound to one decision. Outcomes record a stable
+reason code, restriction category, source (`human`, `automated`, or
+`assisted`), optional escaped human explanation and optional rule reference.
+The reason catalog is `arborpress.comments.REASON_CATALOG`; the `other` code
+requires a human explanation. Existing decisions are superseded by new rows,
+never rewritten. Automatic policy outcomes are recorded as `automated`, not
+attributed to a person or described as AI.
+
+Core operations are `moderate_comment`, `moderate_revision`,
+`submit_comment_appeal`, `review_comment_appeal`, and
+`moderation_transparency`. A rejected revision leaves the current public body
+untouched. Approving one replaces the body without changing its original
+publication time. Appeals are currently limited to registered authors, have
+one submission per decision, and use the `comments.appeal_window_days`
+SiteSetting (default 14, capped at 90 days). Guest confirmation proves an
+address for publication flow but is not a general guest account credential,
+so it does not authorize appeals.
+
+Moderation and appeal pages are Quart/Jinja SSR at `/admin/comments`,
+`/admin/comments/<comment_id>`, and `/admin/comments/transparency`. Mutations
+remain POST-only and require the existing session, moderator role, and CSRF
+checks. The transparency page is a grouped, non-identifying report for
+moderators; ArborPress does not publish it automatically.
+
+Public article pages render approved threads, chronological replies,
+independent quote previews, edited markers, vote counts/forms and neutral
+deleted placeholders in the initial HTML. Reply, quote, edit, vote and appeal
+forms use ordinary server requests; no JavaScript is required. Only the
+registered author sees their pending/hidden status and decision explanation.
+Guest email, internal user IDs and moderator identity are not rendered
+publicly. Public revision history remains hidden.
+
+Phase 7B supplies the decision and presentation foundation, not Primary
+Author/Coauthor relations, object-level ReBAC permissions or the final
+author-profile experience; those belong to Phase 7C.
