@@ -176,10 +176,32 @@
       Admin-Freischaltung erforderlich
     </label>
 
+    <label>
+      Moderationsmodus
+      <select name="moderation_mode">
+        {% set comment_mode = sections.comments.get('moderation_mode') or ('always' if sections.comments.get('require_admin_approval', true) else 'none') %}
+        <option value="always" {{ 'selected' if comment_mode == 'always' }}>Alle Kommentare prüfen</option>
+        <option value="first_n" {{ 'selected' if comment_mode == 'first_n' }}>Erste Kommentare je Konto prüfen</option>
+        <option value="trusted_bypass" {{ 'selected' if comment_mode == 'trusted_bypass' }}>Vertrauenswürdige Konten bevorzugen</option>
+        <option value="none" {{ 'selected' if comment_mode == 'none' }}>Keine Freischaltung erforderlich</option>
+      </select>
+    </label>
+
     <label class="checkbox">
       <input type="checkbox" name="allow_anonymous" value="1"
              {{ 'checked' if sections.comments.get('allow_anonymous', true) }}>
       Anonyme Kommentare erlauben
+    </label>
+
+    <label class="checkbox">
+      <input type="checkbox" name="allow_replies" value="1"
+             {{ 'checked' if sections.comments.get('allow_replies', true) }}>
+      Antworten in Kommentar-Threads erlauben
+    </label>
+    <label class="checkbox">
+      <input type="checkbox" name="allow_quotes" value="1"
+             {{ 'checked' if sections.comments.get('allow_quotes', true) }}>
+      Zitate anderer freigegebener Kommentare erlauben
     </label>
 
     <label>
@@ -199,7 +221,35 @@
     <label>
       Maximale Verschachtelungstiefe
       <input type="number" name="max_depth" min="0" max="10"
-             value="{{ sections.comments.get('max_depth', 3) }}">
+             value="{{ sections.comments.get('visible_max_depth', sections.comments.get('max_depth', 4)) }}">
+    </label>
+
+    <div class="form-row">
+      <label>
+        Erste N Kommentare pro Konto prüfen
+        <input type="number" name="first_n_count" min="0" max="1000"
+               value="{{ sections.comments.get('first_n_count', 1) }}">
+      </label>
+      <label>
+        Bearbeitungsfenster (Minuten)
+        <input type="number" name="edit_window_minutes" min="0" max="10080"
+               value="{{ sections.comments.get('edit_window_minutes', 30) }}">
+      </label>
+      <label>
+        Autorenänderungen je Kommentar
+        <input type="number" name="max_user_edits" min="0" max="100"
+               value="{{ sections.comments.get('max_user_edits', 2) }}">
+      </label>
+      <label>
+        Bestätigung läuft ab (Stunden)
+        <input type="number" name="confirmation_ttl_hours" min="1" max="168"
+               value="{{ sections.comments.get('confirmation_ttl_hours', 24) }}">
+      </label>
+    </div>
+    <label class="checkbox">
+      <input type="checkbox" name="trusted_edit_bypass" value="1"
+             {{ 'checked' if sections.comments.get('trusted_edit_bypass', false) }}>
+      Vertrauenswürdige Kommentierende dürfen Änderungen direkt veröffentlichen
     </label>
 
     <div class="form-row">

@@ -28,6 +28,7 @@ SMTP configuration (examples for config.toml):
 from __future__ import annotations
 
 import logging
+from html import escape
 from typing import TYPE_CHECKING
 
 log = logging.getLogger("arborpress.mail")
@@ -69,8 +70,8 @@ async def _send(
 
     if mc.get("backend", "none") == "none":
         log.info(
-            "[mail:none] to=%s | subject=%s | text=%s",
-            to_address, subject, body_text[:120],
+            "[mail:none] to=%s | subject=%s",
+            to_address, subject,
         )
         return False
 
@@ -94,7 +95,7 @@ async def _send(
 # Comment confirmation e-mail (to author)
 # ---------------------------------------------------------------------------
 
-async def send_comment_confirmation(comment: Comment, post: Post) -> bool:
+async def send_comment_confirmation(comment: Comment, post: Post, token: str) -> bool:
     """Send the confirmation link to the comment author.
 
     The user must click this link so that the comment is forwarded
@@ -102,9 +103,14 @@ async def send_comment_confirmation(comment: Comment, post: Post) -> bool:
     """
     from arborpress.core.config import get_settings
 
+    if not comment.author_email:
+        return False
     base_url    = get_settings().web.base_url.rstrip("/")
     from_name   = _mail_s().get("from_name", "ArborPress")
-    confirm_url = f"{base_url}/comment/confirm/{comment.confirmation_token}"
+    confirm_url = f"{base_url}/comment/confirm/{token}"
+    confirm_href = escape(confirm_url, quote=True)
+    author_name = escape(comment.author_name)
+    post_title = escape(post.title)
 
     subject = f"Please confirm your comment – {post.title}"
 
@@ -125,12 +131,12 @@ async def send_comment_confirmation(comment: Comment, post: Post) -> bool:
 <head><meta charset="UTF-8"></head>
 <body style="font-family:sans-serif;color:#1a202c;max-width:520px;margin:0 auto">
   <h2 style="color:#2563eb">Confirm your comment</h2>
-  <p>Hello <strong>{comment.author_name}</strong>,</p>
+  <p>Hello <strong>{author_name}</strong>,</p>
   <p>thank you for your comment on the post
-     <em>&raquo;{post.title}&laquo;</em>.</p>
+     <em>&raquo;{post_title}&laquo;</em>.</p>
   <p>Please confirm your comment:</p>
   <p style="text-align:center;margin:1.5rem 0">
-    <a href="{confirm_url}"
+    <a href="{confirm_href}"
        style="background:#2563eb;color:#fff;padding:.65rem 1.5rem;
               border-radius:6px;text-decoration:none;font-weight:700">
       Confirm comment
@@ -143,7 +149,7 @@ async def send_comment_confirmation(comment: Comment, post: Post) -> bool:
   </p>
   <hr style="border:none;border-top:1px solid #e2e8f0;margin:1.5rem 0">
   <p style="font-size:.8rem;color:#9ca3af">
-    Direct link: <a href="{confirm_url}">{confirm_url}</a>
+    Direct link: <a href="{confirm_href}">{escape(confirm_url)}</a>
   </p>
 </body>
 </html>"""
@@ -178,9 +184,21 @@ async def send_comment_notification(comment: Comment, post: Post) -> bool:
     reject_url  = f"{base_url}/admin/comments/{comment.id}/reject"
 
     subject = f"New comment awaiting approval – {post.title}"
+    html_author = escape(comment.author_name)
+    html_email = escape(comment.author_email or "")
+    html_title = escape(post.title)
+    html_body = escape(comment.body)
+    approve_href = escape(approve_url, quote=True)
+    reject_href = escape(reject_url, quote=True)
+    author_text = (
+        f"New comment from {comment.author_name} <{comment.author_email}>"
+        if comment.author_email
+        else f"New comment from registered author {comment.author_name}"
+    )
+    author_email_html = f" &lt;{html_email}&gt;" if html_email else ""
 
     body_text = (
-        f"New comment from {comment.author_name} <{comment.author_email}>\n"
+        f"{author_text}\n"
         f"Post: {post.title}\n\n"
         f"---\n{comment.body}\n---\n\n"
         f"Approve:  {approve_url}\n"
@@ -196,21 +214,21 @@ async def send_comment_notification(comment: Comment, post: Post) -> bool:
   <h2>New comment awaiting approval</h2>
   <table style="width:100%;border-collapse:collapse;font-size:.9rem;margin-bottom:1rem">
     <tr><td style="color:#6b7280;padding:.3rem .5rem">Post</td>
-        <td><strong>{post.title}</strong></td></tr>
+        <td><strong>{html_title}</strong></td></tr>
     <tr><td style="color:#6b7280;padding:.3rem .5rem">Author</td>
-        <td>{comment.author_name} &lt;{comment.author_email}&gt;</td></tr>
+        <td>{html_author}{author_email_html}</td></tr>
   </table>
   <blockquote style="border-left:3px solid #2563eb;padding:.5rem 1rem;
                      background:#f8f9fa;border-radius:0 6px 6px 0">
-    {comment.body}
+    {html_body}
   </blockquote>
   <p style="display:flex;gap:.75rem;margin-top:1.25rem">
-    <a href="{approve_url}"
+    <a href="{approve_href}"
        style="background:#16a34a;color:#fff;padding:.55rem 1.25rem;
               border-radius:6px;text-decoration:none;font-weight:700">
       ✓ Approve
     </a>
-    <a href="{reject_url}"
+    <a href="{reject_href}"
        style="background:#dc2626;color:#fff;padding:.55rem 1.25rem;
               border-radius:6px;text-decoration:none;font-weight:700">
       ✗ Reject

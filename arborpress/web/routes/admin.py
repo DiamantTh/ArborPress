@@ -1418,7 +1418,7 @@ async def comments_list():
     async for db in get_db_session():
         stmt = (
             select(Comment)
-            .where(Comment.status == CommentStatus.CONFIRMED)
+            .where(Comment.status == CommentStatus.PENDING_MODERATION)
             .order_by(Comment.confirmed_at.asc())
         )
         result = await db.execute(stmt)
@@ -1441,6 +1441,7 @@ async def comment_approve(comment_id: str):
     _require_session()
     require_role("editor")
     """Kommentar freischalten."""
+    from datetime import UTC
     from datetime import datetime as dt
 
     from arborpress.models.content import Comment, CommentStatus
@@ -1452,7 +1453,9 @@ async def comment_approve(comment_id: str):
         if comment is None:
             abort(404)
         comment.status = CommentStatus.APPROVED
-        comment.approved_at = dt.utcnow()
+        now = dt.now(UTC).replace(tzinfo=None)
+        comment.approved_at = now
+        comment.published_at = now
         await db.commit()
 
     return redirect(url_for("admin.comments_list"))
@@ -1690,7 +1693,16 @@ async def site_settings_save():
                 {
                     "require_email_confirmation": form.get("require_email_confirmation") == "1",
                     "require_admin_approval": form.get("require_admin_approval") == "1",
+                    "moderation_mode": (form.get("moderation_mode") or "").strip(),
+                    "first_n_count": max(0, int(form.get("first_n_count") or 1)),
+                    "visible_max_depth": max(1, int(form.get("max_depth") or 4)),
+                    "edit_window_minutes": max(0, int(form.get("edit_window_minutes") or 30)),
+                    "max_user_edits": max(0, int(form.get("max_user_edits") or 2)),
+                    "trusted_edit_bypass": form.get("trusted_edit_bypass") == "1",
+                    "confirmation_ttl_hours": min(168, max(1, int(form.get("confirmation_ttl_hours") or 24))),
                     "allow_anonymous": form.get("allow_anonymous") == "1",
+                    "allow_replies": form.get("allow_replies") == "1",
+                    "allow_quotes": form.get("allow_quotes") == "1",
                     "rate_limit_per_hour": int(form.get("rate_limit_per_hour") or 10),
                     "notify_admin_email": (form.get("notify_admin_email") or "").strip(),
                     "max_depth": int(form.get("max_depth") or 3),

@@ -294,6 +294,52 @@ def _expected_schema_errors(
     return errors
 
 
+def _is_supported_pre_comment_schema(connection: Connection) -> bool:
+    """Recognize the published pre-7A schema for safe legacy adoption.
+
+    The 7A Alembic upgrade owns the structural differences.  This deliberately
+    checks that no unrelated table/column drift is being hidden by the relaxed
+    comparison.
+    """
+    inspector = sa.inspect(connection)
+    expected = {table.name for table in Base.metadata.sorted_tables}
+    actual = _table_names(inspector)
+    if actual != expected - {"comment_revisions", "comment_votes"}:
+        return False
+    allowed_columns = {
+        "comments": {
+            "author_user_id", "confirmation_token_hash", "confirmation_expires_at",
+            "confirmation_sent_at",
+            "published_at", "edited_at", "parent_id",
+        },
+        "posts": {"comments_enabled", "guest_confirmation_required", "comment_moderation_mode"},
+        "users": {"comment_trusted"},
+    }
+    errors = _expected_schema_errors(connection, allow_extra_tables=False)
+    for error in errors:
+        if error in {"missing table comment_revisions", "missing table comment_votes"}:
+            continue
+        if error == "unexpected column comments.confirmation_token":
+            continue
+        if error.startswith("missing column "):
+            _, qualified = error.split("missing column ", 1)
+            table, column = qualified.split(".", 1)
+            if column in allowed_columns.get(table, set()):
+                continue
+        if error in {
+            "nullability mismatch for comments.author_email",
+            "enum values mismatch for comments.status",
+            "length mismatch for comments.status",
+            "foreign key mismatch for comments",
+            "index mismatch for comments",
+        }:
+            continue
+        return False
+    # These are intentionally removed by 7A and converted through Alembic.
+    comment_columns = {column["name"] for column in inspector.get_columns("comments")}
+    return {"confirmation_token", "confirmed_at", "approved_at", "quote_of_id"} <= comment_columns
+
+
 async def _inspect_status(connection: AsyncConnection) -> SchemaStatus:
     config = _config()
     script = _scripts(config)
@@ -314,6 +360,11 @@ async def _inspect_status(connection: AsyncConnection) -> SchemaStatus:
         if not has_version:
             errors = _expected_schema_errors(sync_connection, allow_extra_tables=False)
             if errors:
+                if _is_supported_pre_comment_schema(sync_connection):
+                    return SchemaStatus(
+                        "legacy", (), head,
+                        "Matches the supported pre-7A comment schema; Alembic will upgrade it.",
+                    )
                 detail = "; ".join(errors[:8])
                 return SchemaStatus("unknown_legacy", (), head, detail)
             return SchemaStatus("legacy", (), head, "Matches the supported pre-Alembic schema.")
@@ -394,7 +445,7 @@ async def _adopt_legacy(connection: AsyncConnection, status: SchemaStatus) -> No
 
 
 async def adopt_legacy_database(engine: AsyncEngine | None = None) -> None:
-    """Validate and stamp the exact supported pre-Alembic schema."""
+    """Validate a supported pre-Alembic schema, stamp its baseline, then upgrade."""
     async_engine = engine or get_engine()
     async with async_engine.connect() as connection:
         async with _migration_lock(connection):
@@ -402,6 +453,7 @@ async def adopt_legacy_database(engine: AsyncEngine | None = None) -> None:
             if status.state != "legacy":
                 raise MigrationError(f"Legacy adoption refused: {status.detail}")
             await _adopt_legacy(connection, status)
+            await _command(connection, command.upgrade, "head")
     final_status = await schema_status(async_engine)
     if final_status.state != "current":
         raise MigrationError(

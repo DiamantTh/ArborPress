@@ -27,6 +27,7 @@ from quart import (
     redirect,
     render_template,
     request,
+    session,
     url_for,
 )
 from slugify import slugify
@@ -35,7 +36,7 @@ from sqlalchemy.orm import selectinload
 
 from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
-from arborpress.core.validators import is_valid_email, is_safe_url
+from arborpress.core.validators import is_safe_url, is_valid_email
 from arborpress.web.security import validate_csrf
 
 log = logging.getLogger("arborpress.web.public")
@@ -52,6 +53,7 @@ _PER_PAGE = 20
 async def _rdap_background(comment_id: str, ip_str: str) -> None:
     """Look up RDAP data for *ip_str* and store it on the comment (best-effort)."""
     import json as _json
+
     from arborpress.core import rdap as _rdap
     from arborpress.core.db import get_session_factory
 
@@ -63,6 +65,7 @@ async def _rdap_background(comment_id: str, ip_str: str) -> None:
         _factory = get_session_factory()
         async with _factory() as _db:
             from sqlalchemy import select as _select
+
             from arborpress.models.content import Comment as _Comment
             stmt = _select(_Comment).where(_Comment.id == comment_id)
             row = (await _db.execute(stmt)).scalar_one_or_none()
@@ -563,23 +566,21 @@ async def author_post(handle: str, slug: str):
 async def post_comment_submit(slug: str):
     """Kommentar einreichen.
 
-    Ablauf:
-      1. Validate CSRF token (§10)
-      2. Validate captcha (type follows post override or global default)
-      3. Validate form
-      4. Create Comment(status=PENDING) in DB
-      5. Send confirmation e-mail to commenter
-      6. Redirect to article with flash notice
+    Ablauf: validate CSRF/CAPTCHA, delegate policy and persistence to the
+    comment domain service, then mail a one-time guest token when applicable.
     """
     await validate_csrf()
+    from datetime import UTC
     from datetime import datetime as dt
 
     from quart import flash
 
+    from arborpress.comments import CommentPolicyError, create_comment, resolve_comment_policy
     from arborpress.core.captcha import get_effective_captcha_type, verify_captcha
     from arborpress.core.mail import send_comment_confirmation
     from arborpress.core.site_settings import get_section
     from arborpress.models.content import Comment, CommentStatus, Post, PostStatus
+    from arborpress.models.user import User
 
     canonical = _canonical_slug(slug)
 
@@ -598,6 +599,10 @@ async def post_comment_submit(slug: str):
         # --- Captcha- und Kommentar-Einstellungen laden ---
         captcha_section  = await get_section("captcha", db)
         comments_section = await get_section("comments", db)
+        policy = resolve_comment_policy(post, comments_section)
+        if not policy.enabled:
+            await flash("Comments are closed for this article.", "error")
+            return redirect(url_for("public.post_detail", slug=canonical))
 
         # --- Captcha validation ---
         captcha_type = get_effective_captcha_type(post.captcha_type, captcha_section)
@@ -606,24 +611,20 @@ async def post_comment_submit(slug: str):
             await flash(err or "Please solve the captcha correctly.", "error")
             return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
 
-        author_name  = (form.get("author_name",  "") or "").strip()[:100]
+        user_id = session.get("user_id")
+        author_user = await db.get(User, str(user_id)) if user_id else None
+        author_name = (form.get("author_name", "") or "").strip()[:128]
         author_email = (form.get("author_email", "") or "").strip()
+        if author_user is not None:
+            author_name = author_user.display_name
+            author_email = author_user.email or ""
         author_url   = (form.get("author_url",   "") or "").strip() or None
         body         = (form.get("body",          "") or "").strip()[:10_000]
-        # Quote reference: optional, must belong to the same post
+        # Parent and quote are deliberately independent references.
+        parent_raw = (form.get("parent_id", "") or "").strip() or None
         quote_of_raw = (form.get("quote_of_id",  "") or "").strip() or None
-        quote_of_id  = None
-        if quote_of_raw:
-            quoted_stmt = select(Comment).where(
-                Comment.id == quote_of_raw,
-                Comment.post_id == post.id,
-                Comment.status == CommentStatus.APPROVED,
-            )
-            quoted_result = await db.execute(quoted_stmt)
-            if quoted_result.scalar_one_or_none():
-                quote_of_id = quote_of_raw
 
-        if not author_name or not author_email or not body:
+        if not author_name or not body or (author_user is None and not author_email):
             await flash("Please fill in all required fields.", "error")
             return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
 
@@ -633,7 +634,7 @@ async def post_comment_submit(slug: str):
             return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
 
         # Grobes E-Mail-Format-Check
-        if not is_valid_email(author_email):
+        if author_email and not is_valid_email(author_email):
             await flash("Please enter a valid e-mail address.", "error")
             return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
 
@@ -663,7 +664,7 @@ async def post_comment_submit(slug: str):
             from datetime import timedelta
 
             from sqlalchemy import and_
-            one_hour_ago = dt.utcnow() - timedelta(hours=1)
+            one_hour_ago = dt.now(UTC).replace(tzinfo=None) - timedelta(hours=1)
             ip = request.remote_addr or ""
             rl_stmt = select(Comment).where(
                 and_(
@@ -676,7 +677,6 @@ async def post_comment_submit(slug: str):
                 await flash("Too many comments – please try again later.", "error")
                 return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
 
-        import uuid as _uuid
         # --- Check blocklist (soft-block: immediately mark as SPAM) ---
         blocklist_raw = comments_section.get("blocklist", "") or ""
         blocklist     = [
@@ -696,21 +696,19 @@ async def post_comment_submit(slug: str):
         if net_action == "flag":
             blocked = True
 
-        comment = Comment(
-            id=str(_uuid.uuid4()),
-            post_id=post.id,
-            author_name=author_name,
-            author_email=author_email,
-            author_url=author_url,
-            body=body,
-            quote_of_id=quote_of_id,
-            status=CommentStatus.SPAM if blocked else CommentStatus.PENDING,
-            confirmation_token=str(_uuid.uuid4()),
-            ip_address=request.remote_addr,
-            user_agent=request.headers.get("User-Agent", "")[:512],
-            country_code=country_code,
-        )
-        db.add(comment)
+        try:
+            creation = await create_comment(
+                db, post=post, policy=policy, author_name=author_name,
+                author_email=author_email or None, body=body,
+                author_url=author_url,
+                author_user=author_user, parent_id=parent_raw, quote_of_id=quote_of_raw,
+                spam=blocked, ip_address=request.remote_addr,
+                user_agent=request.headers.get("User-Agent", ""), country_code=country_code,
+            )
+        except CommentPolicyError as exc:
+            await flash(str(exc), "error")
+            return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
+        comment = creation.comment
         await db.commit()
         await db.refresh(comment)
 
@@ -725,21 +723,20 @@ async def post_comment_submit(slug: str):
                 "Thank you for your comment!",
                 "success",
             )
-        elif comments_section.get("require_email_confirmation", True):
-            await send_comment_confirmation(comment, post)
+        elif creation.confirmation_token:
+            await send_comment_confirmation(comment, post, creation.confirmation_token)
             await flash(
                 "Thank you for your comment! Please confirm it via the link "
                 "in the e-mail we sent you.",
                 "success",
             )
-        else:
-            # If confirmation disabled: set directly to CONFIRMED
-            comment.status = CommentStatus.CONFIRMED
-            await db.commit()
+        elif comment.status == CommentStatus.PENDING_MODERATION:
             await flash(
                 "Thank you for your comment! It will be published after review.",
                 "success",
             )
+        else:
+            await flash("Thank you for your comment!", "success")
 
     return redirect(url_for("public.post_detail", slug=canonical))
 
@@ -748,34 +745,27 @@ async def post_comment_submit(slug: str):
 async def comment_confirm(token: str):
     """E-mail confirmation of the comment.
 
-    Sets status=CONFIRMED and sends admin notification.
+    Consumes one guest confirmation and applies the current moderation policy.
     """
-    from datetime import datetime as dt
+    from quart import abort
 
+    from arborpress.comments import CommentTokenError, confirm_guest_comment
     from arborpress.core.mail import send_comment_notification
-    from arborpress.models.content import Comment, CommentStatus
+    from arborpress.core.site_settings import get_section
+    from arborpress.models.content import CommentStatus
 
     async for db in get_db_session():
-        stmt = select(Comment).where(Comment.confirmation_token == token)
-        result = await db.execute(stmt)
-        comment = result.scalar_one_or_none()
-
-        if comment is None:
-            abort(404)
-
-        if comment.status == CommentStatus.PENDING:
-            comment.status       = CommentStatus.CONFIRMED
-            comment.confirmed_at = dt.utcnow()
+        try:
+            settings = await get_section("comments", db)
+            comment = await confirm_guest_comment(db, token=token, settings=settings)
             await db.commit()
-            await db.refresh(comment)
-            # Admin informieren
+        except CommentTokenError:
+            await db.rollback()
+            abort(404)
+        if comment.status == CommentStatus.PENDING_MODERATION:
             await send_comment_notification(comment, comment.post)
 
-        already = comment.status in (
-            CommentStatus.APPROVED,
-            CommentStatus.REJECTED,
-            CommentStatus.SPAM,
-        )
+        already = comment.status != CommentStatus.PENDING_MODERATION
 
     return await _render(
         "comment_confirmed.html",

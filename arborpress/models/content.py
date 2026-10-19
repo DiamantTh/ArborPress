@@ -9,17 +9,21 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
-    JSON,
     String,
     Table,
     Text,
+    UniqueConstraint,
     func,
+    true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -112,6 +116,11 @@ class Post(Base):
     # Captcha type for comment form (NULL = use global default from config)
     # Allowed values: none|math|custom|hcaptcha|friendly_captcha|altcha|mcaptcha|mosparo|turnstile
     captcha_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # Nullable per-post comment policy overrides; NULL inherits SiteSettings.
+    comments_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    guest_confirmation_required: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    comment_moderation_mode: Mapped[str | None] = mapped_column(String(24), nullable=True)
 
     # Visibility in lists
     is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -241,21 +250,22 @@ class Page(Base):
 
 
 class CommentStatus(enum.StrEnum):
-    PENDING    = "pending"     # submitted, not yet confirmed via e-mail
-    CONFIRMED  = "confirmed"   # e-mail confirmation done, awaiting approval
-    APPROVED   = "approved"    # approved by admin – publicly visible
-    REJECTED   = "rejected"    # rejected by admin
-    SPAM       = "spam"        # marked as spam
+    PENDING_CONFIRMATION = "pending_confirmation"
+    PENDING_MODERATION = "pending_moderation"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    SPAM = "spam"
+    DELETED = "deleted"
+
+
+class CommentRevisionStatus(enum.StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
 
 
 class Comment(Base):
-    """Comment on a blog post (two-stage moderation: e-mail + admin).
-
-    Flow:
-      1. User submits form  → status=PENDING,  confirmation_token set
-      2. User clicks mail link → status=CONFIRMED, confirmed_at set
-      3. Admin approves    → status=APPROVED,  approved_at set
-    """
+    """A comment whose publication state is independent of guest confirmation."""
 
     __tablename__ = "comments"
 
@@ -265,27 +275,39 @@ class Comment(Base):
     post_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("posts.id", ondelete="CASCADE"), nullable=False
     )
+    author_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # Autor-Angaben (kein Account erforderlich)
     author_name: Mapped[str]  = mapped_column(String(128), nullable=False)
-    author_email: Mapped[str] = mapped_column(String(256), nullable=False)
+    author_email: Mapped[str | None] = mapped_column(String(256), nullable=True)
     author_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     body: Mapped[str] = mapped_column(Text, nullable=False)
 
     status: Mapped[CommentStatus] = mapped_column(
-        Enum(CommentStatus), nullable=False, default=CommentStatus.PENDING
+        Enum(
+            CommentStatus,
+            native_enum=False,
+            length=32,
+            values_callable=lambda items: [item.value for item in items],
+        ), nullable=False, default=CommentStatus.PENDING_CONFIRMATION
     )
-    # UUID token for e-mail confirmation
-    confirmation_token: Mapped[str] = mapped_column(
-        String(64), nullable=False, default=lambda: str(uuid.uuid4())
-    )
+    # Only a SHA-256 token digest is persisted; the random URL token is mail-only.
+    confirmation_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    confirmation_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    confirmation_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     approved_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    # Quote reference: flat comment structure instead of deep nesting
-    # Points to the quoted comment (same post).
+    parent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("comments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     quote_of_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("comments.id", ondelete="SET NULL"), nullable=True
+        String(36), ForeignKey("comments.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
     # Admin moderation note (internal)
@@ -302,6 +324,13 @@ class Comment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     post: Mapped[Post] = relationship("Post", back_populates="comments", lazy="selectin")
+    author_user: Mapped[User | None] = relationship("User", foreign_keys=[author_user_id])
+    parent: Mapped[Comment | None] = relationship(
+        "Comment", remote_side="Comment.id", foreign_keys=[parent_id], back_populates="replies"
+    )
+    replies: Mapped[list[Comment]] = relationship(
+        "Comment", foreign_keys=[parent_id], back_populates="parent", order_by="Comment.created_at"
+    )
 
     # Quoted comment (flat structure instead of deep nesting)
     # foreign() marks the FK side; the right is the remote (parent) side.
@@ -312,6 +341,73 @@ class Comment(Base):
         lazy="selectin",
     )
 
+    @property
+    def is_edited(self) -> bool:
+        return self.edited_at is not None
+
+
+Index("ix_comments_post_created", Comment.post_id, Comment.created_at, Comment.id)
+
+
+class CommentRevision(Base):
+    """A proposed or applied body snapshot; not a general-purpose VCS."""
+
+    __tablename__ = "comment_revisions"
+    __table_args__ = (
+        UniqueConstraint("comment_id", "revision_number", name="uq_comment_revision_number"),
+        UniqueConstraint("pending_key", name="uq_comment_revision_pending_key"),
+        Index("ix_comment_revisions_comment_created", "comment_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    comment_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("comments.id", ondelete="CASCADE"), nullable=False
+    )
+    editor_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    previous_body: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[CommentRevisionStatus] = mapped_column(
+        Enum(
+            CommentRevisionStatus,
+            native_enum=False,
+            length=16,
+            values_callable=lambda items: [item.value for item in items],
+        ), nullable=False, default=CommentRevisionStatus.PENDING
+    )
+    # Non-NULL only while this is the one pending author proposal for a comment.
+    pending_key: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    is_author_edit: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CommentVote(Base):
+    """One effective registered-user vote per comment; zero is represented by no row."""
+
+    __tablename__ = "comment_votes"
+    __table_args__ = (
+        UniqueConstraint("user_id", "comment_id", name="uq_comment_vote_user_comment"),
+        CheckConstraint("value IN (-1, 1)", name="ck_comment_vote_value"),
+        Index("ix_comment_votes_comment", "comment_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    comment_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("comments.id", ondelete="CASCADE"), nullable=False
+    )
+    value: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
 
 # Register comments back-reference on Post
 Post.comments = relationship(
@@ -319,7 +415,7 @@ Post.comments = relationship(
     back_populates="post",
     lazy="selectin",
     primaryjoin="and_(Comment.post_id==Post.id, Comment.status=='approved')",
-    order_by="Comment.created_at",
+    order_by=lambda: (Comment.created_at, Comment.id),
 )
 
 

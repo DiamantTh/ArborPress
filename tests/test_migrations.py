@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -23,6 +24,7 @@ from arborpress.core.migrations import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pre_alembic_phase1_schema.sql"
+CURRENT_HEAD = "0002_comment_core"
 
 
 def _sqlite_engine(path: Path) -> AsyncEngine:
@@ -145,14 +147,14 @@ async def test_empty_database_upgrade_noop_and_repeated_install(tmp_path: Path) 
         assert (await schema_status(engine)).state == "empty"
         status = await upgrade_database(engine)
         assert status.is_current
-        assert status.current_revisions == (BASELINE_REVISION,)
+        assert status.current_revisions == (CURRENT_HEAD,)
         before = await _schema_snapshot(engine)
-        assert len(before) == 25
+        assert len(before) == 27
         assert "webauthn_credentials" in before
 
         async with engine.connect() as connection:
             version = await connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-            assert version == BASELINE_REVISION
+            assert version == CURRENT_HEAD
             credential_columns = await connection.run_sync(
                 lambda sync_connection: {
                     column["name"]
@@ -213,13 +215,16 @@ async def test_independent_phase1_legacy_fixture_is_adopted_without_data_loss(
     _load_legacy_fixture(database_path)
     engine = _sqlite_engine(database_path)
     try:
-        assert (await schema_status(engine)).state == "legacy"
+        initial_status = await schema_status(engine)
+        assert initial_status.state == "legacy", initial_status.detail
         before = await _schema_snapshot(engine)
         await adopt_legacy_database(engine)
         status = await schema_status(engine)
         assert status.is_current
-        assert status.current_revisions == (BASELINE_REVISION,)
-        assert await _schema_snapshot(engine) == before
+        assert status.current_revisions == (CURRENT_HEAD,)
+        after = await _schema_snapshot(engine)
+        assert after != before
+        assert "comment_revisions" in after
 
         async with engine.connect() as connection:
             user = (
@@ -253,6 +258,63 @@ async def test_independent_phase1_legacy_fixture_is_adopted_without_data_loss(
             )
 
         assert (await upgrade_database(engine)).is_current
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_comment_core_migration_maps_legacy_states_and_hashes_pending_tokens(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "legacy-comments.db"
+    _load_legacy_fixture(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO posts (id, short_id, slug, title, body_md, body_html, status, "
+            "visibility, is_pinned, is_featured, noindex, reading_time_min) "
+            "VALUES ('post', 'short', 'post', 'Title', '', '', 'PUBLISHED', 'PUBLIC', 0, 0, 0, 1)"
+        )
+        connection.executemany(
+            "INSERT INTO comments (id, post_id, author_name, author_email, body, status, "
+            "confirmation_token) VALUES (?, 'post', 'Visitor', ?, 'body', ?, ?)",
+            [
+                ("pending", "pending@example.test", "PENDING", "old-pending-token"),
+                ("confirmed", "confirmed@example.test", "CONFIRMED", "old-confirmed-token"),
+                ("approved", "approved@example.test", "APPROVED", "old-approved-token"),
+                ("rejected", "rejected@example.test", "REJECTED", "old-rejected-token"),
+                ("spam", "spam@example.test", "SPAM", "old-spam-token"),
+            ],
+        )
+        connection.commit()
+    engine = _sqlite_engine(database_path)
+    try:
+        await upgrade_database(engine)
+        async with engine.connect() as connection:
+            rows = (
+                (
+                    await connection.execute(
+                        sa.text(
+                            "SELECT id, status, confirmation_token_hash, confirmation_expires_at, published_at "
+                            "FROM comments ORDER BY id"
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        by_id = {row["id"]: row for row in rows}
+        assert by_id["pending"]["status"] == "pending_confirmation"
+        assert (
+            by_id["pending"]["confirmation_token_hash"]
+            == hashlib.sha256(b"old-pending-token").hexdigest()
+        )
+        assert by_id["pending"]["confirmation_expires_at"] is not None
+        assert by_id["confirmed"]["status"] == "pending_moderation"
+        assert by_id["confirmed"]["confirmation_token_hash"] is None
+        assert by_id["approved"]["status"] == "approved"
+        assert by_id["approved"]["published_at"] is not None
+        assert by_id["rejected"]["status"] == "rejected"
+        assert by_id["spam"]["status"] == "spam"
     finally:
         await engine.dispose()
 
@@ -355,7 +417,7 @@ async def test_known_older_revision_is_reported_as_behind_head(
     versions.mkdir()
     (versions / "0002_test_next.py").write_text(
         "revision = '0002_test_next'\n"
-        "down_revision = '0001_pre_alembic_baseline'\n"
+        "down_revision = '0002_comment_core'\n"
         "branch_labels = None\n"
         "depends_on = None\n"
         "def upgrade(): pass\n"
@@ -364,6 +426,7 @@ async def test_known_older_revision_is_reported_as_behind_head(
     )
     try:
         await upgrade_database(engine)
+        await downgrade_database(BASELINE_REVISION, engine)
         config = Config(migration_module._config().config_file_name)
         config.set_main_option(
             "version_locations",

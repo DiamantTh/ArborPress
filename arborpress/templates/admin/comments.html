@@ -23,7 +23,7 @@
     <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem">
       <div>
         <strong>{{ comment.author_name }}</strong>
-        <span style="color:#6b7280;font-size:.85rem">&lt;{{ comment.author_email }}&gt;</span>
+        {% if comment.author_email %}<span style="color:#6b7280;font-size:.85rem">&lt;{{ comment.author_email }}&gt;</span>{% endif %}
         {% if comment.author_url %}
           <a href="{{ comment.author_url }}" target="_blank" rel="noopener"
              style="font-size:.8rem;margin-left:.5rem">🔗</a>
@@ -174,7 +174,7 @@
           <span title="{{ c.country_code }}">{{ c.country_code | country_flag }}</span>
         {% endif %}
         <br>
-        <span style="color:#6b7280;font-size:.8rem">{{ c.author_email }}</span>
+        {% if c.author_email %}<span style="color:#6b7280;font-size:.8rem">{{ c.author_email }}</span>{% endif %}
         {% if c.ip_address %}
           <br><code style="font-size:.75rem;color:#9ca3af">{{ c.ip_address }}</code>
         {% endif %}

@@ -69,6 +69,9 @@ class User(Base):
     sso_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # §5 Federation – opt-out pro Account (auch wenn Instanz federiert)
     federation_opt_out: Mapped[bool] = mapped_column(Boolean, default=False)
+    comment_trusted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     # §2 Account lockout (credential-stuffing protection)
     failed_login_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"

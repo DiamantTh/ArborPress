@@ -4,7 +4,10 @@ from arborpress.models.audit import AuditEvent  # noqa: F401
 from arborpress.models.content import (  # noqa: F401
     Category,
     Comment,
+    CommentRevision,
+    CommentRevisionStatus,
     CommentStatus,
+    CommentVote,
     Media,
     OEmbedCache,
     Page,
@@ -20,9 +23,8 @@ from arborpress.models.mail import MailQueue, MailStatus  # noqa: F401
 from arborpress.models.settings import SiteSetting  # noqa: F401
 from arborpress.models.user import (  # noqa: F401
     AccountType,
-    AuthPending,
-    StepUpGrant,
     ActorKeypair,
+    AuthPending,
     BackupCode,
     Follower,
     FollowerDirection,
@@ -30,6 +32,7 @@ from arborpress.models.user import (  # noqa: F401
     InstanceKeypair,
     MFADevice,
     MFADeviceType,
+    StepUpGrant,
     User,
     UserPGPKey,
     UserRole,
