@@ -87,6 +87,8 @@ class Post(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     # §6 stable short-ID for /o/{id}
     short_id: Mapped[str] = mapped_column(String(12), unique=True, nullable=False)
+    # Transitional primary-author projection for existing integrations.
+    # Writes go through arborpress.content.authors so this remains synchronized.
     author_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

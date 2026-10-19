@@ -438,3 +438,75 @@ async def test_comment_moderation_queue_detail_and_decision_are_server_rendered(
     async with factory() as db:
         updated = await db.get(Comment, comment_id)
         assert updated is not None and updated.status == CommentStatus.APPROVED
+
+
+@pytest.mark.asyncio
+async def test_post_author_and_relation_forms_are_server_rendered_without_javascript(
+    client: QuartClient,
+    test_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from arborpress.models.authorization import ObjectRelation, ObjectRelationName
+    from arborpress.models.content import Post, PostStatus
+    from arborpress.models.user import AccountType, User, UserRole
+
+    await _login_admin(client, test_engine, monkeypatch)
+    factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    suffix = uuid.uuid4().hex[:10]
+    primary = User(
+        username=f"ui-primary-{suffix}",
+        display_name="UI Primary",
+        account_type=AccountType.PUBLIC,
+        role=UserRole.AUTHOR,
+        is_active=True,
+    )
+    coauthor = User(
+        username=f"ui-coauthor-{suffix}",
+        display_name="UI Coauthor",
+        account_type=AccountType.PUBLIC,
+        role=UserRole.AUTHOR,
+        is_active=True,
+    )
+    post = Post(
+        short_id=uuid.uuid4().hex[:8],
+        slug=f"author-ui-{suffix}",
+        title="Authored editor page",
+        body_md="",
+        body_html="",
+        status=PostStatus.DRAFT,
+    )
+    async with factory() as db:
+        db.add_all([primary, coauthor, post])
+        await db.flush()
+        from arborpress.content.authors import replace_post_authors
+
+        await replace_post_authors(
+            db,
+            post_id=str(post.id),
+            primary_user_id=str(primary.id),
+            coauthor_user_ids=[str(coauthor.id)],
+            actor_user_id=str(primary.id),
+        )
+        db.add(
+            ObjectRelation(
+                subject_user_id=str(coauthor.id),
+                object_type="content",
+                object_id=str(post.id),
+                relation=ObjectRelationName.EDITOR,
+            )
+        )
+        await db.commit()
+        slug = post.slug
+
+    response = await client.get(f"/admin/posts/{slug}/edit")
+    html = await response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert 'name="primary_user_id"' in html
+    assert 'name="coauthor_ids"' in html
+    assert 'name="coauthor_position_' in html
+    assert "UI Primary" in html and "UI Coauthor" in html
+    assert 'name="subject_user_id"' in html
+    assert 'name="relation"' in html
+    assert 'name="_csrf"' in html

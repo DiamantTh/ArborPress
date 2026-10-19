@@ -76,6 +76,12 @@ async def test_object_comment_moderator_queue_and_detail_are_server_scoped(
                     object_id=str(post_x.id),
                     relation=ObjectRelationName.COMMENT_MODERATOR,
                 ),
+                ObjectRelation(
+                    subject_user_id=str(actor.id),
+                    object_type="content",
+                    object_id=str(post_x.id),
+                    relation=ObjectRelationName.EDITOR,
+                ),
             ]
         )
         await db.commit()
@@ -96,3 +102,12 @@ async def test_object_comment_moderator_queue_and_detail_are_server_scoped(
 
     hidden_detail = await client.get(f"/admin/comments/{comment_y_id}")
     assert hidden_detail.status_code == 403
+
+    editable = await client.get(f"/admin/posts/{post_x.slug}/edit")
+    editable_html = await editable.get_data(as_text=True)
+    assert editable.status_code == 200
+    assert "Scoped moderation target" in editable_html
+    assert "Autoren" not in editable_html
+
+    hidden_edit = await client.get(f"/admin/posts/{post_y.slug}/edit")
+    assert hidden_edit.status_code == 403
