@@ -107,7 +107,7 @@ _PROVIDERS: list[OEmbedProvider] = [
 
 
 def register_provider(provider: OEmbedProvider) -> None:
-    """Registers an additional oEmbed provider (plugin hook)."""
+    """Register a provider from trusted Core code (not a third-party plugin API)."""
     _PROVIDERS.append(provider)
 
 

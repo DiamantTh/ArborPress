@@ -9,7 +9,7 @@ and runs for the entire lifetime of the application.
 Flow per tick:
   1. Load all posts with status=SCHEDULED and published_at <= now
   2. Set status to PUBLISHED, set published_at to now if not already set
-  3. Emit event ``post.published`` (plugin hooks)
+  3. Emit the trusted Core event ``post.published``
   4. Wait 60 seconds
 """
 

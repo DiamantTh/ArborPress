@@ -1,7 +1,9 @@
-"""Asynchronous event system for plugin hooks (§15 Plugin-Capabilities).
+"""Asynchronous in-process event dispatcher for ArborPress core modules.
 
-Plugins register handlers via capability metadata or directly via
-`subscribe()`. The core emits events at defined hook points.
+Core modules may register trusted in-process handlers via `subscribe()`. This
+dispatcher is not a third-party plugin API: Third-party packages execute in
+isolated processes and will receive only explicitly supported RPC events in a
+later phase.
 
 Example:
     from arborpress.core.events import subscribe, emit
