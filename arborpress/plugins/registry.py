@@ -30,6 +30,7 @@ class PluginStatus(StrEnum):
     STOPPING = "stopping"
     STOPPED = "stopped"
     FAILED = "failed"
+    AUTO_DISABLED = "auto_disabled"
     UNKNOWN = "unknown"
 
 
@@ -53,6 +54,13 @@ class PluginRecord:
     granted_capabilities: tuple[str, ...] = ()
     grantable_capabilities: tuple[str, ...] = ()
     missing_required_capabilities: tuple[str, ...] = ()
+    hardening: tuple[str, ...] = ()
+    restart_count: int = 0
+    pid: int | None = None
+    pending_jobs: int = 0
+    dead_jobs: int = 0
+    managed_install: bool = False
+    package_integrity: bool | None = None
 
     @property
     def id(self) -> str:
@@ -194,7 +202,9 @@ def discover_instance_plugins(roots: tuple[Path, ...] | list[Path] | None = None
     paths = get_runtime_paths()
     registry = PluginRegistry()
     registry.discover(list(roots) if roots is not None else get_settings().plugin_dirs())
-    enabled_ids = PluginStateStore(paths.data / "plugin-state.toml").enabled_ids()
+    state_store = PluginStateStore(paths.data / "plugin-state.toml")
+    enabled_ids = state_store.enabled_ids()
+    auto_disabled_ids = state_store.auto_disabled_ids()
     from arborpress.plugins.capabilities import (
         GRANTABLE_CAPABILITIES,
         CapabilityGrantStore,
@@ -206,6 +216,17 @@ def discover_instance_plugins(roots: tuple[Path, ...] | list[Path] | None = None
 
     for record in registry.all():
         record.enabled = record.id in enabled_ids
+        installation_record = paths.data / "plugin-installations" / f"{record.id}.json"
+        if installation_record.exists():
+            record.managed_install = True
+            from arborpress.plugins.lifecycle import verify_installed_package
+
+            record.package_integrity = verify_installed_package(paths, record.id, record.directory)
+            if not record.package_integrity:
+                record.last_error = "installed_package_digest_mismatch"
+        if record.id in auto_disabled_ids:
+            record.runtime_status = PluginStatus.AUTO_DISABLED
+            record.last_error = "auto_disabled: restart limit exceeded"
         if record.manifest is not None:
             for stale_grant in grants.grants_for(record.id) - set(
                 record.manifest.requested_capabilities
@@ -229,15 +250,32 @@ def discover_instance_plugins(roots: tuple[Path, ...] | list[Path] | None = None
                 old_status = PluginStatus(runtime_info["runtime_status"])
             except ValueError:
                 old_status = PluginStatus.UNKNOWN
-            record.runtime_status = (
+            persisted_runtime_status = (
                 PluginStatus.UNKNOWN
                 if old_status
                 in {PluginStatus.STARTING, PluginStatus.RUNNING, PluginStatus.STOPPING}
                 else old_status
             )
+            if record.id not in auto_disabled_ids:
+                record.runtime_status = (
+                    PluginStatus.STOPPED
+                    if persisted_runtime_status == PluginStatus.AUTO_DISABLED
+                    else persisted_runtime_status
+                )
             last_error = runtime_info.get("last_error")
             if isinstance(last_error, str):
                 record.last_error = last_error[:200]
+            hardening = runtime_info.get("hardening")
+            if isinstance(hardening, list):
+                record.hardening = tuple(
+                    item for item in hardening if isinstance(item, str) and len(item) <= 64
+                )
+            restart_count = runtime_info.get("restart_count")
+            if isinstance(restart_count, int) and restart_count >= 0:
+                record.restart_count = restart_count
+            pid = runtime_info.get("pid")
+            if isinstance(pid, int) and pid > 1:
+                record.pid = pid
         if record.enabled and record.status == PluginStatus.DISCOVERED:
             record.status = PluginStatus.DISCOVERED
         elif not record.enabled and record.status == PluginStatus.DISCOVERED:

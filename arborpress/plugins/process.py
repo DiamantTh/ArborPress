@@ -52,6 +52,7 @@ class PluginProcess:
         default_factory=lambda: asyncio.Queue(maxsize=100)
     )
     event_task: asyncio.Task[None] | None = None
+    lifecycle_lock: Any | None = None
 
 
 class PluginProcessManager:
@@ -69,6 +70,8 @@ class PluginProcessManager:
         self.request_timeout = request_timeout
         self.shutdown_timeout = shutdown_timeout
         self.dispatcher = dispatcher
+        self.supervisor: Any | None = None
+        self.lifecycle_self_check = False
         self._running: dict[str, PluginProcess] = {}
         self._request_ids: dict[str, int] = {}
         self._closing = False
@@ -91,7 +94,53 @@ class PluginProcessManager:
         # avoids concurrent spawn races while still allowing running plugins
         # to handle their own channels independently.
         async with self._start_lock:
-            await self._start_process(record)
+            if self.lifecycle_self_check:
+                await self._start_process(record)
+            else:
+                if record.id in self._running:
+                    return
+                if record.manifest is not None:
+                    from arborpress.plugins.capabilities import (
+                        CapabilityGrantStore,
+                        missing_required_grants,
+                    )
+
+                    grants = CapabilityGrantStore(
+                        get_runtime_paths().data / "plugin-grants.toml"
+                    )
+                    missing = missing_required_grants(
+                        record.id, record.manifest.required_capabilities, grants
+                    )
+                    if missing:
+                        record.runtime_status = PluginStatus.DISABLED
+                        record.last_error = "missing_required_capabilities: " + ", ".join(
+                            missing
+                        )
+                        raise ValueError(record.last_error)
+                from arborpress.plugins.lifecycle import (
+                    PluginLifecycleError,
+                    acquire_lifecycle_lock,
+                )
+
+                lock_handle = None
+                try:
+                    lock_handle = acquire_lifecycle_lock(get_runtime_paths(), record.id)
+                    await self._start_process(record)
+                except PluginLifecycleError as exc:
+                    if lock_handle is not None:
+                        lock_handle.close()
+                    record.last_error = "lifecycle_operation_in_progress"
+                    raise RuntimeError(record.last_error) from exc
+                except BaseException:
+                    if lock_handle is not None:
+                        lock_handle.close()
+                    raise
+                running = self._running.get(record.id)
+                if running is None:
+                    if lock_handle is not None:
+                        lock_handle.close()
+                else:
+                    running.lifecycle_lock = lock_handle
 
     async def _start_process(self, record: PluginRecord) -> None:
         if self._closing:
@@ -106,6 +155,12 @@ class PluginProcessManager:
         if record.source != PluginSource.THIRD_PARTY:
             raise ValueError("only third-party plugin records use the isolated host")
         paths = get_runtime_paths()
+        from arborpress.plugins.lifecycle import verify_installed_package
+
+        if not verify_installed_package(paths, record.id, record.directory):
+            record.last_error = "installed_package_digest_mismatch"
+            record.runtime_status = PluginStatus.FAILED
+            raise ValueError("managed plugin package content changed after installation")
         grants = CapabilityGrantStore(paths.data / "plugin-grants.toml")
         missing = missing_required_grants(record.id, record.manifest.required_capabilities, grants)
         if missing:
@@ -144,7 +199,8 @@ class PluginProcessManager:
             executable,
             "-P",
             "-m",
-            "arborpress.plugins.host",
+            "arborpress.plugins.bootstrap",
+            "--",
             "--fd",
             str(child.fileno()),
             "--plugin-id",
@@ -165,6 +221,7 @@ class PluginProcessManager:
             "PYTHONPATH": os.pathsep.join((_PACKAGE_ROOT, str(record.directory.resolve()))),
             "ARBORPRESS_PLUGIN_ID": manifest.id,
             "ARBORPRESS_PLUGIN_PROTOCOL": str(PROTOCOL_VERSION),
+            "PYTHONDONTWRITEBYTECODE": "1",
         }
         try:
             process = await asyncio.create_subprocess_exec(
@@ -215,6 +272,11 @@ class PluginProcessManager:
                 or response.get("plugin_version") != manifest.version
             ):
                 raise ProtocolError("plugin handshake identity or ready state mismatch")
+            features = response.get("features", [])
+            if isinstance(features, list):
+                record.hardening = tuple(
+                    item for item in features if isinstance(item, str) and len(item) <= 64
+                )
             record.runtime_status = PluginStatus.RUNNING
             record.last_error = None
             self._save_status(record, process.pid)
@@ -340,7 +402,7 @@ class PluginProcessManager:
             await self._finish_log_drain(running)
             self._close(running)
             running.record.runtime_status = PluginStatus.STOPPED
-            self._save_status(running.record, running.process.pid)
+            self._save_status(running.record, None)
             log.info("plugin stopped id=%s pid=%s", plugin_id, running.process.pid)
             audit_log.warning(
                 "PLUGIN_PROCESS_STOP outcome=success plugin=%s pid=%s",
@@ -491,7 +553,7 @@ class PluginProcessManager:
         await self._finish_log_drain(running)
         self._close(running)
         running.record.runtime_status = PluginStatus.STOPPED
-        self._save_status(running.record, process.pid)
+        self._save_status(running.record, None)
 
     async def _watch_exit(self, running: PluginProcess) -> None:
         code = await running.process.wait()
@@ -499,11 +561,14 @@ class PluginProcessManager:
         if self._running.get(running.record.id) is running:
             self._running.pop(running.record.id, None)
             running.channel.close()
+            if running.lifecycle_lock is not None:
+                running.lifecycle_lock.close()
+                running.lifecycle_lock = None
             running.record.runtime_status = (
                 PluginStatus.STOPPED if running.expected_shutdown else PluginStatus.FAILED
             )
             running.record.last_error = None if running.expected_shutdown else "unexpected_exit"
-            self._save_status(running.record, running.process.pid)
+            self._save_status(running.record, None)
             if not running.expected_shutdown:
                 log.error(
                     "plugin exited unexpectedly id=%s pid=%s exit_status=%s",
@@ -520,6 +585,9 @@ class PluginProcessManager:
     def _close(self, running: PluginProcess) -> None:
         self._running.pop(running.record.id, None)
         running.channel.close()
+        if running.lifecycle_lock is not None:
+            running.lifecycle_lock.close()
+            running.lifecycle_lock = None
         for task in (running.stdout_task, running.stderr_task):
             if task is not None and not task.done():
                 task.cancel()
@@ -554,6 +622,8 @@ class PluginProcessManager:
                     "pid": pid,
                     "exit_status": record.exit_status,
                     "last_error": record.last_error,
+                    "hardening": list(record.hardening),
+                    "restart_count": record.restart_count,
                     "updated_at": datetime.now(UTC).isoformat(),
                 },
             )

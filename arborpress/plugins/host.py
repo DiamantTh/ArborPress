@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import importlib
 import inspect
+import os
 import socket
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,9 @@ async def _serve(args: argparse.Namespace) -> int:
     sock = socket.socket(fileno=args.fd)
     sock.set_inheritable(False)
     sock.setblocking(False)
+    hardening_features = tuple(
+        item for item in os.environ.get("ARBORPRESS_PLUGIN_HARDENING", "").split(",") if item
+    )
     module_name, _, attribute = args.entrypoint.partition(":")
     rpc = _HostRPCClient(sock)
     try:
@@ -126,7 +130,7 @@ async def _serve(args: argparse.Namespace) -> int:
                             "plugin_id": args.plugin_id,
                             "plugin_version": args.plugin_version,
                             "runtime_version": "1",
-                            "features": [],
+                            "features": list(hardening_features),
                         }
                     elif method == "runtime.ping":
                         result = await _call(plugin, "ping") or {"ok": True}

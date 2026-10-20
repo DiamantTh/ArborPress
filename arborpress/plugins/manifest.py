@@ -6,6 +6,7 @@ import re
 import tomllib
 from pathlib import Path
 
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -42,6 +43,7 @@ class PluginManifest(BaseModel):
     events: tuple[str, ...] = ()
     subscriptions: tuple[str, ...] = ()
     tasks: tuple[str, ...] = ()
+    dependencies: tuple[str, ...] = ()
     admin_ui: dict[str, object] | None = None
 
     @field_validator("id")
@@ -107,6 +109,15 @@ class PluginManifest(BaseModel):
             not _TASK_RE.fullmatch(item) for item in self.tasks
         ):
             raise ValueError("task names must be unique conservative identifiers")
+        if len(set(self.dependencies)) != len(self.dependencies):
+            raise ValueError("dependencies must be unique")
+        for dependency in self.dependencies:
+            try:
+                requirement = Requirement(dependency)
+            except InvalidRequirement as exc:
+                raise ValueError("dependencies must use PEP 508 package requirements") from exc
+            if requirement.url or requirement.marker is not None:
+                raise ValueError("direct URLs and environment markers are not supported")
         if subscriptions and "events.subscribe" not in self.requested_capabilities:
             raise ValueError("event subscriptions require events.subscribe")
         if self.tasks and "jobs.schedule" not in self.requested_capabilities:

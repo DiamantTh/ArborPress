@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import struct
+import sys
 import textwrap
 import tomllib
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -63,6 +66,152 @@ def test_manifest_parses_versioned_plugin_contract(tmp_path: Path) -> None:
     manifest = PluginManifest.from_file(path)
     assert manifest.id == "sample-plugin"
     assert manifest.requested_capabilities == ("importer",)
+
+
+def _local_plugin_bundle(
+    destination: Path,
+    plugin_id: str,
+    version: str,
+    worker: str = "class Plugin:\n    pass\nplugin = Plugin()\n",
+    requested: tuple[str, ...] = (),
+) -> Path:
+    manifest = _manifest(
+        plugin_id,
+        version=version,
+        requested_capabilities=list(requested),
+        required_capabilities=[],
+    ).encode()
+    members = {"plugin.toml": manifest, "package/worker.py": worker.encode()}
+    checksum = "".join(
+        f"{hashlib.sha256(value).hexdigest()}  {name}\n" for name, value in sorted(members.items())
+    ).encode()
+    path = destination / f"{plugin_id}-{version}.zip"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, value in members.items():
+            archive.writestr(name, value)
+        archive.writestr("checksums.sha256", checksum)
+    return path
+
+
+def test_local_plugin_install_stages_venv_and_defaults_disabled(tmp_path: Path) -> None:
+    from arborpress.plugins.lifecycle import PluginLifecycle, verify_installed_package
+    from arborpress.plugins.state import PluginStateStore
+    from arborpress.runtime.paths import initialize_runtime, reset_runtime_for_tests
+
+    paths = initialize_runtime(tmp_path / "prefix-a", override=True)
+    try:
+        bundle = _local_plugin_bundle(tmp_path, "local-one", "1.0.0")
+        installed = PluginLifecycle(paths).install(bundle)
+        assert installed.manifest.id == "local-one"
+        assert (paths.plugins / "local-one" / "worker.py").is_file()
+        assert (paths.plugin_runtime / "local-one" / "venv" / "bin" / "python").is_file()
+        assert "local-one" not in PluginStateStore(paths.data / "plugin-state.toml").enabled_ids()
+        assert (paths.data / "plugin-installations" / "local-one.json").is_file()
+        package = paths.plugins / "local-one"
+        assert verify_installed_package(paths, "local-one", package)
+        (package / "worker.py").write_text("# modified\n", encoding="utf-8")
+        assert not verify_installed_package(paths, "local-one", package)
+    finally:
+        reset_runtime_for_tests()
+
+
+def test_plugin_update_preserves_data_and_does_not_grant_new_capabilities(tmp_path: Path) -> None:
+    from arborpress.plugins.capabilities import CapabilityGrantStore
+    from arborpress.plugins.lifecycle import PluginLifecycle
+    from arborpress.plugins.state import PluginStateStore
+    from arborpress.runtime.paths import initialize_runtime, reset_runtime_for_tests
+
+    paths = initialize_runtime(tmp_path / "prefix-b", override=True)
+    try:
+        lifecycle = PluginLifecycle(paths)
+        lifecycle.install(_local_plugin_bundle(tmp_path, "local-two", "1.0.0"))
+        data_root = paths.plugin_data / "local-two"
+        data_root.mkdir(parents=True, exist_ok=True)
+        (data_root / "state.json").write_text("{}", encoding="utf-8")
+        updated = lifecycle.update(
+            "local-two",
+            _local_plugin_bundle(
+                tmp_path,
+                "local-two",
+                "1.1.0",
+                requested=("storage.kv",),
+            ),
+        )
+        assert updated.manifest.version == "1.1.0"
+        assert updated.added_capabilities == ("storage.kv",)
+        assert updated.removed_capabilities == ()
+        assert not CapabilityGrantStore(paths.data / "plugin-grants.toml").grants_for("local-two")
+        assert (data_root / "state.json").read_text(encoding="utf-8") == "{}"
+        from arborpress.plugins.lifecycle import PluginLifecycleError
+
+        failing_worker = "\n".join(
+            (
+                "class Plugin:",
+                "    def initialize(self, context):",
+                "        raise RuntimeError('bad startup')",
+                "plugin = Plugin()",
+            )
+        )
+        failing_update = _local_plugin_bundle(
+            tmp_path,
+            "local-two",
+            "1.2.0",
+            worker=failing_worker,
+        )
+        with pytest.raises(PluginLifecycleError):
+            lifecycle.update("local-two", failing_update)
+        current = PluginManifest.from_file(paths.plugins / "local-two" / "plugin.toml")
+        assert current.version == "1.1.0"
+        lifecycle.uninstall("local-two")
+        assert not (paths.plugins / "local-two").exists()
+        assert (data_root / "state.json").exists()
+        assert "local-two" not in PluginStateStore(paths.data / "plugin-state.toml").enabled_ids()
+    finally:
+        reset_runtime_for_tests()
+
+
+def test_plugin_bundle_rejects_path_traversal(tmp_path: Path) -> None:
+    from arborpress.plugins.lifecycle import PluginLifecycle, PluginLifecycleError
+    from arborpress.runtime.paths import initialize_runtime, reset_runtime_for_tests
+
+    paths = initialize_runtime(tmp_path / "prefix-c", override=True)
+    try:
+        bundle = tmp_path / "unsafe.zip"
+        with zipfile.ZipFile(bundle, "w") as archive:
+            archive.writestr("../escape.py", "pass")
+        with pytest.raises(PluginLifecycleError):
+            PluginLifecycle(paths).install(bundle)
+        assert not (paths.prefix / "escape.py").exists()
+    finally:
+        reset_runtime_for_tests()
+
+
+def test_plugin_supervisor_bounded_restart_then_persists_auto_disable(tmp_path: Path) -> None:
+    from arborpress.plugins.registry import PluginRecord, PluginStatus
+    from arborpress.plugins.state import PluginStateStore
+    from arborpress.plugins.supervisor import PluginSupervisor
+
+    class Manager:
+        @staticmethod
+        def _save_status(record, pid):
+            del record, pid
+
+    store = PluginStateStore(tmp_path / "instance" / "data" / "plugin-state.toml")
+    store.set_enabled("supervised", True)
+    record = PluginRecord(
+        PluginManifest.model_validate(
+            tomllib.loads(_manifest("supervised", requested_capabilities=[]))
+        ),
+        tmp_path / "supervised",
+        enabled=True,
+    )
+    supervisor = PluginSupervisor(Manager(), store, max_restarts=1, backoff=(0.01,))
+    supervisor._record_failure(record, "startup")
+    assert record.runtime_status != PluginStatus.AUTO_DISABLED
+    supervisor._record_failure(record, "startup")
+    assert record.runtime_status == PluginStatus.AUTO_DISABLED
+    assert "supervised" in store.auto_disabled_ids()
+    assert "supervised" not in store.enabled_ids()
 
 
 @pytest.mark.parametrize(
@@ -392,7 +541,7 @@ def test_two_plugins_run_in_distinct_processes_without_parent_secrets(
     )
     manager = PluginProcessManager()
 
-    async def exercise() -> tuple[int, int]:
+    async def exercise() -> tuple[tuple[int | None, int | None], tuple[str, ...]]:
         registry = PluginRegistry()
         records = []
         for directory in (plugin_a, plugin_b):
@@ -411,11 +560,14 @@ def test_two_plugins_run_in_distinct_processes_without_parent_secrets(
                 timeout=1,
             )
         await manager.shutdown()
-        return pids
+        return pids, records[0].hardening
 
-    pids = asyncio.run(exercise())
+    pids, hardening = asyncio.run(exercise())
     assert pids[0] is not None and pids[1] is not None
     assert pids[0] != pids[1]
+    assert "umask" in hardening
+    if sys.platform.startswith("linux"):
+        assert "no_new_privs" in hardening
     assert "do-not-inherit" not in (plugin_a / "env.txt").read_text(encoding="utf-8")
     assert (plugin_a / "env.txt").read_text(encoding="utf-8").find("DATABASE_URL': None") >= 0
     environment = (plugin_a / "env.txt").read_text(encoding="utf-8")

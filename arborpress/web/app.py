@@ -422,6 +422,23 @@ def create_app() -> Quart:
     from arborpress.plugins.process import PluginProcessManager
     from arborpress.plugins.rpc import PluginRPCDispatcher
     from arborpress.plugins.services import PluginCoreServices
+    from arborpress.plugins.state import PluginStateStore
+    from arborpress.plugins.supervisor import PluginSupervisor
+
+    async def _audit_plugin_supervisor(event_type: str, plugin_id: str, detail: str) -> None:
+        from arborpress.core.audit import write_audit_event
+
+        async with get_session_factory()() as db:
+            await write_audit_event(
+                event_type=event_type,
+                outcome="failure",
+                actor_id="system",
+                actor_name="plugin-supervisor",
+                target_id=plugin_id,
+                detail=detail,
+                db=db,
+            )
+            await db.commit()
 
     plugin_manager = PluginProcessManager(
         dispatcher=PluginRPCDispatcher(
@@ -429,6 +446,12 @@ def create_app() -> Quart:
             CapabilityGrantStore(paths.data / "plugin-grants.toml"),
         )
     )
+    plugin_supervisor = PluginSupervisor(
+        plugin_manager,
+        PluginStateStore(paths.data / "plugin-state.toml"),
+        audit_callback=_audit_plugin_supervisor,
+    )
+    plugin_manager.supervisor = plugin_supervisor
     app.extensions["arborpress_plugin_registry"] = plugin_registry
     app.extensions["arborpress_plugin_manager"] = plugin_manager
     from arborpress.core.events import subscribe, unsubscribe
@@ -464,6 +487,7 @@ def create_app() -> Quart:
     subscribe("post.published", _plugin_post_published)
     subscribe("comment.approved", _plugin_comment_approved)
     plugin_job_worker_task = None
+    plugin_supervisor_task = None
 
     # §9 Theme static files are served only when declared in a valid manifest.
     @app.route("/static/themes/<theme_id>/<path:filename>")
@@ -494,7 +518,7 @@ def create_app() -> Quart:
     # §12 DB-Capability-Detection beim Start
     @app.before_serving
     async def _on_startup() -> None:
-        nonlocal plugin_job_worker_task
+        nonlocal plugin_job_worker_task, plugin_supervisor_task
         import asyncio
         import logging as _log
         import secrets as _sec
@@ -571,23 +595,20 @@ def create_app() -> Quart:
 
             asyncio.ensure_future(run_queue_worker())
 
-            # Plugin failures are isolated from the main service startup. Each
-            # enabled third-party plugin receives a fresh private IPC process.
-            for plugin in plugin_registry.all():
-                if not plugin.enabled:
-                    continue
-                try:
-                    await plugin_manager.start(plugin)
-                except Exception as exc:
-                    _log.getLogger("arborpress.plugins").error(
-                        "Plugin startup failed id=%s error=%s", plugin.id, type(exc).__name__
-                    )
+            # Plugin startup/restarts are isolated and bounded. A broken plugin
+            # does not prevent the Core or another plugin from serving.
+            plugin_supervisor_task = asyncio.create_task(
+                plugin_supervisor.run(plugin_registry.all())
+            )
 
     @app.after_serving
     async def _on_shutdown() -> None:
         if plugin_job_worker_task is not None:
             plugin_job_worker_task.cancel()
             await asyncio.gather(plugin_job_worker_task, return_exceptions=True)
+        if plugin_supervisor_task is not None:
+            plugin_supervisor_task.cancel()
+            await asyncio.gather(plugin_supervisor_task, return_exceptions=True)
         await plugin_manager.shutdown()
         unsubscribe("post.published", _plugin_post_published)
         unsubscribe("comment.approved", _plugin_comment_approved)

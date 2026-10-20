@@ -24,6 +24,9 @@ async def enable_plugin(record: PluginRecord, manager: Any, store: PluginStateSt
         await manager.stop(record.id)
         raise
     record.enabled = True
+    supervisor = getattr(manager, "supervisor", None)
+    if supervisor is not None:
+        supervisor.reset(record.id)
     log.warning("plugin_enabled plugin=%s pid=%s", record.id, manager.pid_for(record.id))
 
 
