@@ -1144,6 +1144,28 @@ async def plugins_list():
     require_role("admin")
     registry = current_app.extensions.get("arborpress_plugin_registry")
     plugins = registry.all() if registry is not None else []
+    counts: dict[str, dict[str, int]] = {}
+    from sqlalchemy import func, select
+
+    from arborpress.core.db import get_session_factory
+    from arborpress.models.plugin import PluginJob
+
+    async with get_session_factory()() as db:
+        rows = await db.execute(
+            select(PluginJob.plugin_id, PluginJob.status, func.count(PluginJob.id))
+            .where(PluginJob.status.in_(["pending", "retry", "dead", "leased", "running"]))
+            .group_by(PluginJob.plugin_id, PluginJob.status)
+        )
+        for plugin_id, status, count in rows.all():
+            entry = counts.setdefault(plugin_id, {"pending": 0, "dead": 0})
+            if status in {"pending", "retry", "leased", "running"}:
+                entry["pending"] += count
+            elif status == "dead":
+                entry["dead"] += count
+    for plugin in plugins:
+        state = counts.get(plugin.id, {})
+        plugin.pending_jobs = state.get("pending", 0)
+        plugin.dead_jobs = state.get("dead", 0)
     return await render_template("admin/plugins.html", plugins=plugins, noindex=True)
 
 
@@ -1204,6 +1226,33 @@ async def plugin_disable(plugin_id: str):
     return jsonify({"status": "ok"}), 200
 
 
+@admin_bp.post("/plugins/<plugin_id>/restart")
+async def plugin_restart(plugin_id: str):
+    _require_session()
+    require_role("admin")
+    user_id = session.get("user_id", "")
+    try:
+        await assert_stepup(session, user_id, "enable_plugin", target=plugin_id)
+    except PermissionError:
+        return jsonify({"error": "step_up_required"}), 403
+    await validate_csrf()
+    registry = current_app.extensions.get("arborpress_plugin_registry")
+    record = registry.get(plugin_id) if registry else None
+    if record is None or not record.enabled:
+        abort(404)
+    manager = current_app.extensions["arborpress_plugin_manager"]
+    await manager.stop(plugin_id)
+    supervisor = getattr(manager, "supervisor", None)
+    if supervisor is not None:
+        supervisor.reset(plugin_id)
+    try:
+        await manager.start(record)
+    except (RuntimeError, ValueError) as exc:
+        return jsonify({"error": "plugin_restart_failed", "message": str(exc)}), 409
+    audit.info("PLUGIN restarted | plugin=%s user=%s", plugin_id, user_id)
+    return jsonify({"status": "ok"}), 200
+
+
 @admin_bp.post("/plugins/<plugin_id>/capabilities/<capability>/<action>")
 async def plugin_capability(plugin_id: str, capability: str, action: str):
     """Locally grant/revoke only capabilities explicitly requested in metadata."""
@@ -1255,6 +1304,12 @@ async def plugin_capability(plugin_id: str, capability: str, action: str):
             )
         )
     )
+    if record.manifest is not None:
+        record.missing_required_capabilities = tuple(
+            item
+            for item in record.manifest.required_capabilities
+            if item not in record.granted_capabilities
+        )
     return jsonify({"status": "ok", "granted": record.granted_capabilities}), 200
 
 

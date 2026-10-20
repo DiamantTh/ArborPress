@@ -2574,6 +2574,92 @@ def plugin_validate(path: Path = typer.Argument(..., help="Path to plugin direct
         raise typer.Exit(1) from exc
 
 
+@plugin_app.command("install")
+def plugin_install(bundle: Path = typer.Argument(..., help="Local plugin ZIP bundle")) -> None:  # noqa: B008
+    """Install a validated local bundle; installation stays disabled."""
+    from arborpress.plugins.lifecycle import PluginLifecycle, PluginLifecycleError
+
+    try:
+        installed = PluginLifecycle().install(bundle)
+    except PluginLifecycleError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    _audit_plugin_admin(
+        "plugin_installed", installed.manifest.id, detail="local bundle installed disabled"
+    )
+    typer.echo(
+        f"Installed {installed.manifest.id} v{installed.manifest.version}; disabled by default."
+    )
+    typer.echo(f"Requested capabilities: {', '.join(installed.manifest.requested_capabilities)}")
+
+
+@plugin_app.command("update")
+def plugin_update(
+    plugin_id: str,
+    bundle: Path = typer.Argument(..., help="Local plugin ZIP bundle"),  # noqa: B008
+) -> None:
+    """Stage and atomically update a plugin from a local ZIP bundle."""
+    from arborpress.plugins.lifecycle import PluginLifecycle, PluginLifecycleError
+
+    try:
+        updated = PluginLifecycle().update(plugin_id, bundle)
+    except PluginLifecycleError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    _audit_plugin_admin(
+        "plugin_updated",
+        plugin_id,
+        detail=(
+            "local bundle updated; added="
+            + ",".join(updated.added_capabilities)
+            + "; removed="
+            + ",".join(updated.removed_capabilities)
+        ),
+    )
+    typer.echo(f"Updated {plugin_id} to v{updated.manifest.version}.")
+    if updated.added_capabilities:
+        typer.echo(
+            "New requested capabilities remain ungranted: " + ", ".join(updated.added_capabilities)
+        )
+    if updated.removed_capabilities:
+        typer.echo("No longer requested: " + ", ".join(updated.removed_capabilities))
+
+
+@plugin_app.command("uninstall")
+def plugin_uninstall(plugin_id: str) -> None:
+    """Remove the package/runtime while preserving plugin data."""
+    from arborpress.plugins.lifecycle import PluginLifecycle, PluginLifecycleError
+
+    try:
+        PluginLifecycle().uninstall(plugin_id)
+    except PluginLifecycleError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    _audit_plugin_admin(
+        "plugin_uninstalled", plugin_id, detail="package/runtime removed; data kept"
+    )
+    typer.echo(f"Uninstalled {plugin_id}; persistent plugin data was preserved.")
+
+
+@plugin_app.command("purge")
+def plugin_purge(
+    plugin_id: str,
+    yes: bool = typer.Option(False, "--yes", help="Confirm permanent plugin data deletion"),  # noqa: B008
+) -> None:
+    """Uninstall and permanently remove this plugin's persistent data."""
+    if not yes and not typer.confirm(f"Permanently delete all data for {plugin_id!r}?"):
+        raise typer.Abort()
+    from arborpress.plugins.lifecycle import PluginLifecycle, PluginLifecycleError
+
+    try:
+        PluginLifecycle().uninstall(plugin_id, purge=True)
+    except PluginLifecycleError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    _audit_plugin_admin("plugin_purged", plugin_id, detail="package/runtime/data purged")
+    typer.echo(f"Uninstalled and purged plugin {plugin_id}.")
+
+
 @plugin_runtime_app.command("create")
 def plugin_runtime_create(plugin_id: str) -> None:
     """Create an empty isolated interpreter without installing dependencies."""
@@ -2641,6 +2727,11 @@ def _bootstrap_plugins() -> None:
 
 def _plugin_diagnostic(plugin: Any) -> dict[str, Any]:
     manifest = plugin.manifest
+    from arborpress.plugins.capabilities import CapabilityGrantStore
+    from arborpress.runtime.paths import get_runtime_paths
+
+    grants = CapabilityGrantStore(get_runtime_paths().data / "plugin-grants.toml")
+    granted = sorted(grants.grants_for(plugin.id))
     return {
         "id": plugin.id,
         "name": plugin.name,
@@ -2649,16 +2740,26 @@ def _plugin_diagnostic(plugin: Any) -> dict[str, Any]:
         "status": plugin.status.value,
         "error": plugin.error,
         "enabled": plugin.enabled,
+        "managed_install": plugin.managed_install,
+        "package_integrity": plugin.package_integrity,
         "runtime_status": plugin.runtime_status.value,
+        "pid": plugin.pid,
+        "restart_count": plugin.restart_count,
+        "hardening": list(plugin.hardening),
+        "pending_jobs": plugin.pending_jobs,
+        "dead_jobs": plugin.dead_jobs,
         "exit_status": plugin.exit_status,
         "last_error": plugin.last_error,
         "interpreter": plugin.interpreter,
         "requested_capabilities": list(plugin.capabilities),
-        "granted_capabilities": [],
+        "granted_capabilities": granted,
+        "missing_required_capabilities": list(plugin.missing_required_capabilities),
     }
 
 
-def _audit_plugin_admin(event_type: str, plugin_id: str) -> None:
+def _audit_plugin_admin(
+    event_type: str, plugin_id: str, *, detail: str = "plugin state changed"
+) -> None:
     from arborpress.core.audit import write_audit_event
     from arborpress.logging.config import setup_logging
 
@@ -2670,7 +2771,7 @@ def _audit_plugin_admin(event_type: str, plugin_id: str) -> None:
             actor_id="cli",
             actor_name="cli",
             target_id=plugin_id,
-            detail="enablement state changed; applies on server startup",
+            detail=detail,
         )
     )
 

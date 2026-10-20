@@ -12,6 +12,7 @@
       <th>ID</th>
       <th>Version</th>
       <th>Quelle</th>
+      <th>Installation</th>
       <th>Kompatibilität / Runtime</th>
       <th>Angeforderte Capabilities</th>
       <th>Lokale Grants</th>
@@ -26,6 +27,7 @@
       <td><code>{{ plugin.id }}</code></td>
       <td>{{ plugin.manifest.version if plugin.manifest else '–' }}</td>
       <td>{{ plugin.source }}</td>
+      <td>{% if plugin.managed_install %}managed{% if plugin.package_integrity %} · digest ok{% else %} · digest mismatch{% endif %}{% else %}operator directory{% endif %}</td>
       <td>{{ plugin.error or plugin.status.value }}{% if plugin.enabled %} · {{ plugin.runtime_status.value }}{% endif %}</td>
       <td>{{ plugin.capabilities | join(', ') if plugin.capabilities else '–' }}</td>
       <td>
@@ -48,8 +50,13 @@
       </td>
       <td>
         <span class="badge badge-{{ 'enabled' if plugin.runtime_status.value == 'running' else 'disabled' }}">
-          {{ plugin.runtime_status.value if plugin.enabled else 'disabled' }}
+          {{ plugin.runtime_status.value }}{% if not plugin.enabled %} · disabled{% endif %}
         </span>
+        {% if plugin.restart_count %}<small>Restarts: {{ plugin.restart_count }}</small>{% endif %}
+        {% if plugin.last_error %}<small>Diagnose: {{ plugin.last_error | e }}</small>{% endif %}
+        {% if plugin.hardening %}<small>OS-Härtung: {{ plugin.hardening | join(', ') | e }}</small>{% endif %}
+        {% if plugin.pid %}<small>PID: {{ plugin.pid }}</small>{% endif %}
+        <small>Jobs offen: {{ plugin.pending_jobs }} · fehlgeschlagen: {{ plugin.dead_jobs }}</small>
       </td>
       <td>
         {% if plugin.manifest and plugin.manifest.admin_ui and plugin.enabled and 'admin.declarative' in plugin.granted_capabilities %}<a class="btn btn-sm" href="{{ url_for('admin.plugin_settings', plugin_id=plugin.id) }}">Einstellungen</a>{% endif %}
@@ -59,6 +66,11 @@
                 data-stepup-action="disable_plugin"
                 data-stepup-target="{{ plugin.id }}"
                 disabled>Deaktivieren</button>
+        <button class="btn btn-sm plugin-toggle"
+                data-url="{{ url_for('admin.plugin_restart', plugin_id=plugin.id) }}"
+                data-stepup-action="enable_plugin"
+                data-stepup-target="{{ plugin.id }}"
+                disabled>Neu starten</button>
         {% elif plugin.manifest and plugin.compatible %}
         <button class="btn btn-sm btn-primary plugin-toggle"
                 data-url="{{ url_for('admin.plugin_enable', plugin_id=plugin.id) }}"
@@ -71,10 +83,10 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="9" class="empty-state">Keine Plugins registriert.</td></tr>
+    <tr><td colspan="10" class="empty-state">Keine Plugins registriert.</td></tr>
     {% endfor %}
   </tbody>
 </table>
 <p data-admin-feedback role="status" aria-live="polite"></p>
-<noscript><p>Plugin-Aktionen benötigen JavaScript und eine serverseitige Step-up-Bestätigung.</p></noscript>
+<noscript><p>Plugin-Aktionen benötigen eine serverseitige Step-up-Bestätigung.</p></noscript>
 {% endblock %}
