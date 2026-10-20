@@ -311,6 +311,8 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
         "comment_moderation_appeals",
         "post_author_relations",
         "object_relations",
+        "plugin_storage_entries",
+        "plugin_jobs",
     }:
         return False
     allowed_columns = {
@@ -335,6 +337,8 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "missing table comment_moderation_appeals",
             "missing table post_author_relations",
             "missing table object_relations",
+            "missing table plugin_storage_entries",
+            "missing table plugin_jobs",
         }:
             continue
         if error == "unexpected column comments.confirmation_token":

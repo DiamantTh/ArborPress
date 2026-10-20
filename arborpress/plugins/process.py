@@ -9,11 +9,17 @@ import signal
 import socket
 import sys
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from arborpress import __version__
+from arborpress.plugins.capabilities import (
+    Capability,
+    CapabilityGrantStore,
+    missing_required_grants,
+)
 from arborpress.plugins.protocol import (
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_SHUTDOWN_TIMEOUT,
@@ -24,6 +30,7 @@ from arborpress.plugins.protocol import (
     send_frame,
 )
 from arborpress.plugins.registry import PluginRecord, PluginSource, PluginStatus
+from arborpress.plugins.rpc import PluginRPCDispatcher
 from arborpress.runtime.paths import get_runtime_paths
 
 log = logging.getLogger("arborpress.plugins.runtime")
@@ -40,6 +47,11 @@ class PluginProcess:
     stderr_task: asyncio.Task[None] | None = None
     exit_task: asyncio.Task[None] | None = None
     expected_shutdown: bool = False
+    rpc_lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock)
+    event_queue: asyncio.Queue[dict[str, Any]] = dataclass_field(
+        default_factory=lambda: asyncio.Queue(maxsize=100)
+    )
+    event_task: asyncio.Task[None] | None = None
 
 
 class PluginProcessManager:
@@ -51,10 +63,12 @@ class PluginProcessManager:
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
         shutdown_timeout: float = DEFAULT_SHUTDOWN_TIMEOUT,
+        dispatcher: PluginRPCDispatcher | None = None,
     ) -> None:
         self.startup_timeout = startup_timeout
         self.request_timeout = request_timeout
         self.shutdown_timeout = shutdown_timeout
+        self.dispatcher = dispatcher
         self._running: dict[str, PluginProcess] = {}
         self._request_ids: dict[str, int] = {}
         self._closing = False
@@ -91,10 +105,15 @@ class PluginProcessManager:
             )
         if record.source != PluginSource.THIRD_PARTY:
             raise ValueError("only third-party plugin records use the isolated host")
+        paths = get_runtime_paths()
+        grants = CapabilityGrantStore(paths.data / "plugin-grants.toml")
+        missing = missing_required_grants(record.id, record.manifest.required_capabilities, grants)
+        if missing:
+            record.last_error = "missing_required_capabilities: " + ", ".join(missing)
+            raise ValueError(record.last_error)
         if record.id in self._running:
             return
         record.runtime_status = PluginStatus.STARTING
-        paths = get_runtime_paths()
         runtime_dir = paths.plugin_runtime / record.id
         data_dir = paths.plugin_data / record.id
         cache_dir = paths.plugin_cache / record.id
@@ -186,7 +205,7 @@ class PluginProcessManager:
                     "plugin_version": manifest.version,
                     "arborpress_version": __version__,
                     "runtime_version": "1",
-                    "granted_capabilities": [],
+                    "granted_capabilities": sorted(grants.grants_for(manifest.id)),
                 },
                 timeout=self.startup_timeout,
             )
@@ -199,6 +218,7 @@ class PluginProcessManager:
             record.runtime_status = PluginStatus.RUNNING
             record.last_error = None
             self._save_status(record, process.pid)
+            running.event_task = asyncio.create_task(self._event_worker(running))
             log.info("plugin started id=%s pid=%s", manifest.id, process.pid)
             audit_log.warning(
                 "PLUGIN_PROCESS_START outcome=success plugin=%s pid=%s",
@@ -237,6 +257,74 @@ class PluginProcessManager:
             raise ProtocolError("plugin ping result must be an object")
         return result
 
+    async def execute_task(
+        self, plugin_id: str, *, job_id: str, task: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        running = self._running.get(plugin_id)
+        if running is None or running.record.manifest is None:
+            raise RuntimeError("plugin process is unavailable")
+        if task not in running.record.manifest.tasks:
+            raise ValueError("task is not declared by this plugin")
+        if Capability.JOBS_SCHEDULE.value not in CapabilityGrantStore(
+            get_runtime_paths().data / "plugin-grants.toml"
+        ).grants_for(plugin_id):
+            raise PermissionError("jobs.schedule capability is not granted")
+        result = await self._request(
+            running,
+            "plugin.task",
+            {"job_id": job_id, "task": task, "payload": payload},
+            timeout=self.request_timeout,
+        )
+        return result
+
+    async def execute_admin_action(
+        self, plugin_id: str, *, action_id: str, values: dict[str, Any]
+    ) -> dict[str, Any]:
+        running = self._running.get(plugin_id)
+        if running is None or running.record.manifest is None:
+            raise RuntimeError("plugin process is unavailable")
+        if Capability.ADMIN_DECLARATIVE.value not in CapabilityGrantStore(
+            get_runtime_paths().data / "plugin-grants.toml"
+        ).grants_for(plugin_id):
+            raise PermissionError("admin.declarative capability is not granted")
+        descriptor = running.record.manifest.admin_ui or {}
+        pages = cast(list[Any], descriptor.get("pages", []))
+        actions = {
+            action.get("id")
+            for page in pages
+            if isinstance(page, dict)
+            for action in page.get("actions", [])
+            if isinstance(action, dict)
+        }
+        if action_id not in actions:
+            raise ValueError("admin action is not declared")
+        return await self._request(
+            running,
+            "plugin.admin_action",
+            {"action_id": action_id, "values": values},
+            timeout=self.request_timeout,
+        )
+
+    async def get_admin_page(self, plugin_id: str, page_id: str) -> dict[str, Any]:
+        running = self._running.get(plugin_id)
+        if running is None or running.record.manifest is None:
+            raise RuntimeError("plugin process is unavailable")
+        if Capability.ADMIN_DECLARATIVE.value not in CapabilityGrantStore(
+            get_runtime_paths().data / "plugin-grants.toml"
+        ).grants_for(plugin_id):
+            raise PermissionError("admin.declarative capability is not granted")
+        pages = (running.record.manifest.admin_ui or {}).get("pages", [])
+        if not isinstance(pages, list) or not any(
+            isinstance(page, dict) and page.get("id") == page_id for page in pages
+        ):
+            raise ValueError("admin page is not declared")
+        return await self._request(
+            running,
+            "plugin.admin_page",
+            {"page_id": page_id},
+            timeout=self.request_timeout,
+        )
+
     async def stop(self, plugin_id: str) -> None:
         running = self._running.get(plugin_id)
         if running is None:
@@ -266,7 +354,39 @@ class PluginProcessManager:
             *(self.stop(plugin_id) for plugin_id in list(self._running)), return_exceptions=True
         )
 
+    def publish_event(self, event_name: str, payload: dict[str, Any]) -> int:
+        """Best-effort bounded event fanout; the caller never waits on a plugin."""
+        delivered = 0
+        for plugin_id, running in tuple(self._running.items()):
+            manifest = running.record.manifest
+            if manifest is None or event_name not in manifest.event_subscriptions:
+                continue
+            grants = CapabilityGrantStore(get_runtime_paths().data / "plugin-grants.toml")
+            if Capability.EVENTS_SUBSCRIBE.value not in grants.grants_for(plugin_id):
+                continue
+            try:
+                running.event_queue.put_nowait({"type": event_name, **payload})
+                delivered += 1
+            except asyncio.QueueFull:
+                log.warning(
+                    "plugin_event_dropped plugin=%s event=%s reason=queue_full",
+                    plugin_id,
+                    event_name,
+                )
+        return delivered
+
     async def _request(
+        self,
+        running: PluginProcess,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout: float,
+    ) -> dict[str, Any]:
+        async with running.rpc_lock:
+            return await self._request_unlocked(running, method, params, timeout=timeout)
+
+    async def _request_unlocked(
         self,
         running: PluginProcess,
         method: str,
@@ -286,6 +406,42 @@ class PluginProcessManager:
         try:
             await asyncio.wait_for(send_frame(running.channel, request), timeout=timeout)
             response = await asyncio.wait_for(receive_frame(running.channel), timeout=timeout)
+            while response.get("id") != request_id:
+                child_id = response.get("id")
+                child_method = response.get("method")
+                child_params = response.get("params", {})
+                if child_id is None or not isinstance(child_method, str):
+                    raise ProtocolError("unexpected plugin RPC frame")
+                try:
+                    if self.dispatcher is None:
+                        raise RuntimeError("unavailable")
+                    rpc_result = await asyncio.wait_for(
+                        self.dispatcher.dispatch(
+                            plugin_id,
+                            child_method,
+                            child_params,
+                            declared_tasks=(
+                                running.record.manifest.tasks if running.record.manifest else ()
+                            ),
+                            requested_capabilities=(
+                                running.record.manifest.requested_capabilities
+                                if running.record.manifest
+                                else ()
+                            ),
+                        ),
+                        timeout=timeout,
+                    )
+                    reply = {"protocol": PROTOCOL_VERSION, "id": child_id, "result": rpc_result}
+                except Exception as exc:
+                    code = getattr(exc, "code", "internal_error")
+                    message = str(exc)[:200] if hasattr(exc, "code") else "Core RPC request failed"
+                    reply = {
+                        "protocol": PROTOCOL_VERSION,
+                        "id": child_id,
+                        "error": {"code": str(code)[:64], "message": message},
+                    }
+                await asyncio.wait_for(send_frame(running.channel, reply), timeout=timeout)
+                response = await asyncio.wait_for(receive_frame(running.channel), timeout=timeout)
         except TimeoutError as exc:
             raise TimeoutError(f"plugin {plugin_id} RPC timed out") from exc
         if response.get("id") != request_id:
@@ -295,10 +451,26 @@ class PluginProcessManager:
             if not isinstance(error, dict):
                 raise ProtocolError("invalid RPC error response")
             raise RuntimeError(f"plugin RPC error: {str(error.get('code', 'plugin_error'))[:64]}")
-        result = response.get("result")
-        if not isinstance(result, dict):
+        final_result: Any = response.get("result")
+        if not isinstance(final_result, dict):
             raise ProtocolError("RPC result must be an object")
-        return result
+        return final_result
+
+    async def _event_worker(self, running: PluginProcess) -> None:
+        while running.process.returncode is None:
+            event = await running.event_queue.get()
+            try:
+                await self._request(
+                    running, "plugin.event", {"event": event}, timeout=self.request_timeout
+                )
+            except Exception as exc:
+                log.warning(
+                    "plugin event delivery failed plugin=%s error=%s",
+                    running.record.id,
+                    type(exc).__name__,
+                )
+            finally:
+                running.event_queue.task_done()
 
     async def _terminate(self, running: PluginProcess) -> None:
         running.expected_shutdown = True
@@ -351,6 +523,8 @@ class PluginProcessManager:
         for task in (running.stdout_task, running.stderr_task):
             if task is not None and not task.done():
                 task.cancel()
+        if running.event_task is not None and not running.event_task.done():
+            running.event_task.cancel()
 
     async def _finish_log_drain(self, running: PluginProcess) -> None:
         tasks = [task for task in (running.stdout_task, running.stderr_task) if task is not None]

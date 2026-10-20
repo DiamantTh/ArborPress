@@ -50,6 +50,9 @@ class PluginRecord:
     interpreter: str = sys.executable
     exit_status: int | None = None
     last_error: str | None = None
+    granted_capabilities: tuple[str, ...] = ()
+    grantable_capabilities: tuple[str, ...] = ()
+    missing_required_capabilities: tuple[str, ...] = ()
 
     @property
     def id(self) -> str:
@@ -192,10 +195,34 @@ def discover_instance_plugins(roots: tuple[Path, ...] | list[Path] | None = None
     registry = PluginRegistry()
     registry.discover(list(roots) if roots is not None else get_settings().plugin_dirs())
     enabled_ids = PluginStateStore(paths.data / "plugin-state.toml").enabled_ids()
+    from arborpress.plugins.capabilities import (
+        GRANTABLE_CAPABILITIES,
+        CapabilityGrantStore,
+        missing_required_grants,
+    )
+
+    grants = CapabilityGrantStore(paths.data / "plugin-grants.toml")
     from arborpress.plugins.runtime_state import read_status
 
     for record in registry.all():
         record.enabled = record.id in enabled_ids
+        if record.manifest is not None:
+            for stale_grant in grants.grants_for(record.id) - set(
+                record.manifest.requested_capabilities
+            ):
+                grants.set_grant(record.id, stale_grant, False)
+        record.granted_capabilities = tuple(sorted(grants.grants_for(record.id)))
+        record.grantable_capabilities = tuple(
+            sorted(capability.value for capability in GRANTABLE_CAPABILITIES)
+        )
+        if record.manifest is not None:
+            record.missing_required_capabilities = missing_required_grants(
+                record.id, record.manifest.required_capabilities, grants
+            )
+            if record.enabled and record.missing_required_capabilities:
+                record.last_error = "missing_required_capabilities: " + ", ".join(
+                    record.missing_required_capabilities
+                )
         runtime_info = read_status(paths.plugin_run, record.id)
         if runtime_info and isinstance(runtime_info.get("runtime_status"), str):
             try:

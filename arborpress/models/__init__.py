@@ -1,6 +1,7 @@
 # arborpress/models/__init__.py
 # Import all ORM models so that SQLAlchemy metadata is complete
 from arborpress.models.audit import AuditEvent  # noqa: F401
+from arborpress.models.authorization import ObjectRelation, ObjectRelationName  # noqa: F401
 from arborpress.models.content import (  # noqa: F401
     Category,
     Comment,
@@ -15,16 +16,16 @@ from arborpress.models.content import (  # noqa: F401
     Page,
     PageType,
     Post,
+    PostAccessToken,
     PostAuthorRelation,
     PostAuthorRole,
-    PostAccessToken,
     PostRevision,
     PostStatus,
     PostVisibility,
     Tag,
 )
-from arborpress.models.authorization import ObjectRelation, ObjectRelationName  # noqa: F401
 from arborpress.models.mail import MailQueue, MailStatus  # noqa: F401
+from arborpress.models.plugin import PluginJob, PluginStorageEntry  # noqa: F401
 from arborpress.models.settings import SiteSetting  # noqa: F401
 from arborpress.models.user import (  # noqa: F401
     AccountType,
