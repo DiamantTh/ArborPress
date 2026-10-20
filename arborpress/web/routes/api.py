@@ -773,13 +773,26 @@ async def admin_api_set_auth_policy():
 async def admin_api_plugin_enable(plugin_id: str):
     """Admin: Plugin aktivieren – nur Admins (§15, §2)."""
     require_role("admin")
-    await _require_stepup("enable_plugin", target=plugin_id)
-    from arborpress.plugins.registry import get_registry
+    from arborpress.web.security import validate_csrf
 
-    reg = get_registry()
-    plugin = reg.get(plugin_id)
+    await validate_csrf()
+    await _require_stepup("enable_plugin", target=plugin_id)
+    from arborpress.plugins.control import enable_plugin
+    from arborpress.plugins.state import PluginStateStore
+    from arborpress.runtime.paths import get_runtime_paths
+
+    registry = current_app.extensions.get("arborpress_plugin_registry")
+    plugin = registry.get(plugin_id) if registry else None
     if plugin is None:
         abort(404, f"Plugin {plugin_id!r} not found")
+    try:
+        await enable_plugin(
+            plugin,
+            current_app.extensions["arborpress_plugin_manager"],
+            PluginStateStore(get_runtime_paths().data / "plugin-state.toml"),
+        )
+    except (RuntimeError, ValueError) as exc:
+        abort(409, str(exc))
     return jsonify({"status": "enabled", "plugin_id": plugin_id})
 
 
@@ -787,13 +800,23 @@ async def admin_api_plugin_enable(plugin_id: str):
 async def admin_api_plugin_disable(plugin_id: str):
     """Admin: Plugin deaktivieren – nur Admins (§15)."""
     require_role("admin")
-    await _require_stepup("disable_plugin", target=plugin_id)
-    from arborpress.plugins.registry import get_registry
+    from arborpress.web.security import validate_csrf
 
-    reg = get_registry()
-    plugin = reg.get(plugin_id)
+    await validate_csrf()
+    await _require_stepup("disable_plugin", target=plugin_id)
+    from arborpress.plugins.control import disable_plugin
+    from arborpress.plugins.state import PluginStateStore
+    from arborpress.runtime.paths import get_runtime_paths
+
+    registry = current_app.extensions.get("arborpress_plugin_registry")
+    plugin = registry.get(plugin_id) if registry else None
     if plugin is None:
         abort(404, f"Plugin {plugin_id!r} not found")
+    await disable_plugin(
+        plugin,
+        current_app.extensions["arborpress_plugin_manager"],
+        PluginStateStore(get_runtime_paths().data / "plugin-state.toml"),
+    )
     return jsonify({"status": "disabled", "plugin_id": plugin_id})
 
 

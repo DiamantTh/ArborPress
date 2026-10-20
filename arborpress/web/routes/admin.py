@@ -22,6 +22,7 @@ from jinja2 import TemplateError
 from quart import (
     Blueprint,
     abort,
+    current_app,
     jsonify,
     make_response,
     redirect,
@@ -227,7 +228,8 @@ async def _get_stats() -> dict:
         from arborpress.models.content import Media, Page, Post
         from arborpress.models.mail import MailQueue, MailStatus
         from arborpress.models.user import User
-        from arborpress.plugins.registry import get_registry
+
+        plugin_registry = current_app.extensions.get("arborpress_plugin_registry")
 
         async for db in get_db_session():
             posts_count = (await db.execute(select(func.count()).select_from(Post))).scalar_one()
@@ -248,7 +250,11 @@ async def _get_stats() -> dict:
             "media_total": media_count,
             "users_total": users_count,
             "mail_queue": mail_queue,
-            "plugins_active": len(get_registry().all()),
+            "plugins_active": sum(
+                plugin.runtime_status.value == "running" for plugin in plugin_registry.all()
+            )
+            if plugin_registry is not None
+            else 0,
         }
     except Exception as exc:
         log.warning("Stats-Abfrage fehlgeschlagen: %s", exc)
@@ -1135,9 +1141,8 @@ async def user_authenticator_reset(user_id: str):
 async def plugins_list():
     _require_session()
     require_role("admin")
-    from arborpress.plugins.registry import get_registry
-
-    plugins = get_registry().all()
+    registry = current_app.extensions.get("arborpress_plugin_registry")
+    plugins = registry.all() if registry is not None else []
     return await render_template("admin/plugins.html", plugins=plugins, noindex=True)
 
 
@@ -1150,6 +1155,23 @@ async def plugin_enable(plugin_id: str):
         await assert_stepup(session, user_id, "enable_plugin", target=plugin_id)
     except PermissionError:
         return jsonify({"error": "step_up_required"}), 403
+    await validate_csrf()
+    registry = current_app.extensions.get("arborpress_plugin_registry")
+    record = registry.get(plugin_id) if registry else None
+    if record is None:
+        abort(404)
+    from arborpress.plugins.control import enable_plugin
+    from arborpress.plugins.state import PluginStateStore
+    from arborpress.runtime.paths import get_runtime_paths
+
+    try:
+        await enable_plugin(
+            record,
+            current_app.extensions["arborpress_plugin_manager"],
+            PluginStateStore(get_runtime_paths().data / "plugin-state.toml"),
+        )
+    except (RuntimeError, ValueError) as exc:
+        return jsonify({"error": "plugin_start_failed", "message": str(exc)}), 409
     audit.info("PLUGIN enabled | plugin=%s user=%s", plugin_id, user_id)
     return jsonify({"status": "ok"}), 200
 
@@ -1163,6 +1185,20 @@ async def plugin_disable(plugin_id: str):
         await assert_stepup(session, user_id, "disable_plugin", target=plugin_id)
     except PermissionError:
         return jsonify({"error": "step_up_required"}), 403
+    await validate_csrf()
+    registry = current_app.extensions.get("arborpress_plugin_registry")
+    record = registry.get(plugin_id) if registry else None
+    if record is None:
+        abort(404)
+    from arborpress.plugins.control import disable_plugin
+    from arborpress.plugins.state import PluginStateStore
+    from arborpress.runtime.paths import get_runtime_paths
+
+    await disable_plugin(
+        record,
+        current_app.extensions["arborpress_plugin_manager"],
+        PluginStateStore(get_runtime_paths().data / "plugin-state.toml"),
+    )
     audit.info("PLUGIN disabled | plugin=%s user=%s", plugin_id, user_id)
     return jsonify({"status": "ok"}), 200
 

@@ -13,7 +13,7 @@ from quart.typing import ResponseReturnValue
 
 from arborpress.core.config import get_settings
 from arborpress.logging.config import setup_logging
-from arborpress.plugins.registry import get_registry
+from arborpress.plugins.registry import discover_instance_plugins
 from arborpress.runtime.paths import ensure_instance_layout, get_runtime_paths
 from arborpress.web.assets import AssetResolver
 from arborpress.web.middleware import ReverseProxyMiddleware
@@ -40,6 +40,7 @@ def create_app() -> Quart:
     ensure_instance_layout(paths)
     cfg = get_settings()
     setup_logging(cfg.logging)
+    plugin_registry = discover_instance_plugins(cfg.plugin_dirs())
 
     app = Quart(
         __name__,
@@ -414,8 +415,13 @@ def create_app() -> Quart:
     # Health
     app.register_blueprint(health_bp)
 
-    # §15 Plugin-Blueprints
-    _register_plugin_blueprints(app)
+    # Third-party packages are metadata-only during application construction.
+    # They are started later, each in its own subprocess, during app startup.
+    from arborpress.plugins.process import PluginProcessManager
+
+    plugin_manager = PluginProcessManager()
+    app.extensions["arborpress_plugin_registry"] = plugin_registry
+    app.extensions["arborpress_plugin_manager"] = plugin_manager
 
     # §9 Theme static files are served only when declared in a valid manifest.
     @app.route("/static/themes/<theme_id>/<path:filename>")
@@ -516,10 +522,20 @@ def create_app() -> Quart:
 
             asyncio.ensure_future(run_queue_worker())
 
+            # Plugin failures are isolated from the main service startup. Each
+            # enabled third-party plugin receives a fresh private IPC process.
+            for plugin in plugin_registry.all():
+                if not plugin.enabled:
+                    continue
+                try:
+                    await plugin_manager.start(plugin)
+                except Exception as exc:
+                    _log.getLogger("arborpress.plugins").error(
+                        "Plugin startup failed id=%s error=%s", plugin.id, type(exc).__name__
+                    )
+
+    @app.after_serving
+    async def _on_shutdown() -> None:
+        await plugin_manager.shutdown()
+
     return app
-
-
-def _register_plugin_blueprints(app: Quart) -> None:
-    """§15: Kein Plugin darf Security-Seiten definieren."""
-    for _plugin in get_registry().all():
-        pass  # TODO: Plugin-Blueprints registrieren wenn entry_points.web definiert

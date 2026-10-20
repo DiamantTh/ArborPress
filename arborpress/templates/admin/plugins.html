@@ -11,6 +11,9 @@
       <th>Name</th>
       <th>ID</th>
       <th>Version</th>
+      <th>Quelle</th>
+      <th>Kompatibilität / Runtime</th>
+      <th>Angeforderte Capabilities</th>
       <th>Status</th>
       <th>Aktion</th>
     </tr>
@@ -18,32 +21,37 @@
   <tbody>
     {% for plugin in plugins %}
     <tr>
-      <td>{{ plugin.manifest.name | e }}</td>
-      <td><code>{{ plugin.manifest.id }}</code></td>
-      <td>{{ plugin.manifest.version | default('–') }}</td>
+      <td>{{ plugin.name | e }}</td>
+      <td><code>{{ plugin.id }}</code></td>
+      <td>{{ plugin.manifest.version if plugin.manifest else '–' }}</td>
+      <td>{{ plugin.source }}</td>
+      <td>{{ plugin.error or plugin.status.value }}{% if plugin.enabled %} · {{ plugin.runtime_status.value }}{% endif %}</td>
+      <td>{{ plugin.capabilities | join(', ') if plugin.capabilities else '–' }}</td>
       <td>
-        <span class="badge badge-{{ 'enabled' if plugin.enabled else 'disabled' }}">
-          {{ 'Aktiv' if plugin.enabled else 'Inaktiv' }}
+        <span class="badge badge-{{ 'enabled' if plugin.runtime_status.value == 'running' else 'disabled' }}">
+          {{ plugin.runtime_status.value if plugin.enabled else 'disabled' }}
         </span>
       </td>
       <td>
-        {% if plugin.enabled %}
+        {% if plugin.manifest and plugin.compatible and plugin.enabled %}
         <button class="btn btn-sm btn-danger plugin-toggle"
-                data-url="{{ url_for('admin.plugin_disable', plugin_id=plugin.manifest.id) }}"
+                data-url="{{ url_for('admin.plugin_disable', plugin_id=plugin.id) }}"
                 data-stepup-action="disable_plugin"
-                data-stepup-target="{{ plugin.manifest.id }}"
+                data-stepup-target="{{ plugin.id }}"
                 disabled>Deaktivieren</button>
-        {% else %}
+        {% elif plugin.manifest and plugin.compatible %}
         <button class="btn btn-sm btn-primary plugin-toggle"
-                data-url="{{ url_for('admin.plugin_enable', plugin_id=plugin.manifest.id) }}"
+                data-url="{{ url_for('admin.plugin_enable', plugin_id=plugin.id) }}"
                 data-stepup-action="enable_plugin"
-                data-stepup-target="{{ plugin.manifest.id }}"
+                data-stepup-target="{{ plugin.id }}"
                 disabled>Aktivieren</button>
+        {% else %}
+        <span>–</span>
         {% endif %}
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="5" class="empty-state">Keine Plugins registriert.</td></tr>
+    <tr><td colspan="8" class="empty-state">Keine Plugins registriert.</td></tr>
     {% endfor %}
   </tbody>
 </table>
