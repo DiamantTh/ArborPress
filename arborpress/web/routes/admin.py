@@ -1227,12 +1227,14 @@ async def plugin_disable(plugin_id: str):
 
 
 @admin_bp.post("/plugins/<plugin_id>/restart")
-async def plugin_restart(plugin_id: str):
+async def plugin_restart(plugin_id: str) -> ResponseReturnValue:
     _require_session()
     require_role("admin")
     user_id = session.get("user_id", "")
     try:
-        await assert_stepup(session, user_id, "enable_plugin", target=plugin_id)
+        await assert_stepup(
+            cast(dict[str, Any], session), user_id, "enable_plugin", target=plugin_id
+        )
     except PermissionError:
         return jsonify({"error": "step_up_required"}), 403
     await validate_csrf()
