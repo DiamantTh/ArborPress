@@ -1,4 +1,4 @@
-# Third-party plugin runtime (Phases 8A–8B)
+# Third-party plugin runtime (Phases 8A–8C)
 
 ## Boundary and current scope
 
@@ -11,9 +11,9 @@ CLI commands are not third-party extension APIs.
 Phase 8A establishes discovery, lifecycle RPC, an SDK context, and a
 per-plugin-interpreter foundation. Phase 8B adds local capability grants,
 Core-mediated KV storage and safe read-only DTOs, best-effort events,
-Core-scheduled jobs, and declarative server-rendered plugin settings.
-Installation/update management, crash-loop policy, and stronger OS isolation
-follow in Phase 8C.
+Core-scheduled jobs, and declarative server-rendered plugin settings. Phase 8C
+adds local bundle installation, staged updates/rollback, data-preserving
+uninstall, a bounded process supervisor, and optional Linux hardening.
 
 Process separation is always active; it is not a complete sandbox. Without an
 OS sandbox, Python code running under the ArborPress OS account can still
@@ -35,6 +35,7 @@ instance/var/cache/plugins/<plugin-id>/        disposable plugin cache
 instance/var/plugins/<plugin-id>/venv/         optional isolated interpreter
 instance/data/plugin-state.toml                locally enabled plugin IDs
 instance/data/plugin-grants.toml                locally granted capabilities
+instance/data/plugin-installations/<id>.json    managed bundle digest/version
 ```
 
 All paths derive from `ArborPressPaths`; discovery does not use the process CWD.
@@ -63,6 +64,7 @@ requested_capabilities = ["storage.kv", "data.content.read"]
 required_capabilities = []
 subscriptions = []
 tasks = []
+dependencies = []
 ```
 
 `manifest_version`, `id`, `name`, `version`, `author`, `license`,
@@ -110,8 +112,8 @@ Default startup timeout is 10 seconds, request timeout 30 seconds, and graceful
 shutdown timeout 3 seconds, followed by process-group terminate/kill fallback.
 Separate stdout/stderr pipes are drained and output is bounded in ArborPress
 logs. A child exit is tracked and marked failed unless shutdown was requested.
-An enabled plugin failing to start does not prevent normal Core startup.
-Automatic restart/disable policy belongs to Phase 8C.
+An enabled plugin failing to start does not prevent normal Core startup. The
+Phase 8C supervisor applies bounded restart and auto-disable policy.
 
 The child is started without `shell=True`, with an explicit plugin working
 directory, closed unrelated file descriptors, a new process session, and a
@@ -168,12 +170,76 @@ The runtime uses `instance/var/plugins/<id>/venv/bin/python` when present;
 otherwise it uses the current ArborPress Python interpreter. No dependencies
 are installed or resolved by Phase 8A. A plugin venv uses the ArborPress SDK
 bootstrap from the installed ArborPress release through an explicit package
-path. Installing plugin dependencies is not yet a supported installer flow.
+path. Plugin dependencies are installed only by the local installer, into a
+new per-plugin venv. It accepts prebuilt wheel files from the bundle, invokes
+the exact staged venv interpreter with `--no-index`, `--find-links` and
+`--only-binary=:all:`, and rejects direct URL dependencies and source
+distributions. It never edits the ArborPress environment or resolves from the
+internet. `plugins runtime create` remains useful for development but does not
+install third-party dependencies.
 
-Available metadata-only diagnostics are `arborpress plugins list [--json]`,
-`inspect <id> [--json]`, `check <id>`, and `validate <directory>`. CLI enable and
-disable update local state for the next server startup. The existing protected
-Admin action starts/stops the process in the current server process after
-step-up and CSRF checks. New plugins default to disabled. There are no plugin
-routes, Quart blueprints, plugin-defined CLI commands, arbitrary Admin JS, or
-automatic downloads.
+Available diagnostics are `arborpress plugins list [--json]`,
+`inspect <id> [--json]`, `check <id>`, and `validate <directory>`. Local
+lifecycle commands are:
+
+```text
+arborpress plugins install ./sample-plugin.zip
+arborpress plugins update sample-plugin ./sample-plugin-2.zip
+arborpress plugins uninstall sample-plugin
+arborpress plugins purge sample-plugin --yes
+```
+
+The ZIP bundle has one root containing `plugin.toml`, `checksums.sha256`, a
+`package/` tree and optionally a `wheels/` directory. The manifest must identify
+the same plugin as the target. Checksum verification is integrity diagnostics,
+not publisher authentication or a digital signature. Archive paths, symlinks,
+duplicate members, file types, sizes, and wheel metadata are validated before
+staging. Installation uses same-instance staging and atomic package/runtime
+swaps; a successful install remains disabled until an administrator enables
+it. Dependencies must be provided as compatible local wheels. URLs, remote
+indexes, and sdists are rejected.
+
+An update requires the same ID and a newer version. It stages a separate
+package and venv and requires the ArborPress instance to be stopped before the
+switch. It restores the old package/runtime if the candidate fails its isolated
+initialize/handshake/ping self-check. Existing persistent plugin data is preserved. New capability
+requests are never automatically granted; if a required capability is missing,
+the new version is installed but left disabled. Grants no longer requested are
+removed. A package digest mismatch is surfaced in discovery/inspect and blocks
+managed startup. Because the CLI cannot control another ArborPress server
+process, operators must stop the running ArborPress instance before update or
+uninstall; the per-plugin process lock rejects concurrent lifecycle changes.
+Manual edits are not a supported production update mechanism.
+
+`uninstall` stops and removes the managed package, generated runtime and local
+enable/grant state, but preserves `instance/data/plugins/<id>` and diagnostic
+history. `purge` is a separate destructive operation and explicitly removes
+only that plugin's persistent data. Built-in plugins cannot be installed,
+updated, uninstalled, or purged through the third-party lifecycle.
+
+The supervisor checks health periodically, retries unexpected exits with a
+bounded rolling-window policy (three restarts in ten minutes, with 1/5/30
+second backoff), and marks a plugin `auto_disabled` once the budget is
+exhausted. Manual re-enable clears the auto-disable state. Repeated heartbeat
+failures can trigger a restart; an individual ordinary RPC error does not.
+Other plugins and ArborPress core continue independently. Pending jobs remain
+persisted while a plugin is unavailable.
+
+On POSIX, child startup applies a restrictive umask, disables core dumps,
+limits open descriptors, and on Linux attempts `PR_SET_NO_NEW_PRIVS`. The
+active process manager reports which features were applied. These are
+defense-in-depth controls, not a hostile-code sandbox: absent namespaces,
+seccomp, or another OS isolation boundary, plugin code running as the same OS
+user may still access resources that user can access directly. `network.http`
+is not currently grantable, and there is no generic host-filesystem API.
+Process isolation, sanitized environment, Core-mediated API enforcement, and
+optional OS hardening must not be represented as complete direct network or
+filesystem isolation.
+
+The Admin plugin overview shows installation integrity, runtime health, PID,
+restart/error diagnostics, capability state, and pending/dead job counts. It
+supports the existing protected enable/disable operations and a protected
+restart action. Bundle install/update/uninstall/purge are CLI-only; there is no
+large-bundle upload endpoint. Built-in integrations remain in-process Core
+modules, and there are still no plugin routes, Quart blueprints, plugin-defined
+CLI commands, arbitrary Admin JS, Marketplace, or automatic downloads.
