@@ -27,6 +27,7 @@ STEPUP_POLICIES: dict[str, str] = {
     "install_plugin": "target",
     "enable_plugin": "target",
     "disable_plugin": "target",
+    "plugin_capability_change": "target",
     "trust_theme": "target",
     "generate_export": "instance",
     "rotate_key": "target",

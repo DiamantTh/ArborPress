@@ -14,6 +14,7 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import secrets
 from collections.abc import Mapping
 from typing import Any, Literal, cast
@@ -1203,6 +1204,212 @@ async def plugin_disable(plugin_id: str):
     return jsonify({"status": "ok"}), 200
 
 
+@admin_bp.post("/plugins/<plugin_id>/capabilities/<capability>/<action>")
+async def plugin_capability(plugin_id: str, capability: str, action: str):
+    """Locally grant/revoke only capabilities explicitly requested in metadata."""
+    _require_session()
+    require_role("admin")
+    if action not in {"grant", "revoke"}:
+        abort(404)
+    await validate_csrf()
+    registry = current_app.extensions.get("arborpress_plugin_registry")
+    record = registry.get(plugin_id) if registry else None
+    if record is None or record.manifest is None:
+        abort(404)
+    if capability not in record.manifest.requested_capabilities:
+        abort(400)
+    user_id = session.get("user_id", "")
+    try:
+        await assert_stepup(
+            session, user_id, "plugin_capability_change", target=f"{plugin_id}:{capability}"
+        )
+    except PermissionError:
+        return jsonify({"error": "step_up_required"}), 403
+    from arborpress.plugins.capabilities import CapabilityError, CapabilityGrantStore
+    from arborpress.runtime.paths import get_runtime_paths
+
+    try:
+        CapabilityGrantStore(get_runtime_paths().data / "plugin-grants.toml").set_grant(
+            plugin_id, capability, action == "grant"
+        )
+    except CapabilityError as exc:
+        return jsonify({"error": "invalid_capability", "message": str(exc)}), 400
+    from arborpress.core.db import get_session_factory
+
+    async with get_session_factory()() as db:
+        await write_audit_event(
+            event_type=(
+                "plugin_capability_granted" if action == "grant" else "plugin_capability_revoked"
+            ),
+            outcome="success",
+            actor_id=user_id,
+            target_id=plugin_id,
+            detail=f"capability={capability}",
+            db=db,
+        )
+        await db.commit()
+    record.granted_capabilities = tuple(
+        sorted(
+            CapabilityGrantStore(get_runtime_paths().data / "plugin-grants.toml").grants_for(
+                plugin_id
+            )
+        )
+    )
+    return jsonify({"status": "ok", "granted": record.granted_capabilities}), 200
+
+
+@admin_bp.get("/plugins/<plugin_id>/settings")
+async def plugin_settings(plugin_id: str):
+    _require_session()
+    require_role("admin")
+    registry = current_app.extensions.get("arborpress_plugin_registry")
+    record = registry.get(plugin_id) if registry else None
+    if record is None or record.manifest is None:
+        abort(404)
+    descriptor = record.manifest.admin_ui
+    if not record.enabled or not descriptor:
+        abort(404)
+    from arborpress.plugins.capabilities import CapabilityGrantStore
+    from arborpress.runtime.paths import get_runtime_paths
+
+    grants = CapabilityGrantStore(get_runtime_paths().data / "plugin-grants.toml")
+    if "admin.declarative" not in grants.grants_for(plugin_id):
+        abort(403)
+    manager = current_app.extensions.get("arborpress_plugin_manager")
+    values_by_page: dict[str, dict[str, object]] = {}
+    if manager is not None:
+        for page in descriptor.get("pages", []):
+            page_id = page.get("id") if isinstance(page, dict) else None
+            if not isinstance(page_id, str):
+                continue
+            try:
+                response = await manager.get_admin_page(plugin_id, page_id)
+                readonly_ids = {
+                    field.get("id")
+                    for field in page.get("fields", [])
+                    if isinstance(field, dict) and field.get("type") == "readonly"
+                }
+                values_by_page[page_id] = {
+                    key: value
+                    for key, value in response.items()
+                    if key in readonly_ids
+                    and isinstance(value, (str, int, float, bool, type(None)))
+                    and (not isinstance(value, str) or len(value) <= 1000)
+                }
+            except Exception:
+                # Page metadata remains renderable; plugin data is optional and
+                # never allowed to break the Core Admin response.
+                values_by_page[page_id] = {}
+    return await render_template(
+        "admin/plugin_settings.html",
+        plugin=record,
+        pages=descriptor.get("pages", []),
+        values_by_page=values_by_page,
+        noindex=True,
+    )
+
+
+@admin_bp.post("/plugins/<plugin_id>/settings/<page_id>")
+async def plugin_settings_action(plugin_id: str, page_id: str):
+    _require_session()
+    require_role("admin")
+    await validate_csrf()
+    registry = current_app.extensions.get("arborpress_plugin_registry")
+    record = registry.get(plugin_id) if registry else None
+    if record is None or record.manifest is None or not record.enabled:
+        abort(404)
+    from arborpress.plugins.capabilities import CapabilityGrantStore
+    from arborpress.runtime.paths import get_runtime_paths
+
+    grants = CapabilityGrantStore(get_runtime_paths().data / "plugin-grants.toml")
+    if "admin.declarative" not in grants.grants_for(plugin_id):
+        abort(403)
+    descriptor = record.manifest.admin_ui or {}
+    page = next((item for item in descriptor.get("pages", []) if item.get("id") == page_id), None)
+    if page is None:
+        abort(404)
+    action_id = request.form.get("action_id", "")
+    actions = {item["id"] for item in page.get("actions", [])}
+    if action_id not in actions:
+        abort(400)
+    values: dict[str, object] = {}
+    for field in page.get("fields", []):
+        field_id = field["id"]
+        kind = field["type"]
+        if kind == "readonly":
+            continue
+        raw = request.form.get(field_id, "")
+        if field.get("required") and not raw:
+            return await render_template(
+                "admin/plugin_settings.html",
+                plugin=record,
+                pages=descriptor.get("pages", []),
+                values_by_page={},
+                error=f"{field['label']} ist erforderlich.",
+                noindex=True,
+            ), 400
+        if len(raw) > 10000:
+            abort(413)
+        if kind == "boolean":
+            values[field_id] = raw in {"1", "true", "on"}
+        elif kind == "number":
+            try:
+                values[field_id] = float(raw) if "." in raw else int(raw)
+            except ValueError:
+                return await render_template(
+                    "admin/plugin_settings.html",
+                    plugin=record,
+                    pages=descriptor.get("pages", []),
+                    values_by_page={},
+                    error=f"{field['label']} muss eine Zahl sein.",
+                    noindex=True,
+                ), 400
+            if isinstance(values[field_id], float) and not math.isfinite(values[field_id]):
+                abort(400)
+        elif kind == "select":
+            choices = field.get("choices", [])
+            if raw not in choices:
+                abort(400)
+            values[field_id] = raw
+        else:
+            values[field_id] = raw
+    manager = current_app.extensions.get("arborpress_plugin_manager")
+    try:
+        result = await manager.execute_admin_action(plugin_id, action_id=action_id, values=values)
+    except Exception as exc:
+        current_app.logger.warning(
+            "plugin admin action failed plugin=%s error=%s", plugin_id, type(exc).__name__
+        )
+        return await render_template(
+            "admin/plugin_settings.html",
+            plugin=record,
+            pages=descriptor.get("pages", []),
+            values_by_page={},
+            error="Die Pluginaktion konnte nicht ausgeführt werden.",
+            noindex=True,
+        ), 409
+    from arborpress.core.db import get_session_factory
+
+    async with get_session_factory()() as db:
+        await write_audit_event(
+            event_type="plugin_admin_action",
+            outcome="success",
+            actor_id=str(session.get("user_id", "")),
+            target_id=plugin_id,
+            detail=f"page={page_id} action={action_id}",
+            db=db,
+        )
+        await db.commit()
+    return await render_template(
+        "admin/plugin_settings.html",
+        plugin=record,
+        pages=descriptor.get("pages", []),
+        values_by_page={},
+        result_message=str(result.get("message", "Aktion ausgeführt."))[:300],
+        noindex=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Sicherheit §8 – Step-up erforderlich
 # ---------------------------------------------------------------------------
@@ -1937,6 +2144,10 @@ async def _apply_comment_decision(
                 restriction_type=form.get("restriction_type") or None,
             )
             await db.commit()
+            if outcome == "approve":
+                from arborpress.core.events import emit
+
+                await emit("comment.approved", comment_id=comment.id, post_id=comment.post_id)
         except ModerationError as exc:
             await db.rollback()
             await flash(str(exc), "error")

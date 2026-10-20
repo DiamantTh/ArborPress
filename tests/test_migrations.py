@@ -24,7 +24,7 @@ from arborpress.core.migrations import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pre_alembic_phase1_schema.sql"
-CURRENT_HEAD = "0004_authors_and_object_relations"
+CURRENT_HEAD = "0005_plugin_capabilities_storage_jobs"
 
 
 def _sqlite_engine(path: Path) -> AsyncEngine:
@@ -149,7 +149,7 @@ async def test_empty_database_upgrade_noop_and_repeated_install(tmp_path: Path) 
         assert status.is_current
         assert status.current_revisions == (CURRENT_HEAD,)
         before = await _schema_snapshot(engine)
-        assert len(before) == 31
+        assert len(before) == 33
         assert "webauthn_credentials" in before
 
         async with engine.connect() as connection:
@@ -519,8 +519,8 @@ async def test_known_older_revision_is_reported_as_behind_head(
     versions = tmp_path / "extra_versions"
     versions.mkdir()
     (versions / "0002_test_next.py").write_text(
-        "revision = '0004_test_next'\n"
-        "down_revision = '0004_authors_and_object_relations'\n"
+        "revision = '0006_test_next'\n"
+        "down_revision = '0005_plugin_capabilities_storage_jobs'\n"
         "branch_labels = None\n"
         "depends_on = None\n"
         "def upgrade(): pass\n"
@@ -539,7 +539,7 @@ async def test_known_older_revision_is_reported_as_behind_head(
         status = await schema_status(engine)
         assert status.state == "behind"
         assert status.current_revisions == (BASELINE_REVISION,)
-        assert status.head_revision == "0004_test_next"
+        assert status.head_revision == "0006_test_next"
     finally:
         await engine.dispose()
 

@@ -136,6 +136,37 @@ def test_enabled_state_is_instance_scoped(tmp_path: Path) -> None:
     assert first.enabled_ids() == set()
 
 
+def test_required_capability_must_be_locally_granted_before_start(tmp_path: Path) -> None:
+    from arborpress.runtime.paths import get_runtime_paths
+
+    plugin_dir = _write_plugin(tmp_path, "requires-kv", "plugin = object()")
+    (plugin_dir / "plugin.toml").write_text(
+        _manifest(
+            "requires-kv",
+            requested_capabilities=["storage.kv"],
+            required_capabilities=["storage.kv"],
+        ),
+        encoding="utf-8",
+    )
+    registry = PluginRegistry()
+    registry.load_directory(plugin_dir.parent)
+    manager = PluginProcessManager()
+
+    async def exercise() -> None:
+        with pytest.raises(ValueError, match="missing_required_capabilities"):
+            await manager.start(registry.get("requires-kv"))
+        assert not manager.running_ids
+
+    asyncio.run(exercise())
+    assert not (get_runtime_paths().plugin_run / "requires-kv").exists()
+
+
+def test_capability_change_uses_registered_sensitive_stepup_operation() -> None:
+    from arborpress.auth.stepup import require_stepup
+
+    assert require_stepup("plugin_capability_change") is True
+
+
 def test_discovery_uses_prefix_roots_not_foreign_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -176,6 +207,153 @@ def test_rpc_json_frame_limits_and_protocol_validation() -> None:
         decode_frame(b"\x00\x01")
     with pytest.raises(ProtocolError, match="truncated RPC frame payload"):
         decode_frame(struct.pack("!I", 8) + b"{}")
+
+
+def test_capability_grants_are_local_and_only_known_requested_values(tmp_path: Path) -> None:
+    from arborpress.plugins.capabilities import CapabilityError, CapabilityGrantStore
+
+    first = CapabilityGrantStore(tmp_path / "a" / "instance" / "data" / "plugin-grants.toml")
+    second = CapabilityGrantStore(tmp_path / "b" / "instance" / "data" / "plugin-grants.toml")
+    first.set_grant("alpha", "storage.kv", True)
+    assert first.grants_for("alpha") == {"storage.kv"}
+    assert second.grants_for("alpha") == set()
+    with pytest.raises(CapabilityError):
+        first.set_grant("alpha", "database", True)
+    first.set_grant("alpha", "storage.kv", False)
+    assert first.grants_for("alpha") == set()
+
+
+def test_admin_descriptor_rejects_raw_html_and_script_fields(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(
+            {
+                "manifest_version": 1,
+                "id": "admin-plugin",
+                "name": "Admin Plugin",
+                "version": "1.0.0",
+                "author": "test",
+                "license": "MIT",
+                "requires_arborpress": ">=0.1.0",
+                "entrypoint": "worker:plugin",
+                "admin_ui": {
+                    "pages": [
+                        {
+                            "id": "main",
+                            "title": "Settings",
+                            "fields": [{"id": "raw", "label": "Raw", "type": "html"}],
+                            "actions": [],
+                        }
+                    ]
+                },
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_plugin_rpc_dispatch_requires_grant_and_scopes_storage(
+    test_engine, tmp_path: Path
+) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from arborpress.plugins.capabilities import CapabilityGrantStore
+    from arborpress.plugins.rpc import PluginRPCDispatcher
+    from arborpress.plugins.services import PluginCoreServices
+
+    sessions = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    grants = CapabilityGrantStore(tmp_path / "plugin-grants.toml")
+    dispatcher = PluginRPCDispatcher(PluginCoreServices(sessions), grants)
+    with pytest.raises(Exception, match="capability is not granted"):
+        await dispatcher.dispatch(
+            "alpha",
+            "core.storage.set",
+            {"key": "k", "value": "a"},
+            requested_capabilities=("storage.kv",),
+        )
+    grants.set_grant("alpha", "storage.kv", True)
+    grants.set_grant("beta", "storage.kv", True)
+    assert await dispatcher.dispatch(
+        "alpha",
+        "core.storage.set",
+        {"key": "shared", "value": {"n": 1}, "plugin_id": "beta"},
+        requested_capabilities=("storage.kv",),
+    ) == {"revision": 1}
+    assert (
+        await dispatcher.dispatch(
+            "alpha", "core.storage.get", {"key": "shared"}, requested_capabilities=("storage.kv",)
+        )
+    ) == {
+        "found": True,
+        "value": {"n": 1},
+        "revision": 1,
+    }
+    assert (
+        await dispatcher.dispatch(
+            "beta", "core.storage.get", {"key": "shared"}, requested_capabilities=("storage.kv",)
+        )
+    ) == {
+        "found": False,
+        "value": None,
+        "revision": None,
+    }
+    with pytest.raises(Exception, match="unknown Core RPC"):
+        await dispatcher.dispatch(
+            "alpha", "core.db.query", {"sql": "select 1"}, requested_capabilities=("storage.kv",)
+        )
+    with pytest.raises(Exception, match="not requested"):
+        await dispatcher.dispatch("alpha", "core.storage.get", {"key": "shared"})
+
+
+@pytest.mark.asyncio
+async def test_plugin_storage_optimistic_revision_and_quota_error(
+    test_engine, tmp_path: Path
+) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from arborpress.plugins.services import PluginCoreServices, PluginServiceError
+
+    services = PluginCoreServices(async_sessionmaker(bind=test_engine, expire_on_commit=False))
+    assert await services.storage_set("alpha", {"key": "counter", "value": 1}) == {"revision": 1}
+    assert await services.storage_set(
+        "alpha", {"key": "counter", "value": 2, "expected_revision": 1}
+    ) == {"revision": 2}
+    with pytest.raises(PluginServiceError, match="revision changed"):
+        await services.storage_set("alpha", {"key": "counter", "value": 3, "expected_revision": 1})
+    with pytest.raises(PluginServiceError, match="per-value"):
+        await services.storage_set("alpha", {"key": "large", "value": "x" * 70000})
+
+
+@pytest.mark.asyncio
+async def test_plugin_jobs_are_declared_leased_and_retry_bounded(test_engine) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from arborpress.plugins.services import PluginCoreServices, PluginServiceError
+
+    services = PluginCoreServices(async_sessionmaker(bind=test_engine, expire_on_commit=False))
+    scheduled = await services.schedule_job(
+        "alpha", {"task": "refresh", "payload": {"page": 1}}, ("refresh",)
+    )
+    duplicate = await services.schedule_job(
+        "alpha",
+        {
+            "task": "refresh",
+            "payload": {"page": 1},
+            "delay_seconds": 3600,
+            "idempotency_key": "same",
+        },
+        ("refresh",),
+    )
+    assert duplicate["duplicate"] is False
+    with pytest.raises(PluginServiceError, match="not declared"):
+        await services.schedule_job("alpha", {"task": "undeclared"}, ("refresh",))
+    job = await services.claim_due_job(
+        datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=1)
+    )
+    assert job is not None and job.id == scheduled["job_id"]
+    assert job.status == "running" and job.attempts == 1
+    await services.finish_job(job.id, error="timeout")
+    assert await services.claim_due_job() is None
 
 
 def test_two_plugins_run_in_distinct_processes_without_parent_secrets(
@@ -248,6 +426,97 @@ def test_two_plugins_run_in_distinct_processes_without_parent_secrets(
     assert (paths.plugin_data / "plugin-a").is_dir()
     assert (paths.plugin_cache / "plugin-a").is_dir()
     assert (paths.plugin_run / "plugin-a").is_dir()
+
+
+@pytest.mark.asyncio
+async def test_private_rpc_calls_core_storage_from_child_process(
+    tmp_path: Path, test_engine
+) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from arborpress.plugins.capabilities import CapabilityGrantStore
+    from arborpress.plugins.rpc import PluginRPCDispatcher
+    from arborpress.plugins.services import PluginCoreServices
+    from arborpress.runtime.paths import get_runtime_paths
+
+    plugin_dir = _write_plugin(
+        tmp_path,
+        "rpc-worker",
+        """
+        class Worker:
+            async def initialize(self, context):
+                await context.storage.set('boot', {'ready': True})
+            async def ping(self): return {'pong': True}
+        plugin = Worker
+        """,
+    )
+    # Replace the fixture manifest using its real, immutable manifest contract.
+    (plugin_dir / "plugin.toml").write_text(
+        _manifest("rpc-worker", requested_capabilities=["storage.kv"]), encoding="utf-8"
+    )
+    registry = PluginRegistry()
+    registry.load_directory(plugin_dir.parent)
+    record = registry.get("rpc-worker")
+    grants = CapabilityGrantStore(get_runtime_paths().data / "plugin-grants.toml")
+    grants.set_grant("rpc-worker", "storage.kv", True)
+    manager = PluginProcessManager(
+        dispatcher=PluginRPCDispatcher(
+            PluginCoreServices(async_sessionmaker(bind=test_engine, expire_on_commit=False)), grants
+        )
+    )
+
+    async def exercise() -> None:
+        await manager.start(record)
+        assert await manager.ping("rpc-worker") == {"pong": True}
+        await manager.shutdown()
+
+    await exercise()
+
+
+def test_subscribed_plugin_receives_only_core_event_dto(tmp_path: Path) -> None:
+    from arborpress.plugins.capabilities import CapabilityGrantStore
+    from arborpress.runtime.paths import get_runtime_paths
+
+    plugin_dir = _write_plugin(
+        tmp_path,
+        "event-worker",
+        """
+        import json
+        from pathlib import Path
+        class Worker:
+            async def handle_event(self, event):
+                Path(__file__).with_name('event.json').write_text(json.dumps(event))
+        plugin = Worker
+        """,
+    )
+    (plugin_dir / "plugin.toml").write_text(
+        _manifest(
+            "event-worker",
+            requested_capabilities=["events.subscribe"],
+            events=["post.published"],
+        ),
+        encoding="utf-8",
+    )
+    registry = PluginRegistry()
+    registry.load_directory(plugin_dir.parent)
+    record = registry.get("event-worker")
+    CapabilityGrantStore(get_runtime_paths().data / "plugin-grants.toml").set_grant(
+        "event-worker", "events.subscribe", True
+    )
+    manager = PluginProcessManager()
+
+    async def exercise() -> None:
+        await manager.start(record)
+        assert manager.publish_event("post.published", {"id": "p1"}) == 1
+        for _ in range(50):
+            if (plugin_dir / "event.json").exists():
+                break
+            await asyncio.sleep(0.02)
+        await manager.shutdown()
+
+    asyncio.run(exercise())
+    payload = __import__("json").loads((plugin_dir / "event.json").read_text(encoding="utf-8"))
+    assert payload == {"type": "post.published", "id": "p1"}
 
 
 def test_plugin_host_bootstraps_from_empty_isolated_venv(tmp_path: Path) -> None:

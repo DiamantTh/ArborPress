@@ -14,6 +14,7 @@
       <th>Quelle</th>
       <th>Kompatibilität / Runtime</th>
       <th>Angeforderte Capabilities</th>
+      <th>Lokale Grants</th>
       <th>Status</th>
       <th>Aktion</th>
     </tr>
@@ -28,11 +29,30 @@
       <td>{{ plugin.error or plugin.status.value }}{% if plugin.enabled %} · {{ plugin.runtime_status.value }}{% endif %}</td>
       <td>{{ plugin.capabilities | join(', ') if plugin.capabilities else '–' }}</td>
       <td>
+        {% for capability in plugin.capabilities %}
+          <div class="plugin-capability">
+            <code>{{ capability }}</code>
+            {% if capability not in plugin.grantable_capabilities %}<small>Nicht durch diese Runtime-Version unterstützt</small>
+            {% elif capability in plugin.granted_capabilities %}
+              <form method="post" action="{{ url_for('admin.plugin_capability', plugin_id=plugin.id, capability=capability, action='revoke') }}" data-stepup-action="plugin_capability_change" data-stepup-target="{{ plugin.id }}:{{ capability }}">
+                {{ csrf_input() }}<button class="btn btn-sm" type="submit">Entziehen</button>
+              </form>
+            {% else %}
+              <form method="post" action="{{ url_for('admin.plugin_capability', plugin_id=plugin.id, capability=capability, action='grant') }}" data-stepup-action="plugin_capability_change" data-stepup-target="{{ plugin.id }}:{{ capability }}">
+                {{ csrf_input() }}<button class="btn btn-sm" type="submit">Gewähren</button>
+              </form>
+            {% endif %}
+          </div>
+        {% else %}–{% endfor %}
+        {% if plugin.missing_required_capabilities %}<small>Erforderliche Freigaben fehlen: {{ plugin.missing_required_capabilities | join(', ') }}</small>{% endif %}
+      </td>
+      <td>
         <span class="badge badge-{{ 'enabled' if plugin.runtime_status.value == 'running' else 'disabled' }}">
           {{ plugin.runtime_status.value if plugin.enabled else 'disabled' }}
         </span>
       </td>
       <td>
+        {% if plugin.manifest and plugin.manifest.admin_ui and plugin.enabled and 'admin.declarative' in plugin.granted_capabilities %}<a class="btn btn-sm" href="{{ url_for('admin.plugin_settings', plugin_id=plugin.id) }}">Einstellungen</a>{% endif %}
         {% if plugin.manifest and plugin.compatible and plugin.enabled %}
         <button class="btn btn-sm btn-danger plugin-toggle"
                 data-url="{{ url_for('admin.plugin_disable', plugin_id=plugin.id) }}"
@@ -51,7 +71,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="8" class="empty-state">Keine Plugins registriert.</td></tr>
+    <tr><td colspan="9" class="empty-state">Keine Plugins registriert.</td></tr>
     {% endfor %}
   </tbody>
 </table>

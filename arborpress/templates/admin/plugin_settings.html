@@ -1,0 +1,40 @@
+{% extends "admin/_base.html" %}
+{% block title %}{{ plugin.name }} – Plugin-Einstellungen{% endblock %}
+{% block admin_content %}
+<section class="admin-page">
+  <h2>{{ plugin.name | e }} – Einstellungen</h2>
+  {% if error %}<p class="alert alert-error" role="alert">{{ error | e }}</p>{% endif %}
+  {% if result_message %}<p class="alert alert-success" role="status">{{ result_message | e }}</p>{% endif %}
+  {% for page in pages %}
+  <section aria-labelledby="plugin-page-{{ page.id }}">
+    <h3 id="plugin-page-{{ page.id }}">{{ page.title | e }}</h3>
+    {% if page.description %}<p>{{ page.description | e }}</p>{% endif %}
+    <form method="post" action="{{ url_for('admin.plugin_settings_action', plugin_id=plugin.id, page_id=page.id) }}" class="admin-form">
+      {{ csrf_input() }}
+      {% for field in page.fields %}
+        <div class="form-group">
+          <label for="{{ page.id }}-{{ field.id }}">{{ field.label | e }}</label>
+          {% if field.type == 'readonly' %}
+            <output id="{{ page.id }}-{{ field.id }}">{{ values_by_page.get(page.id, {}).get(field.id, '—') | e }}</output>
+          {% elif field.type == 'textarea' %}
+            <textarea id="{{ page.id }}-{{ field.id }}" name="{{ field.id }}" maxlength="10000" {% if field.required %}required{% endif %}></textarea>
+          {% elif field.type == 'boolean' %}
+            <input id="{{ page.id }}-{{ field.id }}" name="{{ field.id }}" type="checkbox" value="true">
+          {% elif field.type == 'select' %}
+            <select id="{{ page.id }}-{{ field.id }}" name="{{ field.id }}" {% if field.required %}required{% endif %}>
+              {% for choice in field.choices %}<option value="{{ choice | e }}">{{ choice | e }}</option>{% endfor %}
+            </select>
+          {% else %}
+            <input id="{{ page.id }}-{{ field.id }}" name="{{ field.id }}" type="{{ 'number' if field.type == 'number' else 'text' }}" maxlength="10000" {% if field.required %}required{% endif %}>
+          {% endif %}
+        </div>
+      {% endfor %}
+      {% for action in page.actions %}
+        <button class="btn btn-primary" type="submit" name="action_id" value="{{ action.id | e }}">{{ action.label | e }}</button>
+      {% endfor %}
+      {% if not page.actions %}<p>Diese Pluginseite enthält keine Aktionen.</p>{% endif %}
+    </form>
+  </section>
+  {% endfor %}
+</section>
+{% endblock %}

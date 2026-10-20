@@ -1,4 +1,4 @@
-# Third-party plugin runtime (Phase 8A)
+# Third-party plugin runtime (Phases 8A–8B)
 
 ## Boundary and current scope
 
@@ -9,12 +9,11 @@ child process. Threads, Quart blueprints, in-process hooks and plugin-provided
 CLI commands are not third-party extension APIs.
 
 Phase 8A establishes discovery, lifecycle RPC, an SDK context, and a
-per-plugin-interpreter foundation. Capability grants, Storage/Data APIs,
-events, core-scheduled jobs, declarative admin UI, package installation and
-crash-loop policy are later work. In particular, `PluginContext.rpc.call`
-currently reports that core RPC methods are unavailable; no ArborPress data
-API is exposed yet. A plugin may request known capabilities in its manifest,
-but requests are not grants and the runtime currently grants none.
+per-plugin-interpreter foundation. Phase 8B adds local capability grants,
+Core-mediated KV storage and safe read-only DTOs, best-effort events,
+Core-scheduled jobs, and declarative server-rendered plugin settings.
+Installation/update management, crash-loop policy, and stronger OS isolation
+follow in Phase 8C.
 
 Process separation is always active; it is not a complete sandbox. Without an
 OS sandbox, Python code running under the ArborPress OS account can still
@@ -35,6 +34,7 @@ instance/var/run/plugins/<plugin-id>/         runtime coordination files
 instance/var/cache/plugins/<plugin-id>/        disposable plugin cache
 instance/var/plugins/<plugin-id>/venv/         optional isolated interpreter
 instance/data/plugin-state.toml                locally enabled plugin IDs
+instance/data/plugin-grants.toml                locally granted capabilities
 ```
 
 All paths derive from `ArborPressPaths`; discovery does not use the process CWD.
@@ -59,19 +59,20 @@ description = "A lifecycle-only example."
 requires_arborpress = ">=0.1.0,<1.0.0"
 python = ">=3.14,<3.15"
 entrypoint = "sample_plugin.worker:plugin"
-requested_capabilities = ["importer"]
+requested_capabilities = ["storage.kv", "data.content.read"]
 required_capabilities = []
-events = []
+subscriptions = []
 tasks = []
 ```
 
 `manifest_version`, `id`, `name`, `version`, `author`, `license`,
 `requires_arborpress`, and `entrypoint` are required. `description`, `python`,
-requested/required capabilities, events, tasks, and a reserved declarative
-`admin_ui` descriptor are optional. IDs use lowercase ASCII letters/digits
+requested/required capabilities, event subscriptions, task names, and a
+declarative `admin_ui` descriptor are optional. IDs use lowercase ASCII letters/digits
 with single hyphen separators. Versions use PEP 440 parsing and compatibility
 fields use version specifiers. Required capabilities must also be requested;
-unknown names are rejected. An invalid or incompatible package remains
+unknown names are rejected. Subscriptions require `events.subscribe`, tasks
+require `jobs.schedule`, and `admin_ui` requires `admin.declarative`. An invalid or incompatible package remains
 visible in diagnostics but cannot start. The supported file is `plugin.toml`;
 old `manifest.toml` directories are shown as legacy-invalid and never imported.
 
@@ -91,12 +92,19 @@ limited to 1 MiB. Pickle and arbitrary Python serialization are not used.
 Requests have `protocol`, `id`, `method`, and object-valued `params`; responses
 have the matching protocol/id and either `result` or a structured `error`.
 The initial `runtime.initialize` request carries plugin identity, ArborPress
-and runtime versions, and an empty granted-capability list. The child host
+and runtime versions, and the locally granted capabilities. Required
+capabilities must be granted before start. Grants live outside the manifest in
+instance-local `plugin-grants.toml`; the plugin process cannot change them.
+Grant/revoke uses Admin auth, CSRF and existing step-up protection. Every Core
+RPC checks the live grant file before validating params, so revocation applies
+to subsequent calls. The child host
 returns `ready=true` and matching ID/version after the plugin's initialize
 callback succeeds; only then does the Core mark it `running`.
-`runtime.ping` and `runtime.shutdown` are the only lifecycle methods currently
-dispatched. Unknown methods fail closed. RPC error responses do not include
-Python tracebacks.
+`runtime.ping` and `runtime.shutdown` remain lifecycle methods. Plugin-to-Core
+methods use a static capability-enforced dispatcher, not arbitrary attribute
+lookup: `core.storage.{get,set,delete,list}`, `core.data.content.{get,list}`,
+`core.data.comments.list`, and `core.jobs.schedule`. No SQL, ORM, credentials,
+or general DB API exists. RPC errors do not include Python tracebacks.
 
 Default startup timeout is 10 seconds, request timeout 30 seconds, and graceful
 shutdown timeout 3 seconds, followed by process-group terminate/kill fallback.
@@ -110,6 +118,43 @@ directory, closed unrelated file descriptors, a new process session, and a
 minimal environment. `PATH`, locale, plugin ID/protocol and the installed
 ArborPress package/plugin roots are the only passed environment values.
 This is credential hygiene, not an OS sandbox.
+
+## Storage, Data, Events, Jobs and declarative Admin
+
+`PluginContext.storage` wraps Core-managed JSON KV storage. Rows are scoped by
+the plugin ID attached to the private process channel, never a caller-provided
+owner ID. Keys and JSON values are bounded, writes support optimistic
+revisions, and per-plugin entry/total quotas are enforced. Persistent rows are
+in `plugin_storage_entries`.
+
+Read APIs return DTOs only: published public posts and approved comments on
+published public posts. Drafts/private content, author email, account data,
+moderation notes, confirmation tokens and other internal fields are excluded.
+
+`post.published` and `comment.approved` notifications are best-effort,
+at-most-once for a running plugin and use a bounded per-process queue. They
+may be dropped on overflow or while a plugin is stopped; this is not a durable event bus. Durable/retryable
+work belongs in the Core-owned `plugin_jobs` queue. Jobs use declared task
+names, JSON payload limits, optional idempotency keys, leases and bounded
+backoff retries. Execution is at-least-once-like, not exactly-once. A stopped
+plugin's jobs are deferred without consuming attempts.
+
+Declarative Admin accepts only bounded pages, text/textarea/number/boolean/
+select/readonly fields and declared action IDs. ArborPress renders with its own
+Jinja templates and validates POST values server-side. Raw HTML, JavaScript,
+CSS, secret fields and plugin routes are not supported. Action results are
+structured JSON and rendered escaped; audit records contain action IDs, not
+submitted values.
+
+`storage.files` and `network.http` remain recognized request names but are not
+grantable in 8B: this release exposes no file RPC and no SSRF-safe Core HTTP
+proxy. Direct same-user filesystem/network access by Python code is not blocked
+by process separation alone. There is no database, Python, shell, or arbitrary
+host-filesystem capability.
+
+Alembic revision `0005_plugin_capabilities_storage_jobs` creates the KV and job
+tables. Grant state stays instance-local TOML (`plugin-grants.toml`) and is not
+part of the portable plugin package.
 
 ## Interpreter isolation and controls
 
