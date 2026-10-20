@@ -39,6 +39,7 @@ EVENTS = frozenset(
         "post.published",
         "post.updated",
         "post.deleted",
+        "comment.approved",
         "page.published",
         "page.updated",
         "page.deleted",
@@ -90,6 +91,7 @@ def subscribe(
 
         subscribe("post.published", my_handler)
     """
+
     def _decorator(fn: Callable[..., Awaitable[None]]) -> Callable:
         _handlers[event].append(fn)
         log.debug("Event handler registered: %s → %s", event, fn.__qualname__)

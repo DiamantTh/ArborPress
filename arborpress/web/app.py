@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC
 from pathlib import Path
@@ -221,6 +222,7 @@ def create_app() -> Quart:
             "request": {"endpoint": quart_request.endpoint},
         }
         if trusted:
+
             def theme_asset_url(filename: str) -> str:
                 """Resolve a same-origin URL for a manifest-declared local asset."""
                 try:
@@ -233,9 +235,7 @@ def create_app() -> Quart:
                 relative = asset_path.relative_to(owner.static_dir.resolve()).as_posix()
                 from quart import url_for as quart_url_for
 
-                return quart_url_for(
-                    "theme_static", theme_id=selected.id, filename=relative
-                )
+                return quart_url_for("theme_static", theme_id=selected.id, filename=relative)
 
             setattr(  # noqa: B010 - the sandbox reads this explicit callable marker.
                 theme_asset_url, "__arborpress_safe_template_callable__", True
@@ -417,11 +417,53 @@ def create_app() -> Quart:
 
     # Third-party packages are metadata-only during application construction.
     # They are started later, each in its own subprocess, during app startup.
+    from arborpress.core.db import get_session_factory
+    from arborpress.plugins.capabilities import CapabilityGrantStore
     from arborpress.plugins.process import PluginProcessManager
+    from arborpress.plugins.rpc import PluginRPCDispatcher
+    from arborpress.plugins.services import PluginCoreServices
 
-    plugin_manager = PluginProcessManager()
+    plugin_manager = PluginProcessManager(
+        dispatcher=PluginRPCDispatcher(
+            PluginCoreServices(get_session_factory()),
+            CapabilityGrantStore(paths.data / "plugin-grants.toml"),
+        )
+    )
     app.extensions["arborpress_plugin_registry"] = plugin_registry
     app.extensions["arborpress_plugin_manager"] = plugin_manager
+    from arborpress.core.events import subscribe, unsubscribe
+
+    async def _plugin_post_published(event: str, **kwargs: object) -> None:
+        post = kwargs.get("post")
+        if post is None:
+            return
+        # Never forward ORM instances or author/private fields over the boundary.
+        plugin_manager.publish_event(
+            event,
+            {
+                "id": str(getattr(post, "id", "")),
+                "slug": str(getattr(post, "slug", "")),
+                "title": str(getattr(post, "title", ""))[:512],
+                "published_at": (
+                    post.published_at.isoformat()
+                    if getattr(post, "published_at", None) is not None
+                    else None
+                ),
+            },
+        )
+
+    async def _plugin_comment_approved(event: str, **kwargs: object) -> None:
+        plugin_manager.publish_event(
+            event,
+            {
+                "comment_id": str(kwargs.get("comment_id", "")),
+                "post_id": str(kwargs.get("post_id", "")),
+            },
+        )
+
+    subscribe("post.published", _plugin_post_published)
+    subscribe("comment.approved", _plugin_comment_approved)
+    plugin_job_worker_task = None
 
     # §9 Theme static files are served only when declared in a valid manifest.
     @app.route("/static/themes/<theme_id>/<path:filename>")
@@ -452,6 +494,7 @@ def create_app() -> Quart:
     # §12 DB-Capability-Detection beim Start
     @app.before_serving
     async def _on_startup() -> None:
+        nonlocal plugin_job_worker_task
         import asyncio
         import logging as _log
         import secrets as _sec
@@ -517,6 +560,12 @@ def create_app() -> Quart:
             # Scheduled-Publishing-Worker starten
             asyncio.ensure_future(run_scheduler())
 
+            from arborpress.plugins.jobs import run_plugin_job_worker
+
+            plugin_job_worker_task = asyncio.create_task(
+                run_plugin_job_worker(plugin_manager, get_session_factory())
+            )
+
             # Mail-Queue-Worker starten
             from arborpress.mail.queue import run_queue_worker
 
@@ -536,6 +585,11 @@ def create_app() -> Quart:
 
     @app.after_serving
     async def _on_shutdown() -> None:
+        if plugin_job_worker_task is not None:
+            plugin_job_worker_task.cancel()
+            await asyncio.gather(plugin_job_worker_task, return_exceptions=True)
         await plugin_manager.shutdown()
+        unsubscribe("post.published", _plugin_post_published)
+        unsubscribe("comment.approved", _plugin_comment_approved)
 
     return app
