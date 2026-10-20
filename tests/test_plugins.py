@@ -250,6 +250,38 @@ def test_two_plugins_run_in_distinct_processes_without_parent_secrets(
     assert (paths.plugin_run / "plugin-a").is_dir()
 
 
+def test_plugin_host_bootstraps_from_empty_isolated_venv(tmp_path: Path) -> None:
+    import venv
+
+    from arborpress.runtime.paths import get_runtime_paths
+
+    plugin_dir = _write_plugin(
+        tmp_path,
+        "isolated-venv",
+        """
+        class Worker:
+            async def initialize(self, context): pass
+            async def ping(self): return {'venv': True}
+        plugin = Worker
+        """,
+    )
+    registry = PluginRegistry()
+    registry.load_directory(plugin_dir.parent)
+    record = registry.get("isolated-venv")
+    runtime = get_runtime_paths().plugin_runtime / "isolated-venv"
+    runtime.mkdir(parents=True, exist_ok=True)
+    venv.EnvBuilder(with_pip=False).create(runtime / "venv")
+    manager = PluginProcessManager()
+
+    async def exercise() -> None:
+        await manager.start(record)
+        assert record.interpreter.endswith("/isolated-venv/venv/bin/python")
+        assert await manager.ping("isolated-venv") == {"venv": True}
+        await manager.shutdown()
+
+    asyncio.run(exercise())
+
+
 def test_hanging_plugin_times_out_and_is_terminated(tmp_path: Path) -> None:
     _write_plugin(
         tmp_path,
