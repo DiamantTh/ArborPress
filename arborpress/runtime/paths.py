@@ -32,6 +32,10 @@ class ArborPressPaths:
     media: Path
     themes: Path
     plugins: Path
+    plugin_data: Path
+    plugin_runtime: Path
+    plugin_cache: Path
+    plugin_run: Path
     backups: Path
     var: Path
     cache: Path
@@ -70,6 +74,10 @@ class ArborPressPaths:
             media=instance / "media",
             themes=instance / "themes",
             plugins=instance / "plugins",
+            plugin_data=instance / "data" / "plugins",
+            plugin_runtime=var / "plugins",
+            plugin_cache=var / "cache" / "plugins",
+            plugin_run=var / "run" / "plugins",
             backups=instance / "backups",
             var=var,
             cache=var / "cache",
@@ -88,11 +96,7 @@ def initialize_runtime(
     """Initialize the process with one prefix, refusing accidental changes."""
     global _runtime_paths
     paths = ArborPressPaths.from_prefix(prefix)
-    if (
-        _runtime_paths is not None
-        and _runtime_paths.prefix != paths.prefix
-        and not override
-    ):
+    if _runtime_paths is not None and _runtime_paths.prefix != paths.prefix and not override:
         raise RuntimeError(
             "ArborPress runtime is already initialized for prefix "
             f"{_runtime_paths.prefix}; refusing a second instance in one process"
@@ -115,9 +119,7 @@ def resolve_prefix(
         return ArborPressPaths.from_prefix(configured).prefix
     if _runtime_paths is not None:
         return _runtime_paths.prefix
-    raise RuntimeError(
-        "ArborPress prefix is not set; pass --prefix or set ARBORPRESS_PREFIX"
-    )
+    raise RuntimeError("ArborPress prefix is not set; pass --prefix or set ARBORPRESS_PREFIX")
 
 
 def get_runtime_paths() -> ArborPressPaths:
@@ -157,6 +159,10 @@ def ensure_instance_layout(paths: ArborPressPaths) -> None:
         paths.media,
         paths.themes,
         paths.plugins,
+        paths.plugin_data,
+        paths.plugin_runtime,
+        paths.plugin_cache,
+        paths.plugin_run,
         paths.backups,
         paths.var,
         paths.cache,
@@ -181,6 +187,4 @@ def _mkdir_secure(directory: Path) -> None:
         directory.mkdir(mode=0o700)
     except FileExistsError:
         if not directory.is_dir():
-            raise NotADirectoryError(
-                f"Instance path is not a directory: {directory}"
-            ) from None
+            raise NotADirectoryError(f"Instance path is not a directory: {directory}") from None

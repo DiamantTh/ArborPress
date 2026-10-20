@@ -270,8 +270,9 @@ class Settings(BaseSettings):
 
         Additional relative paths are anchored to the active config file (which
         may be an explicit override), never to the working directory. The
-        canonical instance directory is loaded last and therefore takes
-        precedence when plugin IDs collide.
+        canonical instance directory is included; duplicate IDs across any
+        configured roots are diagnosed as conflicts by the registry rather
+        than shadowed by load order.
         """
         paths = get_runtime_paths()
         config_file = self._config_file or paths.config_file

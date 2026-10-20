@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import venv
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, fields
 from datetime import UTC, datetime
@@ -54,7 +55,8 @@ search_app = typer.Typer(help="Search index (§12 FTS)", no_args_is_help=True)
 cache_app = typer.Typer(help="Cache management", no_args_is_help=True)
 federation_app = typer.Typer(help="Federation / ActivityPub (§5, §14)", no_args_is_help=True)
 mail_app = typer.Typer(help="Mail queue (§13)", no_args_is_help=True)
-plugin_app = typer.Typer(help="Plugin management (§15)", no_args_is_help=True)
+plugin_app = typer.Typer(help="Third-party plugin diagnostics and enablement", no_args_is_help=True)
+plugin_runtime_app = typer.Typer(help="Plugin-local isolated interpreters", no_args_is_help=True)
 webauthn_app = typer.Typer(help="WebAuthn / Passkey recovery (§17)", no_args_is_help=True)
 themes_app = typer.Typer(help="Theme diagnostics (read-only)", no_args_is_help=True)
 backup_app = typer.Typer(help="Local backup set operations", no_args_is_help=True)
@@ -69,7 +71,11 @@ app.add_typer(search_app, name="search")
 app.add_typer(cache_app, name="cache")
 app.add_typer(federation_app, name="federation")
 app.add_typer(mail_app, name="mail")
+app.add_typer(plugin_app, name="plugins")
+# Keep the pre-8A singular CLI namespace as a compatibility alias; both names
+# execute only Core-owned discovery/control code.
 app.add_typer(plugin_app, name="plugin")
+plugin_app.add_typer(plugin_runtime_app, name="runtime")
 app.add_typer(webauthn_app, name="webauthn")
 app.add_typer(themes_app, name="themes")
 app.add_typer(backup_app, name="backup")
@@ -2455,50 +2461,143 @@ def mail_status() -> None:
 
 
 # ---------------------------------------------------------------------------
-# §15 plugin: list / validate
+# Third-party plugin discovery (metadata only; never imports plugin code)
 # ---------------------------------------------------------------------------
 
 
 @plugin_app.command("list")
-def plugin_list() -> None:
-    """Shows all loaded plugins (§15)."""
+def plugin_list(
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON diagnostics"),
+) -> None:
+    """List discovered built-in and third-party plugin metadata."""
     _bootstrap_plugins()
     from arborpress.plugins.registry import get_registry
 
     plugins = get_registry().all()
+    if json_output:
+        typer.echo(json.dumps([_plugin_diagnostic(plugin) for plugin in plugins], indent=2))
+        return
     if not plugins:
-        typer.echo("No plugins loaded.")
+        typer.echo("No third-party plugins discovered.")
         return
     for p in plugins:
-        caps = ", ".join(c.value for c in p.capabilities)
-        typer.echo(f"  {p.id:30s} v{p.manifest.plugin.version:10s} [{caps}]")
+        manifest_version = p.manifest.version if p.manifest else "?"
+        caps = ", ".join(p.capabilities) or "none"
+        typer.echo(
+            f"{p.id:24s} v{manifest_version:12s} {p.status.value:14s} "
+            f"enabled={str(p.enabled).lower()} source={p.source} requested=[{caps}]"
+        )
+
+
+@plugin_app.command("inspect")
+def plugin_inspect(plugin_id: str, json_output: bool = typer.Option(False, "--json")) -> None:
+    """Show one discovered plugin without executing it."""
+    _bootstrap_plugins()
+    from arborpress.plugins.registry import get_registry
+
+    plugin = get_registry().get(plugin_id)
+    if plugin is None:
+        typer.echo(f"Plugin {plugin_id!r} was not found", err=True)
+        raise typer.Exit(1)
+    info = _plugin_diagnostic(plugin)
+    if json_output:
+        typer.echo(json.dumps(info, indent=2))
+    else:
+        for key, value in info.items():
+            typer.echo(f"{key}: {value}")
+
+
+@plugin_app.command("check")
+def plugin_check(plugin_id: str) -> None:
+    """Validate a discovered plugin manifest and compatibility."""
+    _bootstrap_plugins()
+    from arborpress.plugins.registry import get_registry
+
+    plugin = get_registry().get(plugin_id)
+    if plugin is None:
+        typer.echo(f"Plugin {plugin_id!r} was not found", err=True)
+        raise typer.Exit(1)
+    if plugin.error:
+        typer.echo(plugin.error)
+    elif plugin.manifest is not None:
+        typer.echo(f"OK: {plugin.id} v{plugin.manifest.version}")
+    if not plugin.compatible:
+        raise typer.Exit(1)
+
+
+@plugin_app.command("enable")
+def plugin_enable(plugin_id: str) -> None:
+    """Enable a compatible plugin for the next ArborPress server startup."""
+    _bootstrap_plugins()
+    from arborpress.plugins.registry import get_registry
+    from arborpress.plugins.state import PluginStateStore
+
+    plugin = get_registry().get(plugin_id)
+    if plugin is None or plugin.manifest is None or not plugin.compatible:
+        typer.echo("Plugin is missing, invalid, or incompatible", err=True)
+        raise typer.Exit(1)
+    store = PluginStateStore(get_runtime_paths().data / "plugin-state.toml")
+    store.set_enabled(plugin_id, True)
+    _audit_plugin_admin("plugin_enabled", plugin_id)
+    typer.echo(f"Enabled {plugin_id}; CLI activation applies on next server start.")
+
+
+@plugin_app.command("disable")
+def plugin_disable(plugin_id: str) -> None:
+    """Disable a plugin for the next server startup."""
+    _bootstrap_plugins()
+    from arborpress.plugins.registry import get_registry
+    from arborpress.plugins.state import PluginStateStore
+
+    if get_registry().get(plugin_id) is None:
+        typer.echo(f"Plugin {plugin_id!r} was not found", err=True)
+        raise typer.Exit(1)
+    PluginStateStore(get_runtime_paths().data / "plugin-state.toml").set_enabled(plugin_id, False)
+    _audit_plugin_admin("plugin_disabled", plugin_id)
+    typer.echo(f"Disabled {plugin_id}; CLI shutdown applies on next server start.")
 
 
 @plugin_app.command("validate")
-def plugin_validate(
-    path: Path = typer.Argument(..., help="Path to plugin directory"),  # noqa: B008
-) -> None:
-    """Validates the manifest of a plugin (§15)."""
+def plugin_validate(path: Path = typer.Argument(..., help="Path to plugin directory")) -> None:  # noqa: B008
+    """Validate a plugin.toml without importing plugin code."""
     from arborpress.plugins.manifest import PluginManifest
 
-    manifest_path = path / "manifest.toml"
-    if not manifest_path.exists():
-        typer.echo(f"No manifest.toml in {path}", err=True)
-        raise typer.Exit(1)
-
     try:
-        m = PluginManifest.from_file(manifest_path)
-        missing = m.validate_entry_points()
-        if missing:
-            typer.echo(f"Missing entry points: {missing}", err=True)
-            raise typer.Exit(1)
+        manifest = PluginManifest.from_file(path / "plugin.toml")
+        if manifest.id != path.name:
+            raise ValueError("manifest id must match directory basename")
         typer.echo(
-            f"OK – Plugin {m.plugin.id!r} v{m.plugin.version}"
-            f" | Capabilities: {[c.value for c in m.plugin.capabilities]}"
+            f"OK: {manifest.id} v{manifest.version}; requested={manifest.requested_capabilities}"
         )
     except Exception as exc:
-        typer.echo(f"Error: {exc}", err=True)
+        typer.echo(f"Invalid plugin manifest: {type(exc).__name__}", err=True)
         raise typer.Exit(1) from exc
+
+
+@plugin_runtime_app.command("create")
+def plugin_runtime_create(plugin_id: str) -> None:
+    """Create an empty isolated interpreter without installing dependencies."""
+    _bootstrap_plugins()
+    from arborpress.plugins.registry import get_registry
+
+    plugin = get_registry().get(plugin_id)
+    if plugin is None or plugin.manifest is None or not plugin.compatible:
+        typer.echo("Plugin is missing, invalid, or incompatible", err=True)
+        raise typer.Exit(1)
+    runtime_root = get_runtime_paths().plugin_runtime
+    plugin_runtime = runtime_root / plugin_id
+    plugin_runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if plugin_runtime.resolve().parent != runtime_root.resolve():
+        typer.echo("Plugin runtime path escapes the instance runtime root", err=True)
+        raise typer.Exit(1)
+    target = plugin_runtime / "venv"
+    if target.exists() or target.is_symlink():
+        typer.echo(f"Plugin runtime already exists: {target}", err=True)
+        raise typer.Exit(1)
+    venv.EnvBuilder(with_pip=False, clear=False).create(target)
+    typer.echo(
+        f"Created isolated interpreter at {target}; no dependencies were downloaded or installed."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2535,35 +2634,45 @@ async def _seed(*, force: bool = False) -> dict[str, int]:
 
 
 def _bootstrap_plugins() -> None:
-    cfg = get_settings()
-    from arborpress.plugins.registry import get_registry
+    from arborpress.plugins.registry import discover_instance_plugins
 
-    reg = get_registry()
-    for d in cfg.plugin_dirs():
-        reg.load_directory(d)
-    _load_plugin_cli_extensions()
+    discover_instance_plugins(get_settings().plugin_dirs())
 
 
-def _load_plugin_cli_extensions() -> None:
-    """§15 – Plugins can register Typer sub-apps."""
-    import importlib
+def _plugin_diagnostic(plugin: Any) -> dict[str, Any]:
+    manifest = plugin.manifest
+    return {
+        "id": plugin.id,
+        "name": plugin.name,
+        "version": manifest.version if manifest else None,
+        "source": plugin.source,
+        "status": plugin.status.value,
+        "error": plugin.error,
+        "enabled": plugin.enabled,
+        "runtime_status": plugin.runtime_status.value,
+        "exit_status": plugin.exit_status,
+        "last_error": plugin.last_error,
+        "interpreter": plugin.interpreter,
+        "requested_capabilities": list(plugin.capabilities),
+        "granted_capabilities": [],
+    }
 
-    from arborpress.plugins.registry import get_registry
 
-    for plugin in get_registry().all():
-        cli_ep = plugin.manifest.entry_points.cli
-        if not cli_ep:
-            continue
-        try:
-            module_path, _, attr = cli_ep.rpartition(":")
-            mod = importlib.import_module(module_path)
-            plugin_app_obj = getattr(mod, attr)
-            app.add_typer(plugin_app_obj, name=plugin.id)
-        except Exception as exc:
-            typer.echo(
-                f"Warning: CLI extension from plugin {plugin.id!r} failed: {exc}",
-                err=True,
-            )
+def _audit_plugin_admin(event_type: str, plugin_id: str) -> None:
+    from arborpress.core.audit import write_audit_event
+    from arborpress.logging.config import setup_logging
+
+    setup_logging(get_settings().logging)
+    asyncio.run(
+        write_audit_event(
+            event_type=event_type,
+            outcome="success",
+            actor_id="cli",
+            actor_name="cli",
+            target_id=plugin_id,
+            detail="enablement state changed; applies on server startup",
+        )
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -129,7 +129,7 @@ def test_plugin_paths_include_instance_root_after_configured_roots(tmp_path: Pat
     assert canonical == paths.plugins
 
 
-def test_instance_plugins_take_precedence_over_configured_duplicate_ids(
+def test_duplicate_plugin_ids_are_diagnosed_instead_of_shadowed(
     tmp_path: Path,
 ) -> None:
     paths = _prefix(tmp_path)
@@ -139,20 +139,20 @@ def test_instance_plugins_take_precedence_over_configured_duplicate_ids(
     canonical_plugin.mkdir(parents=True)
     extra_plugin.mkdir(parents=True)
     manifest = textwrap.dedent(
-        """
-        [plugin]
+        """\
+        manifest_version = 1
         id = "sample"
         name = "Sample"
         version = "1.0.0"
-        min_core = "0.1.0"
-        capabilities = ["importer"]
-
-        [entry_points]
-        importer = "arborpress.plugins.registry:PluginRegistry"
+        author = "Tests"
+        license = "MIT"
+        requires_arborpress = ">=0.1.0"
+        entrypoint = "worker:plugin"
+        requested_capabilities = []
         """
     )
-    (extra_plugin / "manifest.toml").write_text(manifest, encoding="utf-8")
-    (canonical_plugin / "manifest.toml").write_text(manifest, encoding="utf-8")
+    (extra_plugin / "plugin.toml").write_text(manifest, encoding="utf-8")
+    (canonical_plugin / "plugin.toml").write_text(manifest, encoding="utf-8")
     paths.config_file.write_text(
         '[plugins]\ndirs = ["../shared-plugins"]\n', encoding="utf-8"
     )
@@ -163,4 +163,5 @@ def test_instance_plugins_take_precedence_over_configured_duplicate_ids(
         registry.load_directory(directory)
 
     assert registry.get("sample") is not None
-    assert registry.get("sample").directory == canonical_plugin
+    assert registry.get("sample").status.value == "invalid"
+    assert "collision" in registry.get("sample").error

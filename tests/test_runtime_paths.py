@@ -32,6 +32,10 @@ def test_paths_derive_the_complete_layout_from_an_absolute_prefix(tmp_path: Path
     assert paths.media == paths.instance / "media"
     assert paths.themes == paths.instance / "themes"
     assert paths.plugins == paths.instance / "plugins"
+    assert paths.plugin_data == paths.data / "plugins"
+    assert paths.plugin_runtime == paths.var / "plugins"
+    assert paths.plugin_cache == paths.cache / "plugins"
+    assert paths.plugin_run == paths.run / "plugins"
     assert paths.backups == paths.instance / "backups"
     assert paths.cache == paths.var / "cache"
     assert paths.log == paths.var / "log"
@@ -78,6 +82,8 @@ def test_two_prefixes_have_disjoint_instance_paths(tmp_path: Path) -> None:
     assert first.config_file != second.config_file
     assert first.media != second.media
     assert first.plugins != second.plugins
+    assert first.plugin_data != second.plugin_data
+    assert first.plugin_runtime != second.plugin_runtime
 
 
 def test_layout_creation_is_idempotent_and_does_not_create_fake_app_release(
@@ -95,6 +101,10 @@ def test_layout_creation_is_idempotent_and_does_not_create_fake_app_release(
         paths.media,
         paths.themes,
         paths.plugins,
+        paths.plugin_data,
+        paths.plugin_runtime,
+        paths.plugin_cache,
+        paths.plugin_run,
         paths.backups,
         paths.var,
         paths.cache,
