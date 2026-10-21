@@ -317,6 +317,19 @@ async def moderate_comment(
         target_id=comment.id,
         detail=f"decision={decision.id};reason={reason.code}",
     )
+    if comment.author_user_id:
+        from arborpress.notifications.service import create_notification
+
+        await create_notification(
+            db,
+            user_id=str(comment.author_user_id),
+            notification_type="comment.moderation_decision",
+            payload={"outcome": outcome},
+            target_path="/notifications",
+            dedupe_key=f"decision:{decision.id}",
+            source_type="comment",
+            source_id=comment.id,
+        )
     return decision
 
 
@@ -595,6 +608,19 @@ async def review_comment_appeal(
             f"self_review={self_exception}"
         ),
     )
+    if appeal.appellant_user_id:
+        from arborpress.notifications.service import create_notification
+
+        await create_notification(
+            db,
+            user_id=str(appeal.appellant_user_id),
+            notification_type="comment.appeal_reviewed",
+            payload={"outcome": outcome},
+            target_path="/notifications",
+            dedupe_key=f"appeal:{appeal.id}:reviewed",
+            source_type="appeal",
+            source_id=appeal.id,
+        )
     return cast(CommentModerationAppeal, appeal)
 
 

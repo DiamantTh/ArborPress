@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Benachrichtigungen – ArborPress{% endblock %}
+{% block content %}
+<main class="container" data-notifications-live
+      data-ticket-url="{{ url_for('notifications.issue_ws_ticket') }}"
+      data-ws-url="{{ ws_url }}"
+      data-unread-count="{{ unread_count }}"
+      data-csrf="{{ csrf_token() }}">
+  <h1>Benachrichtigungen</h1>
+  <p aria-live="polite">Ungelesen: <span id="notification-unread-count">{{ unread_count }}</span></p>
+  <form method="post" action="{{ url_for('notifications.notifications_read_all') }}">
+    {{ csrf_input() }}
+    <button type="submit">Alle als gelesen markieren</button>
+  </form>
+  <ol id="notification-list">
+    {% for view in events %}
+    {% set event = view.event %}
+    <li data-notification-id="{{ event.id }}"{% if not event.read_at %} class="is-unread"{% endif %}>
+      <h2>{{ view.title }}</h2>
+      <p>{{ view.message }}</p>
+      <time datetime="{{ event.created_at.isoformat() }}">{{ event.created_at.strftime('%Y-%m-%d %H:%M') }}</time>
+      {% if event.target_path %}<p><a href="{{ event.target_path }}">Öffnen</a></p>{% endif %}
+      {% if not event.read_at %}
+      <form method="post" action="{{ url_for('notifications.notification_read', notification_id=event.id) }}">
+        {{ csrf_input() }}<button type="submit">Als gelesen markieren</button>
+      </form>
+      {% endif %}
+    </li>
+    {% else %}<li>Du hast noch keine Benachrichtigungen.</li>{% endfor %}
+  </ol>
+  {% if page > 1 %}<a href="{{ url_for('notifications.inbox', page=page - 1) }}">Neuere</a>{% endif %}
+  {% if events|length == 25 %}<a href="{{ url_for('notifications.inbox', page=page + 1) }}">Ältere</a>{% endif %}
+
+  <section aria-labelledby="notification-settings-heading">
+    <h2 id="notification-settings-heading">Zustellung</h2>
+    <form method="post" action="{{ url_for('notifications.preferences_update') }}">
+      {{ csrf_input() }}
+      <label><input type="checkbox" name="live_wss_enabled"{% if preference and preference.live_wss_enabled %} checked{% endif %}> Livezustellung in geöffneten ArborPress-Tabs</label>
+      <label><input type="checkbox" name="web_push_enabled"{% if preference and preference.web_push_enabled %} checked{% endif %}{% if not vapid_configured %} disabled{% endif %}> Web Push aktivieren</label>
+      <button type="submit">Einstellungen speichern</button>
+    </form>
+    {% if vapid_public_key %}<button type="button" data-web-push-enable{% if not preference or not preference.web_push_enabled %} disabled{% endif %}>Push auf diesem Browser aktivieren</button>{% endif %}
+    {% if not vapid_configured %}<p>Web Push ist auf dieser Instanz nicht konfiguriert.</p>{% endif %}
+    {% if subscriptions %}
+    <h3>Aktive Browser</h3>
+    <ul>
+      {% for subscription in subscriptions %}
+      <li>Browser-Abonnement hinzugefügt am {{ subscription.created_at.strftime('%Y-%m-%d') }}
+        <button type="button" data-web-push-remove="{{ subscription.id }}">Entfernen</button>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <p id="notification-channel-status" role="status" aria-live="polite"></p>
+  </section>
+</main>
+{% endblock %}
+{% block scripts %}
+{{ vite_script('notifications-live') }}
+{{ vite_script('notifications-webpush') }}
+{% endblock %}

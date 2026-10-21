@@ -18,6 +18,8 @@ export default defineConfig({
         webauthn: resolve(frontendRoot, 'src/entries/webauthn.ts'),
         'auth-security': resolve(frontendRoot, 'src/entries/auth-security.ts'),
         'auth-mfa': resolve(frontendRoot, 'src/entries/auth-mfa.ts'),
+        'notifications-live': resolve(frontendRoot, 'src/entries/notifications-live.ts'),
+        'notifications-webpush': resolve(frontendRoot, 'src/entries/notifications-webpush.ts'),
         'webauthn-register': resolve(frontendRoot, 'src/entries/webauthn-register.ts'),
         admin: resolve(frontendRoot, 'src/entries/admin.ts'),
         editor: resolve(frontendRoot, 'src/entries/editor.ts'),
