@@ -120,12 +120,17 @@ arborpress federation inbox-process  Process ActivityPub inbox (§5)
 arborpress federation status         Show federation configuration
 
 arborpress mail process              Process mail queue once
-arborpress mail process --interval 30  Mail queue worker (daemon)
+arborpress mail worker --interval 5  Run durable DB-outbox worker
 arborpress mail status               Show mail configuration
+arborpress mail profiles list        List named SMTP profiles
+arborpress mail queue list           Inspect outbox metadata
 
 arborpress plugin list               Show loaded plugins
 arborpress plugin validate <path>    Validate plugin manifest
 ```
+
+See [SMTP profiles and the mail outbox](docs/mail-outbox.md) for transport,
+TLS, queue, DNS/DSN, and operational details.
 
 ## API Overview (§8)
 
