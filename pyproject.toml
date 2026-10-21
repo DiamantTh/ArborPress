@@ -49,6 +49,7 @@ dependencies = [
     "idna>=3.11,<4",
     # E-Mail-Validierung: RFC 5321/5322 + IDNA 2008 (Unicode-Domains, §10)
     "email-validator>=2.2,<3",
+    "dnspython>=2.7,<3",          # controlled A/MX/TLSA/CAA diagnostics for SMTP
     # Internationalization / translations
     "babel>=2.18,<3",             # gettext runtime + pybabel CLI (§7)
     # Config & version parsing

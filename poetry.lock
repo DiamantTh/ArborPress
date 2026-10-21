@@ -4218,4 +4218,4 @@ wysiwyg = ["markdownify"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.14"
-content-hash = "022d583874138d4758e6831770f6522ba6d1ce8a0378a2af7f8fe3d11fbb33c1"
+content-hash = "f06839c7831d0aa1184f144d111105d5d1149972756bc12e88b26fbb00a1ea89"

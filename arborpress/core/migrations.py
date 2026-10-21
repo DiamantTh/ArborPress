@@ -313,6 +313,7 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
         "object_relations",
         "plugin_storage_entries",
         "plugin_jobs",
+        "smtp_profiles",
     }:
         return False
     allowed_columns = {
@@ -327,6 +328,25 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
         },
         "posts": {"comments_enabled", "guest_confirmation_required", "comment_moderation_mode"},
         "users": {"comment_trusted"},
+        "mail_queue": {
+            "recipient_kind",
+            "visible_to",
+            "visible_cc",
+            "headers",
+            "profile_id",
+            "message_type",
+            "message_id",
+            "envelope_sender",
+            "priority",
+            "max_attempts",
+            "lease_owner",
+            "lease_until",
+            "dsn_status",
+            "dsn_enhanced_code",
+            "dsn_envid",
+            "verp_token",
+            "updated_at",
+        },
     }
     errors = _expected_schema_errors(connection, allow_extra_tables=False)
     for error in errors:
@@ -339,6 +359,7 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "missing table object_relations",
             "missing table plugin_storage_entries",
             "missing table plugin_jobs",
+            "missing table smtp_profiles",
         }:
             continue
         if error == "unexpected column comments.confirmation_token":
@@ -348,6 +369,15 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             table, column = qualified.split(".", 1)
             if column in allowed_columns.get(table, set()):
                 continue
+        if error.startswith(
+            (
+                "unique constraint mismatch for mail_queue",
+                "index mismatch for mail_queue",
+                "type mismatch for mail_queue.status",
+                "length mismatch for mail_queue.status",
+            )
+        ):
+            continue
         if error in {
             "nullability mismatch for comments.author_email",
             "enum values mismatch for comments.status",

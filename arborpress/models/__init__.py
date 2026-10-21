@@ -24,7 +24,7 @@ from arborpress.models.content import (  # noqa: F401
     PostVisibility,
     Tag,
 )
-from arborpress.models.mail import MailQueue, MailStatus  # noqa: F401
+from arborpress.models.mail import MailQueue, MailStatus, SMTPProfile  # noqa: F401
 from arborpress.models.plugin import PluginJob, PluginStorageEntry  # noqa: F401
 from arborpress.models.settings import SiteSetting  # noqa: F401
 from arborpress.models.user import (  # noqa: F401

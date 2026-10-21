@@ -24,7 +24,7 @@ from arborpress.core.migrations import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pre_alembic_phase1_schema.sql"
-CURRENT_HEAD = "0005_plugin_capabilities_storage_jobs"
+CURRENT_HEAD = "0006_smtp_profiles_mail_outbox"
 
 
 def _sqlite_engine(path: Path) -> AsyncEngine:
@@ -149,7 +149,7 @@ async def test_empty_database_upgrade_noop_and_repeated_install(tmp_path: Path) 
         assert status.is_current
         assert status.current_revisions == (CURRENT_HEAD,)
         before = await _schema_snapshot(engine)
-        assert len(before) == 33
+        assert len(before) == 34
         assert "webauthn_credentials" in before
 
         async with engine.connect() as connection:
@@ -181,6 +181,47 @@ async def test_empty_database_upgrade_noop_and_repeated_install(tmp_path: Path) 
 
         assert (await upgrade_database(engine)).is_current
         assert await _schema_snapshot(engine) == before
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_mail_outbox_migration_preserves_legacy_failed_rows(tmp_path: Path) -> None:
+    engine = _sqlite_engine(tmp_path / "mail-outbox-upgrade.db")
+    try:
+        await upgrade_database(engine)
+        await downgrade_database("0005_plugin_capabilities_storage_jobs", engine)
+        async with engine.begin() as connection:
+            await connection.execute(
+                sa.text(
+                    "INSERT INTO mail_queue (id, idempotency_key, recipient, subject, body_text, "
+                    "body_html, pgp_encrypted, status, attempts, next_attempt_at, last_error, "
+                    "created_at, sent_at) VALUES (:id, :key, :recipient, :subject, :body, NULL, "
+                    "0, 'FAILED', 2, NULL, 'legacy failure', CURRENT_TIMESTAMP, NULL)"
+                ),
+                {
+                    "id": "legacy-mail-id",
+                    "key": "legacy-mail-key",
+                    "recipient": "legacy@example.test",
+                    "subject": "Legacy subject",
+                    "body": "Legacy body",
+                },
+            )
+        await upgrade_database(engine)
+        async with engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    sa.text(
+                        "SELECT status, attempts, message_id, profile_id, updated_at "
+                        "FROM mail_queue WHERE id = 'legacy-mail-id'"
+                    )
+                )
+            ).one()
+            assert row.status == "dead"
+            assert row.attempts == 2
+            assert row.message_id == "<legacy-mail-id@arborpress.invalid>"
+            assert row.profile_id == "transactional"
+            assert row.updated_at is not None
     finally:
         await engine.dispose()
 
@@ -519,8 +560,8 @@ async def test_known_older_revision_is_reported_as_behind_head(
     versions = tmp_path / "extra_versions"
     versions.mkdir()
     (versions / "0002_test_next.py").write_text(
-        "revision = '0006_test_next'\n"
-        "down_revision = '0005_plugin_capabilities_storage_jobs'\n"
+        "revision = '0007_test_next'\n"
+        "down_revision = '0006_smtp_profiles_mail_outbox'\n"
         "branch_labels = None\n"
         "depends_on = None\n"
         "def upgrade(): pass\n"
@@ -539,7 +580,7 @@ async def test_known_older_revision_is_reported_as_behind_head(
         status = await schema_status(engine)
         assert status.state == "behind"
         assert status.current_revisions == (BASELINE_REVISION,)
-        assert status.head_revision == "0006_test_next"
+        assert status.head_revision == "0007_test_next"
     finally:
         await engine.dispose()
 
