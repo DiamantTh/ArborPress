@@ -340,7 +340,15 @@ async def _claim_one(session: Any, worker_id: str, now: datetime) -> Any | None:
 
 
 async def process_queue(batch_size: int = 10, *, worker_id: str | None = None) -> int:
-    """Claim, send, and finalize at most ``batch_size`` outbox deliveries."""
+    """Claim, send, and finalize deliveries under the instance worker lock."""
+    async with _worker_lock() as acquired:
+        if not acquired:
+            return 0
+        return await _process_queue_locked(batch_size, worker_id=worker_id)
+
+
+async def _process_queue_locked(batch_size: int, *, worker_id: str | None = None) -> int:
+    """Process a batch after the instance-wide POSIX worker lock is acquired."""
     from arborpress.core.db import get_session_factory
     from arborpress.models.mail import MailQueue, MailStatus
 
@@ -501,9 +509,7 @@ async def run_queue_worker(interval: int = 5, *, stop_event: asyncio.Event | Non
     log.info("Mail outbox worker started interval=%ds", interval)
     while stop_event is None or not stop_event.is_set():
         try:
-            async with _worker_lock() as acquired:
-                if acquired:
-                    await process_queue()
+            await process_queue()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
