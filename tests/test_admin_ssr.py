@@ -77,6 +77,8 @@ async def test_admin_pages_are_server_rendered_and_form_csrf_is_present(
         "/admin/captcha",
         "/admin/settings",
         "/admin/mail",
+        "/admin/mail/templates",
+        "/admin/mail/templates/comment.guest_confirmation/en-GB",
         "/admin/sessions",
     )
     pages: dict[str, str] = {}
@@ -94,6 +96,9 @@ async def test_admin_pages_are_server_rendered_and_form_csrf_is_present(
     assert 'name="_csrf"' in pages["/admin/posts/new"]
     assert 'name="_csrf"' in pages["/admin/settings"]
     assert "Mail transport" in pages["/admin/mail"]
+    assert "mail template" in pages["/admin/mail"].lower()
+    assert "comment.guest_confirmation" in pages["/admin/mail/templates"]
+    assert "Subject template" in pages["/admin/mail/templates/comment.guest_confirmation/en-GB"]
     assert 'name="admin_active"' in pages["/admin/settings"]
     assert 'name="_csrf"' in pages["/admin/captcha"]
     assert 'aria-current="page"' in pages["/admin/settings"]
@@ -153,6 +158,36 @@ async def test_admin_post_works_from_rendered_form_without_javascript(
         form={"_csrf": token_match.group(1), "q_0": "Question?", "a_0": "Answer"},
     )
     assert saved.status_code == 302
+
+
+@pytest.mark.asyncio
+async def test_mail_template_preview_is_ssr_and_save_requires_stepup(
+    client: QuartClient, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _login_admin(client, test_engine, monkeypatch)
+    path = "/admin/mail/templates/notification.generic/en-GB"
+    response = await client.get(path)
+    html = await response.get_data(as_text=True)
+    token_match = re.search(r'<input type="hidden" name="_csrf" value="([0-9a-f]+)">', html)
+    assert token_match is not None
+    form = {
+        "_csrf": token_match.group(1),
+        "expected_revision": "0",
+        "subject": "{{ notification_title }}",
+        "plain": "{{ notification_message }}",
+        "html": "<p>{{ notification_message }}</p>",
+        "action": "preview",
+    }
+    preview = await client.post(path, form=form)
+    preview_html = await preview.get_data(as_text=True)
+    assert preview.status_code == 200
+    assert "Preview" in preview_html
+    assert 'sandbox=""' in preview_html
+    assert "Example notification_message" in preview_html
+
+    form["action"] = "save"
+    denied = await client.post(path, form=form)
+    assert denied.status_code == 403
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,18 @@
+{% extends "admin/_base.html" %}
+{% block title %}Mail templates{% endblock %}
+{% block admin_content %}
+<section class="admin-card">
+  <h1>Mail templates</h1>
+  <p>Templates are instance-local overrides of immutable ArborPress package defaults. They are separate from public and admin themes.</p>
+  <table><thead><tr><th>Template</th><th>Purpose</th><th>Locales</th><th>Overrides</th></tr></thead><tbody>
+  {% for definition in definitions %}
+  <tr><th scope="row"><code>{{ definition.id }}</code><br>{{ definition.description }}</th>
+    <td>{{ definition.category }}</td><td>{{ definition.locales|join(', ') }}</td><td>
+      {% for locale in definition.locales %}{% set override = overrides.get((definition.id, locale)) %}
+      <a href="{{ url_for('admin.mail_template_detail', template_id=definition.id, locale=locale) }}">{{ locale }} — {{ 'override' if override and override.active else 'package default' }}</a><br>
+      {% endfor %}
+    </td></tr>
+  {% endfor %}
+  </tbody></table>
+</section>
+{% endblock %}

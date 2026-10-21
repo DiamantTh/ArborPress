@@ -512,18 +512,37 @@ async def test_nonapproved_comments_cannot_be_voted_on(db_session):
 @pytest.mark.asyncio
 async def test_comment_confirmation_email_escapes_untrusted_html(monkeypatch):
     import arborpress.core.mail as mail
+    from arborpress.mail.template_engine import TEMPLATE_REGISTRY, _packaged_source, render_sources
 
-    captured: dict[str, str] = {}
+    captured: dict[str, object] = {}
 
-    async def capture(**kwargs):
+    async def capture(*args, **kwargs):
+        captured["template_id"] = kwargs["template_id"]
+        captured["context"] = kwargs["context"]
         captured.update(kwargs)
-        return True
+        return "job-id"
 
-    monkeypatch.setattr(mail, "_send", capture)
-    comment = SimpleNamespace(author_email="guest@example.com", author_name="<script>x</script>")
+    monkeypatch.setattr("arborpress.mail.template_engine.enqueue_template_mail", capture)
+    monkeypatch.setattr(mail, "_mail_s", lambda: {"backend": "profiles", "from_name": "ArborPress"})
+    comment = SimpleNamespace(
+        id="comment-test-id", author_email="guest@example.com", author_name="<script>x</script>"
+    )
     post = SimpleNamespace(title="<img src=x onerror=alert(1)>")
-    await mail.send_comment_confirmation(comment, post, "safe-token")
-    html = captured["body_html"]
+    result = await mail.send_comment_confirmation(comment, post, "safe-token")
+    assert result is True
+    assert captured["template_id"] == "comment.guest_confirmation"
+    context = captured["context"]
+    assert isinstance(context, dict)
+    definition = TEMPLATE_REGISTRY["comment.guest_confirmation"]
+    html = render_sources(
+        definition,
+        {
+            kind: _packaged_source(definition.id, "en-GB", kind)
+            for kind in ("subject", "plain", "html")
+        },
+        context,
+    )[2]
+    assert html is not None
     assert "<script>" not in html
     assert "<img src=x" not in html
     assert "/comment/confirm/safe-token" in html

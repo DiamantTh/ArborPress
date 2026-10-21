@@ -3,6 +3,7 @@
 {% block admin_content %}
 <section class="admin-card">
   <h1>Mail transport</h1>
+  <p><a href="{{ url_for('admin.mail_template_list') }}">Manage mail templates</a></p>
   <p>SMTP acceptance is recorded as <code>sent</code>; it does not prove mailbox delivery. Message bodies and credentials are not shown here.</p>
   <h2>SMTP profiles</h2>
   {% if profiles %}

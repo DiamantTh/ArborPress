@@ -34,6 +34,7 @@ from quart import (
 )
 from quart.typing import ResponseReturnValue
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -2576,6 +2577,211 @@ async def mail_admin_profile_test(profile_id: str) -> ResponseReturnValue:
         "success" if outcome.get("ok") else "error",
     )
     return redirect(url_for("admin.mail_admin_page"))
+
+
+@admin_bp.get("/mail/templates")
+async def mail_template_list() -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    from arborpress.mail.template_engine import TEMPLATE_REGISTRY
+
+    rows = []
+    async for db in get_db_session():
+        from arborpress.models.mail import MailTemplateOverride
+
+        rows = list(
+            (
+                await db.scalars(
+                    select(MailTemplateOverride).order_by(
+                        MailTemplateOverride.template_id, MailTemplateOverride.locale
+                    )
+                )
+            ).all()
+        )
+    overrides = {(row.template_id, row.locale): row for row in rows}
+    return await render_template(
+        "admin/mail_templates.html",
+        definitions=TEMPLATE_REGISTRY.values(),
+        overrides=overrides,
+        noindex=True,
+    )
+
+
+@admin_bp.route("/mail/templates/<template_id>/<locale>", methods=["GET", "POST"])
+async def mail_template_detail(template_id: str, locale: str) -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    from arborpress.mail.template_engine import (
+        TEMPLATE_REGISTRY,
+        _effective_sources,
+        render_sources,
+        reset_template_override,
+        restore_template_revision,
+        save_template_override,
+    )
+    from arborpress.mail.template_engine import (
+        TemplateError as MailTemplateError,
+    )
+    from arborpress.models.mail import MailTemplateOverride, MailTemplateRevision
+
+    definition = TEMPLATE_REGISTRY.get(template_id)
+    if definition is None or locale not in definition.locales:
+        abort(404)
+    actor_id = str(session.get("user_id", ""))
+    action = ""
+    preview: dict[str, str | None] | None = None
+    submitted_sources: dict[str, str | None] | None = None
+    error: str | None = None
+    success: str | None = None
+    if request.method == "POST":
+        await validate_csrf()
+        form = await request.form
+        action = form.get("action", "save")
+        if action in {"preview", "save"}:
+            submitted_sources = {
+                "subject": form.get("subject", ""),
+                "plain": form.get("plain", ""),
+                "html": form.get("html") or None,
+            }
+        expected = form.get("expected_revision", "0")
+        if not expected.isdigit():
+            abort(400)
+        if action in {"save", "reset", "restore"}:
+            try:
+                await assert_stepup(
+                    cast(dict[str, Any], session),
+                    actor_id,
+                    "edit_mail_template",
+                    target=f"{template_id}:{locale}",
+                )
+            except PermissionError:
+                return jsonify({"error": "step_up_required"}), 403
+        async for db in get_db_session():
+            try:
+                if action == "preview":
+                    if submitted_sources is None:
+                        abort(400)
+                    context = {
+                        name: f"Example {name}"
+                        for name in definition.required | definition.optional
+                    }
+                    for name in ("confirmation_url", "admin_url", "action_url"):
+                        if name in context:
+                            context[name] = "https://example.invalid/action"
+                    subject, plain, html = render_sources(definition, submitted_sources, context)
+                    preview = {"subject": subject, "plain": plain, "html": html}
+                elif action == "save":
+                    number = await save_template_override(
+                        db,
+                        template_id=template_id,
+                        locale=locale,
+                        subject=form.get("subject", ""),
+                        plain=form.get("plain", ""),
+                        html=form.get("html") or None,
+                        actor_user_id=actor_id,
+                        expected_revision=int(expected),
+                    )
+                    await write_audit_event(
+                        event_type="mail_template_saved",
+                        outcome="success",
+                        actor_id=actor_id,
+                        target_id=f"{template_id}:{locale}",
+                        detail=f"revision={number}",
+                        db=db,
+                    )
+                    success = f"Revision {number} gespeichert."
+                elif action == "reset":
+                    number = await reset_template_override(
+                        db,
+                        template_id=template_id,
+                        locale=locale,
+                        actor_user_id=actor_id,
+                        expected_revision=int(expected),
+                    )
+                    await write_audit_event(
+                        event_type="mail_template_reset",
+                        outcome="success",
+                        actor_id=actor_id,
+                        target_id=f"{template_id}:{locale}",
+                        detail=f"revision={number}",
+                        db=db,
+                    )
+                    success = "Paketstandard wiederhergestellt."
+                elif action == "restore":
+                    revision_number = form.get("revision_number", "")
+                    if not revision_number.isdigit():
+                        abort(400)
+                    number = await restore_template_revision(
+                        db,
+                        template_id=template_id,
+                        locale=locale,
+                        revision_number=int(revision_number),
+                        actor_user_id=actor_id,
+                        expected_revision=int(expected),
+                    )
+                    await write_audit_event(
+                        event_type="mail_template_restored",
+                        outcome="success",
+                        actor_id=actor_id,
+                        target_id=f"{template_id}:{locale}",
+                        detail=f"revision={number}",
+                        db=db,
+                    )
+                    success = f"Revision als neue Revision {number} wiederhergestellt."
+                else:
+                    abort(400)
+            except MailTemplateError as exc:
+                error = str(exc)
+            except IntegrityError:
+                error = "Das Template wurde parallel geändert. Bitte neu laden."
+                await db.rollback()
+            if action in {"save", "reset", "restore"} and error is None:
+                await db.commit()
+    sources: dict[str, str | None] = {"subject": "", "plain": "", "html": None}
+    effective_source = "package"
+    override = None
+    history = []
+    current_revision = 0
+    async for db in get_db_session():
+        sources, effective_source = await _effective_sources(db, template_id, locale)
+        override = await db.scalar(
+            select(MailTemplateOverride).where(
+                MailTemplateOverride.template_id == template_id,
+                MailTemplateOverride.locale == locale,
+            )
+        )
+        current_revision = override.current_revision if override else 0
+        history = list(
+            (
+                await db.scalars(
+                    select(MailTemplateRevision)
+                    .where(
+                        MailTemplateRevision.template_id == template_id,
+                        MailTemplateRevision.locale == locale,
+                    )
+                    .order_by(MailTemplateRevision.revision_number.desc())
+                    .limit(50)
+                )
+            ).all()
+        )
+    if request.method == "POST" and action in {"preview", "save"} and submitted_sources is not None:
+        if action == "preview" or error is not None:
+            sources = submitted_sources
+        if action == "preview" and error is None:
+            effective_source = "preview"
+    return await render_template(
+        "admin/mail_template_detail.html",
+        definition=definition,
+        locale=locale,
+        sources=sources,
+        effective_source=effective_source,
+        current_revision=current_revision,
+        history=history,
+        preview=preview,
+        error=error,
+        success=success,
+        noindex=True,
+    )
 
 
 @admin_bp.post("/settings")
