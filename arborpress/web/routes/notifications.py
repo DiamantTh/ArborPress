@@ -33,6 +33,7 @@ from arborpress.core.db import get_db_session, get_session_factory
 from arborpress.models.notification import (
     NotificationChannelPreference,
     NotificationEvent,
+    NotificationTypePreference,
     NotificationWSTicket,
     WebPushDelivery,
     WebPushSubscription,
@@ -130,6 +131,14 @@ async def inbox() -> ResponseReturnValue:
         events = await list_notifications(db, user_id=str(user.id), page=page)
         unread = await unread_count(db, user_id=str(user.id))
         preference = await db.get(NotificationChannelPreference, user.id)
+        type_preferences = {
+            row.notification_type: row
+            for row in await db.scalars(
+                select(NotificationTypePreference).where(
+                    NotificationTypePreference.user_id == str(user.id)
+                )
+            )
+        }
         subscriptions = await db.scalars(
             select(WebPushSubscription).where(
                 WebPushSubscription.user_id == str(user.id),
@@ -154,6 +163,10 @@ async def inbox() -> ResponseReturnValue:
             unread_count=unread,
             page=page,
             preference=preference,
+            type_preferences=type_preferences,
+            notification_types=NOTIFICATION_TYPES,
+            supported_locales=("de-DE", "en-GB", "fr-FR", "es-ES", "it-IT", "nl-NL", "pl-PL"),
+            user_locale=user.locale,
             subscriptions=list(subscriptions),
             vapid_public_key=get_settings().notifications.vapid_public_key,
             vapid_configured=_vapid_configured(),
@@ -202,6 +215,58 @@ async def preferences_update() -> ResponseReturnValue:
             db.add(preference)
         preference.live_wss_enabled = form.get("live_wss_enabled") == "on"
         preference.web_push_enabled = form.get("web_push_enabled") == "on" and _vapid_configured()
+        locale = form.get("locale", "").strip()
+        if locale and locale not in {"de-DE", "en-GB", "fr-FR", "es-ES", "it-IT", "nl-NL", "pl-PL"}:
+            abort(400)
+        user.locale = locale or None
+        from arborpress.notifications.service import NOTIFICATION_TYPES
+
+        allowed_keys = {"live_wss_enabled", "web_push_enabled", "locale", "_csrf"}
+        for type_id, definition in NOTIFICATION_TYPES.items():
+            prefix = f"type__{type_id}__"
+            allowed_keys.add(prefix + "enabled")
+            allowed_keys.update(prefix + channel for channel in definition["channels"])
+        if set(form.keys()) - allowed_keys:
+            abort(400)
+
+        for notification_type, definition in NOTIFICATION_TYPES.items():
+            row = await db.scalar(
+                select(NotificationTypePreference).where(
+                    NotificationTypePreference.user_id == str(user.id),
+                    NotificationTypePreference.notification_type == notification_type,
+                )
+            )
+            if row is None:
+                row = NotificationTypePreference(
+                    user_id=str(user.id), notification_type=notification_type
+                )
+                db.add(row)
+            prefix = f"type__{notification_type}__"
+            row.enabled = form.get(prefix + "enabled") == "on"
+            row.live_wss_enabled = (
+                form.get(prefix + "live_wss") == "on" and definition["channels"]["live_wss"]
+            )
+            row.web_push_enabled = (
+                form.get(prefix + "web_push") == "on"
+                and definition["channels"]["web_push"]
+                and _vapid_configured()
+            )
+            row.email_enabled = (
+                form.get(prefix + "email") == "on" and definition["channels"]["email"]
+            )
+            if not row.enabled or not row.web_push_enabled:
+                event_ids = select(NotificationEvent.id).where(
+                    NotificationEvent.user_id == str(user.id),
+                    NotificationEvent.notification_type == notification_type,
+                )
+                await db.execute(
+                    update(WebPushDelivery)
+                    .where(
+                        WebPushDelivery.notification_id.in_(event_ids),
+                        WebPushDelivery.status.in_(["pending", "retry"]),
+                    )
+                    .values(status="cancelled", lease_owner=None, lease_until=None)
+                )
         if not preference.web_push_enabled:
             await db.execute(
                 update(WebPushDelivery)
@@ -303,7 +368,7 @@ async def web_push_subscribe() -> ResponseReturnValue:
     try:
         decoded_p256dh = base64.urlsafe_b64decode(p256dh + "=" * (-len(p256dh) % 4))
         decoded_auth = base64.urlsafe_b64decode(auth_secret + "=" * (-len(auth_secret) % 4))
-    except (ValueError, binascii.Error):
+    except ValueError, binascii.Error:
         abort(400)
     if len(decoded_p256dh) != 65 or decoded_p256dh[0] != 4 or len(decoded_auth) != 16:
         abort(400)
@@ -519,6 +584,14 @@ async def notifications_socket() -> None:
                 .limit(50)
             )
             events = list(rows)
+            type_preferences = {
+                row.notification_type: row
+                for row in await db.scalars(
+                    select(NotificationTypePreference).where(
+                        NotificationTypePreference.user_id == user_id
+                    )
+                )
+            }
             unread = await unread_count(db, user_id=user_id)
         if resync:
             if not await _socket_send({"type": "resync_required"}):
@@ -528,7 +601,17 @@ async def notifications_socket() -> None:
             from arborpress.notifications.service import NOTIFICATION_TYPES
 
             definition = NOTIFICATION_TYPES.get(event.notification_type)
-            if definition is None:
+            type_preference = type_preferences.get(event.notification_type)
+            if (
+                definition is None
+                or not definition["channels"]["live_wss"]
+                or (
+                    type_preference is not None
+                    and (not type_preference.enabled or not type_preference.live_wss_enabled)
+                )
+            ):
+                cursor_created = event.created_at
+                last_sent_id = event.id
                 continue
             if not await _socket_send(
                 {

@@ -19,6 +19,7 @@ from arborpress.core.db import get_session_factory
 from arborpress.models.notification import (
     NotificationChannelPreference,
     NotificationEvent,
+    NotificationTypePreference,
     WebPushDelivery,
     WebPushSubscription,
 )
@@ -119,26 +120,44 @@ async def _deliver_one(db: Any, row: WebPushDelivery, *, worker_id: str) -> None
     sub = await db.get(WebPushSubscription, row.subscription_id)
     event = await db.get(NotificationEvent, row.notification_id)
     preference = await db.get(NotificationChannelPreference, event.user_id) if event else None
-    if (
-        sub is None
-        or event is None
-        or sub.disabled_at is not None
-        or preference is None
-        or not preference.web_push_enabled
-    ):
-        row.status = "cancelled"
-        row.lease_owner = None
-        row.lease_until = None
-        await db.commit()
-        return
-    definition = NOTIFICATION_TYPES.get(event.notification_type)
-    if definition is None:
+    type_preference = (
+        await db.scalar(
+            select(NotificationTypePreference).where(
+                NotificationTypePreference.user_id == event.user_id,
+                NotificationTypePreference.notification_type == event.notification_type,
+            )
+        )
+        if event
+        else None
+    )
+    definition = NOTIFICATION_TYPES.get(event.notification_type) if event else None
+    if event is not None and definition is None:
         row.status = "dead"
         row.last_error = "unsupported_notification_type"
         row.lease_owner = None
         row.lease_until = None
         await db.commit()
         return
+    if (
+        sub is None
+        or event is None
+        or sub.disabled_at is not None
+        or preference is None
+        or not preference.web_push_enabled
+        or (type_preference is not None and not type_preference.enabled)
+        or not (
+            type_preference.web_push_enabled
+            if type_preference is not None
+            else bool(definition and definition["default_channels"]["web_push"])
+        )
+        or not bool(definition and definition["channels"]["web_push"])
+    ):
+        row.status = "cancelled"
+        row.lease_owner = None
+        row.lease_until = None
+        await db.commit()
+        return
+    assert definition is not None
     payload = {
         "title": str(definition["title"]),
         "body": str(definition["message"]),

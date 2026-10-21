@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from arborpress.models.notification import (
     NotificationChannelPreference,
+    NotificationTypePreference,
     NotificationWSTicket,
     WebPushDelivery,
     WebPushSubscription,
@@ -115,6 +116,11 @@ async def test_opted_in_push_creates_durable_per_subscription_delivery(db_sessio
         [
             subscription,
             NotificationChannelPreference(user_id=str(user.id), web_push_enabled=True),
+            NotificationTypePreference(
+                user_id=str(user.id),
+                notification_type="comment.appeal_reviewed",
+                web_push_enabled=True,
+            ),
         ]
     )
     await db_session.flush()
@@ -130,6 +136,117 @@ async def test_opted_in_push_creates_durable_per_subscription_delivery(db_sessio
     assert delivery is not None
     assert delivery.subscription_id == subscription.id
     assert delivery.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_notification_email_is_per_type_opt_in_and_rendered_into_outbox(db_session):
+    from arborpress.mail.template_engine import save_template_override
+    from arborpress.models.mail import MailQueue
+
+    user = _user()
+    user.email = "notifications@example.com"
+    user.locale = "de-DE"
+    db_session.add(user)
+    await db_session.flush()
+    db_session.add(
+        NotificationTypePreference(
+            user_id=str(user.id),
+            notification_type="comment.appeal_reviewed",
+            email_enabled=True,
+        )
+    )
+    await db_session.flush()
+    await create_notification(
+        db_session,
+        user_id=str(user.id),
+        notification_type="comment.appeal_reviewed",
+        payload={"outcome": "overturned"},
+        target_path="/notifications",
+        dedupe_key="appeal:one",
+    )
+    row = await db_session.scalar(
+        select(MailQueue).where(MailQueue.template_id == "notification.generic")
+    )
+    assert row is not None
+    assert row.template_locale == "de-DE"
+    assert row.template_revision == "package:1"
+    assert row.status == "pending"
+    assert "Kommentar-Berufung" in row.subject
+    assert len(row.idempotency_key) == 64
+    queued_subject, queued_body = row.subject, row.body_text
+    await save_template_override(
+        db_session,
+        template_id="notification.generic",
+        locale="de-DE",
+        subject="Changed after enqueue",
+        plain="Changed after enqueue",
+        html=None,
+        actor_user_id=str(user.id),
+        expected_revision=0,
+    )
+    assert row.subject == queued_subject
+    assert row.body_text == queued_body
+
+
+@pytest.mark.asyncio
+async def test_global_push_opt_out_overrides_per_type_opt_in(db_session):
+    user = _user()
+    db_session.add(user)
+    await db_session.flush()
+    endpoint = "https://push.example.test/send/b"
+    db_session.add_all(
+        [
+            WebPushSubscription(
+                user_id=str(user.id),
+                endpoint=endpoint,
+                endpoint_hash=hash_endpoint(endpoint),
+                p256dh="public-key",
+                auth_secret="auth-key",  # noqa: S106 - inert fixture values
+            ),
+            NotificationTypePreference(
+                user_id=str(user.id),
+                notification_type="comment.appeal_reviewed",
+                web_push_enabled=True,
+            ),
+            NotificationChannelPreference(user_id=str(user.id), web_push_enabled=False),
+        ]
+    )
+    await db_session.flush()
+    event = await create_notification(
+        db_session,
+        user_id=str(user.id),
+        notification_type="comment.appeal_reviewed",
+        payload={"outcome": "upheld"},
+    )
+    assert (
+        await db_session.scalar(
+            select(WebPushDelivery).where(WebPushDelivery.notification_id == event.id)
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_disabled_notification_type_does_not_create_inbox_event(db_session):
+    user = _user()
+    db_session.add(user)
+    await db_session.flush()
+    db_session.add(
+        NotificationTypePreference(
+            user_id=str(user.id),
+            notification_type="comment.moderation_decision",
+            enabled=False,
+        )
+    )
+    await db_session.flush()
+    event = await create_notification(
+        db_session,
+        user_id=str(user.id),
+        notification_type="comment.moderation_decision",
+        payload={"outcome": "reject"},
+    )
+    assert event is None
+    assert await unread_count(db_session, user_id=str(user.id)) == 0
 
 
 @pytest.mark.asyncio

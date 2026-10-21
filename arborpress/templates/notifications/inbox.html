@@ -37,6 +37,22 @@
       {{ csrf_input() }}
       <label><input type="checkbox" name="live_wss_enabled"{% if preference and preference.live_wss_enabled %} checked{% endif %}> Livezustellung in geöffneten ArborPress-Tabs</label>
       <label><input type="checkbox" name="web_push_enabled"{% if preference and preference.web_push_enabled %} checked{% endif %}{% if not vapid_configured %} disabled{% endif %}> Web Push aktivieren</label>
+      <label for="notification-locale">E-Mail-Sprache</label>
+      <select id="notification-locale" name="locale">
+        <option value="">Instanzsprache verwenden</option>
+        {% for locale in supported_locales %}<option value="{{ locale }}"{% if user_locale == locale %} selected{% endif %}>{{ locale }}</option>{% endfor %}
+      </select>
+      <h3>Benachrichtigungsarten</h3>
+      {% for type_id, definition in notification_types.items() %}
+      {% set type_pref = type_preferences.get(type_id) %}
+      <fieldset>
+        <legend>{{ definition.title }}</legend>
+        <label><input type="checkbox" name="type__{{ type_id }}__enabled"{% if type_pref is none or type_pref.enabled %} checked{% endif %}> Diese Art zustellen</label>
+        {% if definition.channels.live_wss %}<label><input type="checkbox" name="type__{{ type_id }}__live_wss"{% if (type_pref is none or type_pref.live_wss_enabled) %} checked{% endif %}> Live (WSS)</label>{% endif %}
+        {% if definition.channels.web_push %}<label><input type="checkbox" name="type__{{ type_id }}__web_push"{% if type_pref and type_pref.web_push_enabled %} checked{% endif %}{% if not vapid_configured %} disabled{% endif %}> Web Push</label>{% endif %}
+        {% if definition.channels.email %}<label><input type="checkbox" name="type__{{ type_id }}__email"{% if type_pref and type_pref.email_enabled %} checked{% endif %}> E-Mail</label>{% endif %}
+      </fieldset>
+      {% endfor %}
       <button type="submit">Einstellungen speichern</button>
     </form>
     {% if vapid_public_key %}<button type="button" data-web-push-enable{% if not preference or not preference.web_push_enabled %} disabled{% endif %}>Push auf diesem Browser aktivieren</button>{% endif %}

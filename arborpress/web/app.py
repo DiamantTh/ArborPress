@@ -428,7 +428,11 @@ def create_app() -> Quart:
     from arborpress.plugins.supervisor import PluginSupervisor
 
     async def _audit_plugin_supervisor(event_type: str, plugin_id: str, detail: str) -> None:
+        from sqlalchemy import select
+
         from arborpress.core.audit import write_audit_event
+        from arborpress.models.user import User, UserRole
+        from arborpress.notifications.service import create_notification
 
         async with get_session_factory()() as db:
             await write_audit_event(
@@ -440,6 +444,20 @@ def create_app() -> Quart:
                 detail=detail,
                 db=db,
             )
+            if event_type == "plugin_auto_disabled":
+                admins = await db.scalars(
+                    select(User).where(User.role == UserRole.ADMIN, User.is_active.is_(True))
+                )
+                for admin in admins:
+                    await create_notification(
+                        db,
+                        user_id=str(admin.id),
+                        notification_type="plugin.auto_disabled",
+                        payload={"plugin_id": plugin_id},
+                        target_path="/admin/plugins",
+                        source_type="plugin",
+                        source_id=plugin_id,
+                    )
             await db.commit()
 
     plugin_manager = PluginProcessManager(

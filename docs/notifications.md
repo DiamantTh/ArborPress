@@ -65,9 +65,34 @@ pending/retry deliveries without deleting inbox events.
 
 ## Boundaries
 
-This phase does not send notification email; Phase 9C connects routing and
-templates to the Phase 9A mail outbox. Per-type/channel preferences, template
-revisions/locales, richer producers, and browser notification management are
-also Phase 9C work. WebSocket is a best-effort live view backed by DB catch-up,
-not a delivery receipt or an exactly-once transport. Web Push provider acceptance
-does not prove delivery to a device.
+The inbox event is independent of optional delivery channels. Per-type choices
+are stored in `notification_type_preferences`; they can only narrow delivery,
+because WSS and Web Push still require their global user opt-in, and Push also
+requires a live browser subscription. New per-type Push and email choices default
+off. Email notification delivery is rendered immediately into the Phase 9A DB
+outbox and does not mark an inbox item read. SMTP acceptance and Push delivery
+failures do not remove the inbox item.
+
+The account inbox page contains global and per-type channel controls plus an
+optional preferred mail locale. Transactional mail such as guest confirmation
+is not controlled by notification preferences. Core notification mail uses the
+same SMTP outbox as transactional mail.
+
+Core mail templates have stable registry IDs and package-owned defaults under
+`arborpress/mail/templates/`. Supported defaults currently ship in `de-DE` and
+`en-GB`; locale selection checks explicit/user/site locale and falls back to the
+package English default. Administrators can edit a database override in the SSR
+admin mail-template screens. Each validated save, restore, or reset appends an
+immutable source revision. Existing outbox messages keep the subject and bodies
+rendered when enqueued, even after a later template edit.
+
+Mail templates have a separate strict Jinja sandbox and context allowlists; they
+are not ArborPress themes. Includes, imports, calls, attribute access, active
+HTML, and arbitrary template globals are blocked. HTML is escaped and passed
+through a mail-oriented allowlist sanitizer. Preview uses synthetic data and
+renders HTML in a sandboxed frame. Admin changes require CSRF, the existing
+admin role, and the registered `edit_mail_template` step-up operation.
+
+WebSocket remains a best-effort live view backed by DB catch-up, not a delivery
+receipt or exactly-once transport. Web Push provider acceptance does not prove
+delivery to a device.

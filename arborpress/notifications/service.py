@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import secrets
 import uuid
@@ -17,10 +18,13 @@ from sqlalchemy.exc import IntegrityError
 from arborpress.models.notification import (
     NotificationChannelPreference,
     NotificationEvent,
+    NotificationTypePreference,
     NotificationWSTicket,
     WebPushDelivery,
     WebPushSubscription,
 )
+
+log = logging.getLogger("arborpress.notifications.service")
 
 NOTIFICATION_TYPES: dict[str, dict[str, Any]] = {
     "comment.appeal_reviewed": {
@@ -28,12 +32,36 @@ NOTIFICATION_TYPES: dict[str, dict[str, Any]] = {
         "message": "Deine Berufung zu einer Moderationsentscheidung wurde geprüft.",
         "fields": {"outcome": re.compile(r"^(upheld|overturned)$")},
         "importance": "normal",
+        "channels": {"live_wss": True, "web_push": True, "email": True},
+        "default_channels": {"live_wss": True, "web_push": False, "email": False},
+        "email_template": "notification.generic",
     },
     "comment.moderation_decision": {
         "title": "Moderationsentscheidung zu deinem Kommentar",
         "message": "Zu einem deiner Kommentare liegt eine Moderationsentscheidung vor.",
         "fields": {"outcome": re.compile(r"^(approve|reject|spam|delete|restore)$")},
         "importance": "normal",
+        "channels": {"live_wss": True, "web_push": True, "email": True},
+        "default_channels": {"live_wss": True, "web_push": False, "email": False},
+        "email_template": "notification.generic",
+    },
+    "comment.revision_decision": {
+        "title": "Entscheidung zu deiner Kommentaränderung",
+        "message": "Zu einer Änderung deines Kommentars liegt eine Entscheidung vor.",
+        "fields": {"outcome": re.compile(r"^(approve|reject|restore)$")},
+        "importance": "normal",
+        "channels": {"live_wss": True, "web_push": True, "email": True},
+        "default_channels": {"live_wss": True, "web_push": False, "email": False},
+        "email_template": "notification.generic",
+    },
+    "plugin.auto_disabled": {
+        "title": "Plugin automatisch deaktiviert",
+        "message": "Ein Plugin wurde nach wiederholten Laufzeitfehlern deaktiviert.",
+        "fields": {"plugin_id": re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")},
+        "importance": "high",
+        "channels": {"live_wss": True, "web_push": True, "email": True},
+        "default_channels": {"live_wss": True, "web_push": False, "email": False},
+        "email_template": "notification.generic",
     },
 }
 
@@ -84,12 +112,33 @@ async def create_notification(
     dedupe_key: str | None = None,
     source_type: str | None = None,
     source_id: str | None = None,
-) -> NotificationEvent:
-    """Create inbox event and optional durable push deliveries in caller transaction."""
+) -> NotificationEvent | None:
+    """Create an inbox event and route opted-in channels in caller transaction.
+
+    Inbox persistence is independent of channel preferences. WSS, push, and email
+    are delivery choices and can fail without removing the durable inbox record.
+    """
     safe_payload = _validate_payload(notification_type, payload)
     definition = NOTIFICATION_TYPES[notification_type]
     if dedupe_key is not None and len(dedupe_key) > 160:
         raise ValueError("Dedupe key is too long")
+    type_preference = await db.scalar(
+        select(NotificationTypePreference).where(
+            NotificationTypePreference.user_id == str(user_id),
+            NotificationTypePreference.notification_type == notification_type,
+        )
+    )
+    if type_preference is not None and not type_preference.enabled:
+        if dedupe_key is not None:
+            existing = await db.scalar(
+                select(NotificationEvent).where(
+                    NotificationEvent.user_id == str(user_id),
+                    NotificationEvent.dedupe_key == dedupe_key,
+                )
+            )
+            if existing is not None:
+                return cast(NotificationEvent, existing)
+        return None
     event = NotificationEvent(
         id=str(uuid.uuid4()),
         user_id=str(user_id),
@@ -118,7 +167,20 @@ async def create_notification(
             raise
         return cast(NotificationEvent, existing)
     preference = await db.get(NotificationChannelPreference, str(user_id))
-    if preference is not None and preference.web_push_enabled:
+    type_enabled = type_preference.enabled if type_preference else True
+    type_channels = definition["channels"]
+    push_enabled = (
+        type_enabled
+        and bool(type_channels["web_push"])
+        and (
+            type_preference.web_push_enabled
+            if type_preference
+            else definition["default_channels"]["web_push"]
+        )
+        and preference is not None
+        and preference.web_push_enabled
+    )
+    if push_enabled:
         subscriptions = await db.scalars(
             select(WebPushSubscription).where(
                 WebPushSubscription.user_id == str(user_id),
@@ -136,6 +198,51 @@ async def create_notification(
                     max_attempts=5,
                 )
             )
+    email_enabled = (
+        type_enabled
+        and bool(type_channels["email"])
+        and (
+            type_preference.email_enabled
+            if type_preference
+            else definition["default_channels"]["email"]
+        )
+    )
+    if email_enabled:
+        from arborpress.mail.template_engine import enqueue_template_mail
+        from arborpress.models.user import User
+
+        user = await db.get(User, str(user_id))
+        if user is not None and user.is_active and user.email:
+            from arborpress.core.config import get_settings
+
+            try:
+                async with db.begin_nested():
+                    await enqueue_template_mail(
+                        db,
+                        template_id=str(definition["email_template"]),
+                        to=str(user.email),
+                        context={
+                            "display_name": str(user.display_name),
+                            "notification_title": str(definition["title"]),
+                            "notification_message": str(definition["message"]),
+                            "site_name": "ArborPress",
+                            "action_url": (
+                                get_settings().web.base_url.rstrip("/") + event.target_path
+                                if event.target_path
+                                else ""
+                            ),
+                        },
+                        user_locale=user.locale,
+                        site_locale=get_settings().web.default_lang,
+                        idempotency_key=f"notification:{event.id}",
+                        purpose="notification",
+                    )
+            except Exception as exc:
+                log.warning(
+                    "Notification email enqueue failed event_id=%s error_type=%s",
+                    event.id,
+                    type(exc).__name__,
+                )
     return event
 
 

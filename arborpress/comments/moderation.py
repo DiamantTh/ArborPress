@@ -398,6 +398,19 @@ async def moderate_revision(
         target_id=revision.id,
         detail=f"decision={decision.id};comment={comment.id};reason={reason.code}",
     )
+    if comment.author_user_id:
+        from arborpress.notifications.service import create_notification
+
+        await create_notification(
+            db,
+            user_id=str(comment.author_user_id),
+            notification_type="comment.revision_decision",
+            payload={"outcome": outcome},
+            target_path="/notifications",
+            dedupe_key=f"decision:{decision.id}",
+            source_type="comment",
+            source_id=str(comment.id),
+        )
     return decision
 
 
