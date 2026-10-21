@@ -6,6 +6,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 
 from arborpress.comments import (
     REASON_CATALOG,
@@ -188,6 +189,16 @@ async def test_author_appeal_overturns_without_rewriting_original_decision(db_se
     replacement = await db_session.get(ModerationDecision, reviewed.replacement_decision_id)
     assert replacement is not None
     assert replacement.supersedes_decision_id == original.id
+    from arborpress.models.notification import NotificationEvent
+
+    notification = await db_session.scalar(
+        select(NotificationEvent).where(
+            NotificationEvent.user_id == str(author.id),
+            NotificationEvent.dedupe_key == f"appeal:{appeal.id}:reviewed",
+        )
+    )
+    assert notification is not None
+    assert notification.payload == {"outcome": "overturned"}
     with pytest.raises(ModerationError, match="already been replaced"):
         await submit_comment_appeal(
             db_session,
