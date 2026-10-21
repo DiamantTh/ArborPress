@@ -55,6 +55,8 @@ search_app = typer.Typer(help="Search index (§12 FTS)", no_args_is_help=True)
 cache_app = typer.Typer(help="Cache management", no_args_is_help=True)
 federation_app = typer.Typer(help="Federation / ActivityPub (§5, §14)", no_args_is_help=True)
 mail_app = typer.Typer(help="Mail queue (§13)", no_args_is_help=True)
+mail_profiles_app = typer.Typer(help="Named SMTP profiles", no_args_is_help=True)
+mail_queue_app = typer.Typer(help="Durable mail outbox diagnostics", no_args_is_help=True)
 plugin_app = typer.Typer(help="Third-party plugin diagnostics and enablement", no_args_is_help=True)
 plugin_runtime_app = typer.Typer(help="Plugin-local isolated interpreters", no_args_is_help=True)
 webauthn_app = typer.Typer(help="WebAuthn / Passkey recovery (§17)", no_args_is_help=True)
@@ -71,6 +73,8 @@ app.add_typer(search_app, name="search")
 app.add_typer(cache_app, name="cache")
 app.add_typer(federation_app, name="federation")
 app.add_typer(mail_app, name="mail")
+mail_app.add_typer(mail_profiles_app, name="profiles")
+mail_app.add_typer(mail_queue_app, name="queue")
 app.add_typer(plugin_app, name="plugins")
 # Keep the pre-8A singular CLI namespace as a compatibility alias; both names
 # execute only Core-owned discovery/control code.
@@ -1115,8 +1119,8 @@ def user_disable(
     async def _disable() -> None:
         from sqlalchemy import func, select
 
-        from arborpress.core.db import get_db_session
         from arborpress.core.audit import write_audit_event
+        from arborpress.core.db import get_db_session
         from arborpress.models.user import User
 
         async for db in get_db_session():
@@ -2458,6 +2462,329 @@ def mail_status() -> None:
     if mail.get("backend", "none") == "smtp":
         typer.echo(f"SMTP:     {mail.get('smtp_host', 'localhost')}:{mail.get('smtp_port', 587)}")
     typer.echo(f"PGP-Sign: {mail.get('pgp_sign_enabled', False)}")
+
+
+@mail_profiles_app.command("list")
+def mail_profiles_list(
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON diagnostics"),
+) -> None:
+    """List SMTP profile metadata without revealing credentials."""
+    from sqlalchemy import select
+
+    from arborpress.core.db import get_session_factory
+    from arborpress.mail.profiles import safe_profile_data
+    from arborpress.models.mail import SMTPProfile
+
+    async def _list() -> list[dict[str, Any]]:
+        async with get_session_factory()() as db:
+            rows = (await db.execute(select(SMTPProfile).order_by(SMTPProfile.id))).scalars().all()
+            return [safe_profile_data(row) for row in rows]
+
+    values = asyncio.run(_list())
+    if json_output:
+        typer.echo(json.dumps(values, indent=2))
+    else:
+        for item in values:
+            typer.echo(
+                f"{item['id']}: {item['host']}:{item['port']} {item['transport']} "
+                f"enabled={item['enabled']} auth={'yes' if item['auth_configured'] else 'no'}"
+            )
+
+
+@mail_profiles_app.command("inspect")
+def mail_profiles_inspect(
+    profile_id: str,
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON diagnostics"),
+) -> None:
+    """Inspect a profile with secret values omitted."""
+    from arborpress.core.db import get_session_factory
+    from arborpress.mail.profiles import safe_profile_data
+    from arborpress.models.mail import SMTPProfile
+
+    async def _read() -> dict[str, Any] | None:
+        async with get_session_factory()() as db:
+            row = await db.get(SMTPProfile, profile_id)
+            return safe_profile_data(row) if row else None
+
+    value = asyncio.run(_read())
+    if value is None:
+        raise typer.BadParameter("SMTP profile not found")
+    if json_output:
+        typer.echo(json.dumps(value, indent=2))
+    else:
+        for key, item in value.items():
+            typer.echo(f"{key}: {item}")
+
+
+@mail_profiles_app.command("configure")
+def mail_profiles_configure(
+    profile_id: str,
+    host: str = typer.Option(..., prompt=True),
+    port: int = typer.Option(465, prompt=True),
+    transport: str = typer.Option("implicit_tls", prompt=True),
+    from_address: str = typer.Option(..., prompt=True),
+    from_name: str = typer.Option("ArborPress", prompt=True),
+    username: str = typer.Option("", prompt=True),
+    envelope_domain: str = typer.Option("", prompt=True),
+    enabled: bool = typer.Option(True, "--enabled/--disabled"),
+) -> None:
+    """Create/update a named profile; an SMTP secret is prompted privately."""
+    from arborpress.core.db import get_session_factory
+    from arborpress.mail.profiles import save_profile
+
+    secret = typer.prompt("SMTP secret (empty for anonymous SMTP)", hide_input=True, default="")
+
+    async def _save() -> None:
+        async with get_session_factory()() as db:
+            await save_profile(
+                db,
+                {
+                    "id": profile_id,
+                    "display_name": profile_id,
+                    "host": host,
+                    "port": port,
+                    "transport": transport,
+                    "username": username,
+                    "secret": secret or None,
+                    "from_address": from_address,
+                    "from_name": from_name,
+                    "envelope_domain": envelope_domain or None,
+                    "enabled": enabled,
+                },
+            )
+            from arborpress.core.audit import write_audit_event
+
+            await write_audit_event(
+                event_type="smtp_profile_changed",
+                outcome="success",
+                target_id=profile_id,
+                detail=f"transport={transport} enabled={str(enabled).lower()}",
+                db=db,
+            )
+            if profile_id == "transactional":
+                from arborpress.core.site_settings import get_section, save_section
+
+                mail_settings = await get_section("mail", db)
+                mail_settings.pop("smtp_password", None)
+                mail_settings["backend"] = "smtp"
+                mail_settings["transactional_profile"] = profile_id
+                await save_section("mail", mail_settings, db, updated_by="cli")
+            else:
+                await db.commit()
+
+    asyncio.run(_save())
+    typer.echo(f"SMTP profile {profile_id!r} saved; secret omitted.")
+
+
+@mail_profiles_app.command("test")
+def mail_profiles_test(profile_id: str, json_output: bool = typer.Option(False, "--json")) -> None:
+    """Probe DNS/TLS/EHLO/AUTH without sending mail."""
+    from arborpress.core.audit import write_audit_event
+    from arborpress.core.db import get_session_factory
+    from arborpress.mail.dns import SMTPDNSResolver
+    from arborpress.mail.profiles import profile_transport_data
+    from arborpress.mail.smtp import test_profile
+    from arborpress.models.mail import SMTPProfile
+
+    async def _probe() -> dict[str, Any]:
+        async with get_session_factory()() as db:
+            row = await db.get(SMTPProfile, profile_id)
+            if row is None:
+                raise typer.BadParameter("SMTP profile not found")
+            profile = profile_transport_data(row)
+        transport = await test_profile(profile)
+        dns = await SMTPDNSResolver().smtp_diagnostics(profile["host"], profile["port"])
+        return {"transport": transport, "dns": dns}
+
+    async def _run() -> dict[str, Any]:
+        result = await _probe()
+        await write_audit_event(
+            event_type="smtp_profile_tested",
+            outcome="success" if result["transport"]["ok"] else "failure",
+            target_id=profile_id,
+            detail=(
+                f"dnssec={result['dns']['tlsa']['dnssec']} "
+                f"dane_records={result['dns']['dane_authenticated_records']}"
+            ),
+        )
+        return result
+
+    result = asyncio.run(_run())
+    if json_output:
+        typer.echo(json.dumps(result, indent=2))
+    else:
+        typer.echo(f"Transport: {'OK' if result['transport']['ok'] else 'FAILED'}")
+        typer.echo(
+            f"DNSSEC/TLSA: {result['dns']['tlsa']['dnssec']} / "
+            f"authenticated TLSA records={result['dns']['dane_authenticated_records']} "
+            "(certificate match not checked)"
+        )
+        typer.echo(f"CAA: {result['dns']['caa']['values'] or 'no record'} (informational)")
+
+
+@mail_profiles_app.command("set-default")
+def mail_profiles_set_default(
+    profile_id: str,
+    purpose: str = typer.Option("transactional", "--purpose", help="transactional or bulk"),
+) -> None:
+    """Route a producer class to an explicitly named enabled profile."""
+    from arborpress.core.audit import write_audit_event
+    from arborpress.core.db import get_session_factory
+    from arborpress.core.site_settings import get_section, save_section
+    from arborpress.models.mail import SMTPProfile
+
+    if purpose not in {"transactional", "bulk"}:
+        raise typer.BadParameter("purpose must be transactional or bulk")
+
+    async def _set() -> None:
+        async with get_session_factory()() as db:
+            row = await db.get(SMTPProfile, profile_id)
+            if row is None or not row.enabled:
+                raise typer.BadParameter("SMTP profile must exist and be enabled")
+            settings = await get_section("mail", db)
+            settings[f"{purpose}_profile"] = profile_id
+            if purpose == "transactional":
+                settings["backend"] = "smtp"
+            await write_audit_event(
+                event_type="smtp_profile_default_changed",
+                outcome="success",
+                target_id=profile_id,
+                detail=f"purpose={purpose}",
+                db=db,
+            )
+            await save_section("mail", settings, db, updated_by="cli")
+
+    asyncio.run(_set())
+    typer.echo(f"Default {purpose} profile set to {profile_id!r}.")
+
+
+@mail_queue_app.command("list")
+def mail_queue_list(
+    status: str | None = typer.Option(None, "--status"),
+    profile_id: str | None = typer.Option(None, "--profile"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Show queue metadata only; message bodies are never exposed."""
+    from sqlalchemy import select
+
+    from arborpress.core.db import get_session_factory
+    from arborpress.models.mail import MailQueue
+
+    async def _list() -> list[dict[str, Any]]:
+        async with get_session_factory()() as db:
+            stmt = select(MailQueue).order_by(MailQueue.created_at.desc()).limit(100)
+            if status:
+                stmt = stmt.where(MailQueue.status == status)
+            if profile_id:
+                stmt = stmt.where(MailQueue.profile_id == profile_id)
+            rows = (await db.execute(stmt)).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "profile_id": row.profile_id,
+                    "recipient_domain": row.recipient.rpartition("@")[2],
+                    "status": row.status,
+                    "attempts": row.attempts,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "sent_at": row.sent_at.isoformat() if row.sent_at else None,
+                    "last_error": row.last_error,
+                }
+                for row in rows
+            ]
+
+    rows = asyncio.run(_list())
+    if json_output:
+        typer.echo(json.dumps(rows, indent=2))
+    else:
+        for row in rows:
+            typer.echo(f"{row['id']} {row['status']} {row['profile_id']} {row['recipient_domain']}")
+
+
+@mail_queue_app.command("inspect")
+def mail_queue_inspect(job_id: str, json_output: bool = typer.Option(False, "--json")) -> None:
+    """Inspect delivery state without showing recipient local-part or body."""
+    from arborpress.core.db import get_session_factory
+    from arborpress.models.mail import MailQueue
+
+    async def _read() -> dict[str, Any] | None:
+        async with get_session_factory()() as db:
+            row = await db.get(MailQueue, job_id)
+            if not row:
+                return None
+            return {
+                "id": row.id,
+                "profile_id": row.profile_id,
+                "recipient_domain": row.recipient.rpartition("@")[2],
+                "status": row.status,
+                "attempts": row.attempts,
+                "max_attempts": row.max_attempts,
+                "next_attempt_at": row.next_attempt_at.isoformat() if row.next_attempt_at else None,
+                "lease_until": row.lease_until.isoformat() if row.lease_until else None,
+                "message_id": row.message_id,
+                "dsn_status": row.dsn_status,
+                "dsn_enhanced_code": row.dsn_enhanced_code,
+                "last_error": row.last_error,
+            }
+
+    value = asyncio.run(_read())
+    if value is None:
+        raise typer.BadParameter("Mail job not found")
+    output = (
+        json.dumps(value, indent=2)
+        if json_output
+        else "\n".join(f"{key}: {item}" for key, item in value.items())
+    )
+    typer.echo(output)
+
+
+@mail_queue_app.command("retry")
+def mail_queue_retry(job_id: str) -> None:
+    from arborpress.core.audit import write_audit_event
+    from arborpress.mail.queue import retry_mail
+
+    async def _retry() -> bool:
+        changed = await retry_mail(job_id)
+        if changed:
+            await write_audit_event(
+                event_type="mail_manual_retry",
+                outcome="success",
+                target_id=job_id,
+                detail="dead or retry delivery manually queued",
+            )
+        return changed
+
+    if not asyncio.run(_retry()):
+        raise typer.BadParameter("Mail job is not retryable")
+    typer.echo("Mail job queued for manual retry.")
+
+
+@mail_queue_app.command("cancel")
+def mail_queue_cancel(job_id: str) -> None:
+    from arborpress.core.audit import write_audit_event
+    from arborpress.mail.queue import cancel_mail
+
+    async def _cancel() -> bool:
+        changed = await cancel_mail(job_id)
+        if changed:
+            await write_audit_event(
+                event_type="mail_cancelled",
+                outcome="success",
+                target_id=job_id,
+                detail="outbox delivery cancelled",
+            )
+        return changed
+
+    if not asyncio.run(_cancel()):
+        raise typer.BadParameter("Mail job is not cancellable")
+    typer.echo("Mail job cancelled.")
+
+
+@mail_app.command("worker")
+def mail_worker(interval: int = typer.Option(5, "--interval", min=1)) -> None:
+    """Run the same durable worker used by the embedded app lifecycle."""
+    from arborpress.mail.queue import run_queue_worker
+
+    asyncio.run(run_queue_worker(interval=interval))
 
 
 # ---------------------------------------------------------------------------

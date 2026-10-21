@@ -78,6 +78,7 @@
 <!-- ================================================================== -->
 <section class="admin-card" id="sec-mail">
   <h3>E-Mail</h3>
+  <p><a class="btn btn--small" href="{{ url_for('admin.mail_admin_page') }}">Profile und Outbox verwalten</a></p>
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
     {{ csrf_input() }}
     <input type="hidden" name="section" value="mail">

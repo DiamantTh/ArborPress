@@ -76,6 +76,7 @@ async def test_admin_pages_are_server_rendered_and_form_csrf_is_present(
         "/admin/comments",
         "/admin/captcha",
         "/admin/settings",
+        "/admin/mail",
         "/admin/sessions",
     )
     pages: dict[str, str] = {}
@@ -92,6 +93,7 @@ async def test_admin_pages_are_server_rendered_and_form_csrf_is_present(
     assert 'name="body"' in pages["/admin/posts/new"]
     assert 'name="_csrf"' in pages["/admin/posts/new"]
     assert 'name="_csrf"' in pages["/admin/settings"]
+    assert "Mail transport" in pages["/admin/mail"]
     assert 'name="admin_active"' in pages["/admin/settings"]
     assert 'name="_csrf"' in pages["/admin/captcha"]
     assert 'aria-current="page"' in pages["/admin/settings"]
@@ -510,3 +512,64 @@ async def test_post_author_and_relation_forms_are_server_rendered_without_javasc
     assert 'name="subject_user_id"' in html
     assert 'name="relation"' in html
     assert 'name="_csrf"' in html
+
+
+@pytest.mark.asyncio
+async def test_mail_admin_omits_credentials_recipient_localpart_and_body_and_requires_csrf(
+    client: QuartClient,
+    test_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from arborpress.mail.profiles import save_profile
+    from arborpress.mail.queue import enqueue_mail
+
+    await _login_admin(client, test_engine, monkeypatch)
+    factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    async with factory() as db:
+        await save_profile(
+            db,
+            {
+                "id": "admin-mail-profile",
+                "host": "smtp.example.test",
+                "port": 465,
+                "transport": "implicit_tls",
+                "username": "smtp-user-secret",
+                "secret": "smtp-password-secret",
+                "from_address": "noreply@example.test",
+            },
+        )
+        await db.commit()
+    from arborpress.core import db as db_module
+
+    db_module._engine = test_engine
+    db_module._session_factory = factory
+    job_id = await enqueue_mail(
+        "private-localpart@example.test",
+        "hidden-subject-marker",
+        "hidden-body-marker",
+        profile_id="admin-mail-profile",
+    )
+    response = await client.get("/admin/mail")
+    html = await response.get_data(as_text=True)
+    assert response.status_code == 200
+    for private_value in (
+        "smtp-user-secret",
+        "smtp-password-secret",
+        "private-localpart",
+        "hidden-subject-marker",
+        "hidden-body-marker",
+    ):
+        assert private_value not in html
+    assert "example.test" in html
+    csrf_match = re.search(r'name="_csrf" value="([^"]+)"', html)
+    assert csrf_match is not None
+
+    rejected = await client.post(f"/admin/mail/queue/{job_id}/cancel", form={})
+    assert rejected.status_code == 403
+    cancelled = await client.post(
+        f"/admin/mail/queue/{job_id}/cancel",
+        form={"_csrf": csrf_match.group(1)},
+    )
+    assert cancelled.status_code == 302

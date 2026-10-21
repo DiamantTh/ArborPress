@@ -1,0 +1,48 @@
+{% extends "admin/_base.html" %}
+{% block title %}Mail transport{% endblock %}
+{% block admin_content %}
+<section class="admin-card">
+  <h1>Mail transport</h1>
+  <p>SMTP acceptance is recorded as <code>sent</code>; it does not prove mailbox delivery. Message bodies and credentials are not shown here.</p>
+  <h2>SMTP profiles</h2>
+  {% if profiles %}
+  <table><thead><tr><th>ID</th><th>Host</th><th>Transport</th><th>Account</th><th>Enabled</th><th>Secret</th><th>Test</th></tr></thead><tbody>
+  {% for profile in profiles %}<tr>
+    <td>{{ profile.id }}</td><td>{{ profile.host }}:{{ profile.port }}</td>
+    <td>{{ profile.transport }}</td><td>{{ 'configured' if profile.auth_configured else 'anonymous' }}</td>
+    <td>{{ 'yes' if profile.enabled else 'no' }}</td><td>{{ 'stored' if profile.has_secret else 'none' }}</td>
+    <td><form method="post" action="{{ url_for('admin.mail_admin_profile_test', profile_id=profile.id) }}">{{ csrf_input() }}<button class="btn btn--small">Test connection</button></form></td>
+  </tr>{% endfor %}
+  </tbody></table>
+  {% else %}<p>No named SMTP profiles are configured.</p>{% endif %}
+
+  <h2>Outbox</h2>
+  <form method="get" action="{{ url_for('admin.mail_admin_page') }}" class="admin-form">
+    <label>Status
+      <select name="status">
+        <option value="">All</option>
+        {% for state in ['pending', 'leased', 'retry', 'sent', 'dead', 'cancelled'] %}
+          <option value="{{ state }}" {{ 'selected' if selected_status == state }}>{{ state }}</option>
+        {% endfor %}
+      </select>
+    </label><button class="btn btn--small">Filter</button>
+  </form>
+  {% if jobs %}
+  <table><thead><tr><th>Job</th><th>Profile</th><th>Recipient domain</th><th>State</th><th>Attempts</th><th>Last error</th><th>Actions</th></tr></thead><tbody>
+  {% for job in jobs %}<tr>
+    <td><code>{{ job.id }}</code></td><td>{{ job.profile_id }}</td>
+    <td>{{ job.recipient.rpartition('@')[2] }}</td><td>{{ job.status }}</td>
+    <td>{{ job.attempts }}/{{ job.max_attempts }}</td><td>{{ job.last_error or '–' }}</td>
+    <td>
+      {% if job.status in ['dead', 'retry'] %}
+      <form method="post" action="{{ url_for('admin.mail_admin_queue_action', job_id=job.id, action='retry') }}">{{ csrf_input() }}<button class="btn btn--small">Retry</button></form>
+      {% endif %}
+      {% if job.status in ['pending', 'retry', 'dead'] %}
+      <form method="post" action="{{ url_for('admin.mail_admin_queue_action', job_id=job.id, action='cancel') }}">{{ csrf_input() }}<button class="btn btn--small">Cancel</button></form>
+      {% endif %}
+    </td>
+  </tr>{% endfor %}
+  </tbody></table>
+  {% else %}<p>No matching outbox deliveries.</p>{% endif %}
+</section>
+{% endblock %}

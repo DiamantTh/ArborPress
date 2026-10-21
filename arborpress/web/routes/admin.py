@@ -241,7 +241,7 @@ async def _get_stats() -> dict:
                 await db.execute(
                     select(func.count())
                     .select_from(MailQueue)
-                    .where(MailQueue.status == MailStatus.pending)
+                    .where(MailQueue.status.in_([MailStatus.PENDING, MailStatus.RETRY]))
                 )
             ).scalar_one()
 
@@ -2484,6 +2484,100 @@ async def site_settings_page():
     )
 
 
+@admin_bp.get("/mail")
+async def mail_admin_page() -> ResponseReturnValue:
+    """SSR diagnostics for named SMTP profiles and durable outbox jobs."""
+    _require_session()
+    require_role("admin")
+    from arborpress.mail.profiles import safe_profile_data
+    from arborpress.models.mail import MailQueue, SMTPProfile
+
+    async for db in get_db_session():
+        profile_rows = (
+            (await db.execute(select(SMTPProfile).order_by(SMTPProfile.id))).scalars().all()
+        )
+        stmt = select(MailQueue).order_by(MailQueue.created_at.desc()).limit(100)
+        status = request.args.get("status", "")
+        if status in {"pending", "leased", "retry", "sent", "dead", "cancelled"}:
+            stmt = stmt.where(MailQueue.status == status)
+        jobs = (await db.execute(stmt)).scalars().all()
+    return await render_template(
+        "admin/mail.html",
+        profiles=[safe_profile_data(row) for row in profile_rows],
+        jobs=jobs,
+        selected_status=status,
+        noindex=True,
+    )
+
+
+@admin_bp.post("/mail/queue/<job_id>/<action>")
+async def mail_admin_queue_action(job_id: str, action: str) -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    await validate_csrf()
+    if action not in {"retry", "cancel"}:
+        abort(404)
+    from arborpress.mail.queue import cancel_mail, retry_mail
+
+    changed = await (retry_mail(job_id) if action == "retry" else cancel_mail(job_id))
+    await write_audit_event(
+        event_type=f"mail_{action}",
+        outcome="success" if changed else "blocked",
+        actor_id=session.get("user_id"),
+        target_id=job_id,
+        detail="outbox delivery state changed" if changed else "delivery state not eligible",
+    )
+    if not changed:
+        abort(409)
+    return redirect(url_for("admin.mail_admin_page"))
+
+
+@admin_bp.post("/mail/profiles/<profile_id>/test")
+async def mail_admin_profile_test(profile_id: str) -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    await validate_csrf()
+    from arborpress.mail.dns import SMTPDNSResolver
+    from arborpress.mail.profiles import profile_transport_data
+    from arborpress.mail.smtp import test_profile
+    from arborpress.models.mail import SMTPProfile
+
+    profile = None
+    async for db in get_db_session():
+        row = await db.get(SMTPProfile, profile_id)
+        if row is not None:
+            profile = profile_transport_data(row)
+    if profile is None:
+        abort(404)
+    outcome = await test_profile(profile)
+    dns_status = await SMTPDNSResolver().smtp_diagnostics(profile["host"], profile["port"])
+    await write_audit_event(
+        event_type="smtp_profile_tested",
+        outcome="success" if outcome.get("ok") else "failure",
+        actor_id=session.get("user_id"),
+        target_id=profile_id,
+        detail=(
+            f"result={'ok' if outcome.get('ok') else outcome.get('error', 'failed')} "
+            f"dnssec={dns_status['tlsa']['dnssec']} "
+            f"dane_records={dns_status['dane_authenticated_records']}"
+        ),
+    )
+    from quart import flash
+
+    await flash(
+        (
+            "SMTP test succeeded; DNSSEC status is "
+            f"{dns_status['tlsa']['dnssec']}, "
+            "authenticated TLSA records="
+            f"{dns_status['dane_authenticated_records']} (certificate match not checked)."
+            if outcome.get("ok")
+            else f"SMTP test failed ({outcome.get('error', 'transport error')})."
+        ),
+        "success" if outcome.get("ok") else "error",
+    )
+    return redirect(url_for("admin.mail_admin_page"))
+
+
 @admin_bp.post("/settings")
 async def site_settings_save():
     """Speichert eine einzelne Einstellungs-Sektion (via ?section=...)."""
@@ -2519,22 +2613,49 @@ async def site_settings_save():
             )
 
         elif section == "mail":
+            from arborpress.mail.profiles import save_profile
+
+            smtp_host = (form.get("smtp_host") or "localhost").strip()
+            smtp_port = int(form.get("smtp_port") or 587)
+            smtp_tls = form.get("smtp_tls") == "1"
+            smtp_user = (form.get("smtp_user") or "").strip()
+            password = (form.get("smtp_password") or "").strip()
+            if not password:
+                password = str(current.get("smtp_password") or "")
+            from_address = (form.get("from_address") or "").strip()
+            from_name = (form.get("from_name") or "ArborPress").strip()
+            # The legacy settings form is retained as a compatibility UI for the
+            # default transactional profile. Credentials are persisted only in
+            # the encrypted SMTPProfile row.
+            await save_profile(
+                db,
+                {
+                    "id": "transactional",
+                    "display_name": "Transactional",
+                    "host": smtp_host,
+                    "port": smtp_port,
+                    "transport": "implicit_tls" if smtp_tls else "starttls",
+                    "username": smtp_user or None,
+                    "secret": password or None,
+                    "from_address": from_address,
+                    "from_name": from_name,
+                    "enabled": (form.get("backend") or "none").strip() != "none",
+                },
+            )
             current.update(
                 {
                     "backend": (form.get("backend") or "none").strip(),
-                    "smtp_host": (form.get("smtp_host") or "localhost").strip(),
-                    "smtp_port": int(form.get("smtp_port") or 587),
+                    "smtp_host": smtp_host,
+                    "smtp_port": smtp_port,
                     "smtp_starttls": form.get("smtp_starttls") == "1",
-                    "smtp_tls": form.get("smtp_tls") == "1",
-                    "smtp_user": (form.get("smtp_user") or "").strip(),
-                    "from_address": (form.get("from_address") or "").strip(),
-                    "from_name": (form.get("from_name") or "ArborPress").strip(),
+                    "smtp_tls": smtp_tls,
+                    "smtp_user": smtp_user,
+                    "from_address": from_address,
+                    "from_name": from_name,
+                    "transactional_profile": "transactional",
                 }
             )
-            # Only apply password if filled in (do not delete when empty)
-            pw = (form.get("smtp_password") or "").strip()
-            if pw:
-                current["smtp_password"] = pw
+            current.pop("smtp_password", None)
 
         elif section == "comments":
             current.update(
@@ -2653,6 +2774,15 @@ async def site_settings_save():
             )
 
         await save_section(section, current, db, updated_by=user_id)
+
+    if section == "mail":
+        await write_audit_event(
+            event_type="smtp_profile_changed",
+            outcome="success",
+            actor_id=user_id,
+            target_id="transactional",
+            detail="default SMTP profile metadata or enabled state changed",
+        )
 
     audit.info("SETTINGS updated | section=%s user=%s", section, user_id)
     from quart import flash
