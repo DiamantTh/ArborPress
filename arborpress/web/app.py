@@ -23,6 +23,7 @@ from arborpress.web.routes.auth import auth_bp
 from arborpress.web.routes.federation import federation_bp, wellknown_bp
 from arborpress.web.routes.health import health_bp
 from arborpress.web.routes.install import install_bp
+from arborpress.web.routes.notifications import notifications_bp
 from arborpress.web.routes.public import public_bp
 from arborpress.web.routes.sso import sso_bp
 from arborpress.web.security import SecurityHeadersMiddleware
@@ -395,6 +396,7 @@ def create_app() -> Quart:
 
     # §1 / §6 Public routes
     app.register_blueprint(public_bp)
+    app.register_blueprint(notifications_bp)
 
     # §2 / §11 Auth + SSO
     app.register_blueprint(auth_bp, url_prefix="/auth")
@@ -490,6 +492,8 @@ def create_app() -> Quart:
     plugin_supervisor_task = None
     mail_worker_task = None
     mail_worker_stop_event = None
+    notification_worker_task = None
+    notification_worker_stop_event = None
 
     # §9 Theme static files are served only when declared in a valid manifest.
     @app.route("/static/themes/<theme_id>/<path:filename>")
@@ -521,7 +525,7 @@ def create_app() -> Quart:
     @app.before_serving
     async def _on_startup() -> None:
         nonlocal plugin_job_worker_task, plugin_supervisor_task, mail_worker_task
-        nonlocal mail_worker_stop_event
+        nonlocal mail_worker_stop_event, notification_worker_task, notification_worker_stop_event
         import asyncio
         import logging as _log
         import secrets as _sec
@@ -601,6 +605,13 @@ def create_app() -> Quart:
                 run_queue_worker(stop_event=mail_worker_stop_event)
             )
 
+            from arborpress.notifications.push import run_notification_worker
+
+            notification_worker_stop_event = asyncio.Event()
+            notification_worker_task = asyncio.create_task(
+                run_notification_worker(stop_event=notification_worker_stop_event)
+            )
+
             # Plugin startup/restarts are isolated and bounded. A broken plugin
             # does not prevent the Core or another plugin from serving.
             plugin_supervisor_task = asyncio.create_task(
@@ -609,6 +620,14 @@ def create_app() -> Quart:
 
     @app.after_serving
     async def _on_shutdown() -> None:
+        if notification_worker_task is not None:
+            if notification_worker_stop_event is not None:
+                notification_worker_stop_event.set()
+            try:
+                await asyncio.wait_for(asyncio.shield(notification_worker_task), timeout=25)
+            except TimeoutError:
+                notification_worker_task.cancel()
+                await asyncio.gather(notification_worker_task, return_exceptions=True)
         if mail_worker_task is not None:
             if mail_worker_stop_event is not None:
                 mail_worker_stop_event.set()

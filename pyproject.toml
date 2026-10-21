@@ -16,6 +16,7 @@ dependencies = [
     # Klasse A – Kern/LTS-artig stabil halten (nur gezielte Major-Wechsel)
     # Web (ASGI)
     "quart>=0.20,<0.21",
+    "pywebpush>=2.0,<3.0",
     "hypercorn>=0.18,<0.19",
     # CLI
     "typer[all]>=0.15,<1.0",

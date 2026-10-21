@@ -24,6 +24,7 @@ include directive:
 
 from __future__ import annotations
 
+import os
 import tomllib
 from pathlib import Path
 from typing import Literal
@@ -37,6 +38,7 @@ from arborpress.runtime.paths import ArborPressPaths, get_runtime_paths
 # ---------------------------------------------------------------------------
 # TOML loading helpers
 # ---------------------------------------------------------------------------
+
 
 def _deep_merge(base: dict, override: dict) -> dict:
     """Recursive dict merge; override wins on scalar conflicts.
@@ -228,6 +230,16 @@ class PluginSettings(BaseSettings):
         ]
 
 
+class NotificationSettings(BaseSettings):
+    """Notification delivery secrets and bounded worker policy."""
+
+    vapid_private_key: SecretStr = SecretStr("")
+    vapid_public_key: str = ""
+    vapid_subject: str = "mailto:admin@example.invalid"
+    ticket_ttl_seconds: int = Field(default=45, ge=30, le=60)
+    worker_poll_seconds: int = Field(default=5, ge=1, le=60)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="ARBORPRESS_",
@@ -241,6 +253,7 @@ class Settings(BaseSettings):
     auth:    AuthSettings     = Field(default_factory=AuthSettings)
     logging: LoggingSettings  = Field(default_factory=LoggingSettings)
     plugins: PluginSettings   = Field(default_factory=PluginSettings)
+    notifications: NotificationSettings = Field(default_factory=NotificationSettings)
     cache:   CacheSettings    = Field(default_factory=CacheSettings)
 
     @classmethod
@@ -256,6 +269,14 @@ class Settings(BaseSettings):
         else:
             data = _load_toml_file(path)
             anchor = path.resolve()
+        # Secret deployment injection must override a local config file. Keep
+        # this narrow until the configuration loader has a general secret
+        # source abstraction; never copy this value into the file itself.
+        env_vapid_key = "ARBORPRESS_NOTIFICATIONS__VAPID_PRIVATE_KEY"
+        if env_vapid_key in os.environ:
+            data.setdefault("notifications", {})["vapid_private_key"] = os.environ[
+                env_vapid_key
+            ]
         obj = cls.model_validate(data)
         obj._config_file = anchor
         return obj

@@ -16,10 +16,9 @@ files = [
 name = "aiohappyeyeballs"
 version = "2.7.1"
 description = "Happy Eyeballs for asyncio"
-optional = true
+optional = false
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "extra == \"geoip\" or extra == \"all\" or extra == \"search-elasticsearch\""
 files = [
     {file = "aiohappyeyeballs-2.7.1-py3-none-any.whl", hash = "sha256:9243213661e29250eb41368e5daa826fc017156c3b8a11440826b2e3ed376472"},
     {file = "aiohappyeyeballs-2.7.1.tar.gz", hash = "sha256:065665c041c42a5938ed220bdcd7230f22527fbec085e1853d2402c8a3615d9d"},
@@ -29,10 +28,9 @@ files = [
 name = "aiohttp"
 version = "3.14.5"
 description = "Async http client/server framework (asyncio)"
-optional = true
+optional = false
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "extra == \"geoip\" or extra == \"all\" or extra == \"search-elasticsearch\""
 files = [
     {file = "aiohttp-3.14.5-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:ef692a24087a699c0a4a26af45e746e0c1eae2116f6d8a5ff91d8aae2b867b45"},
     {file = "aiohttp-3.14.5-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:1220353657ad49493551f089ce02f1a348fd57ffd585bfec77f2f3c4fe3a7346"},
@@ -245,10 +243,9 @@ sa = ["sqlalchemy (>=1.3,<1.4)"]
 name = "aiosignal"
 version = "1.4.0"
 description = "aiosignal: a list of registered asynchronous callbacks"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"geoip\" or extra == \"all\" or extra == \"search-elasticsearch\""
 files = [
     {file = "aiosignal-1.4.0-py3-none-any.whl", hash = "sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e"},
     {file = "aiosignal-1.4.0.tar.gz", hash = "sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7"},
@@ -521,10 +518,9 @@ gssauth = ["gssapi ; platform_system != \"Windows\"", "sspilib ; platform_system
 name = "attrs"
 version = "26.1.0"
 description = "Classes Without Boilerplate"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"geoip\" or extra == \"all\" or extra == \"search-elasticsearch\""
 files = [
     {file = "attrs-26.1.0-py3-none-any.whl", hash = "sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309"},
     {file = "attrs-26.1.0.tar.gz", hash = "sha256:d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32"},
@@ -886,10 +882,9 @@ pycparser = {version = "*", markers = "implementation_name != \"PyPy\""}
 name = "charset-normalizer"
 version = "3.5.2"
 description = "The Real First Universal Charset Detector. Open, modern and actively maintained alternative to Chardet."
-optional = true
+optional = false
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "extra == \"geoip\" or extra == \"all\" or extra == \"search-typesense\""
 files = [
     {file = "charset_normalizer-3.5.2-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:195c26fb65950f8fce54e26349852b7bdd7c5f120aeefbcc440b8a20faaed4a3"},
     {file = "charset_normalizer-3.5.2-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:9373ad13ef0d2c0fb761e04e55bfdee5a08b52cef2c882c8fbe9935b1517152e"},
@@ -1290,10 +1285,9 @@ dotenv = ["python-dotenv"]
 name = "frozenlist"
 version = "1.8.0"
 description = "A list-like structure which implements collections.abc.MutableSequence"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"geoip\" or extra == \"all\" or extra == \"search-elasticsearch\""
 files = [
     {file = "frozenlist-1.8.0-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:b37f6d31b3dcea7deb5e9696e529a6aa4a898adc33db82da12e4c60a7c4d2011"},
     {file = "frozenlist-1.8.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:ef2b7b394f208233e471abc541cc6991f907ffd47dc72584acee3147899d6565"},
@@ -1718,6 +1712,20 @@ files = [
     {file = "hpack-4.2.0-py3-none-any.whl", hash = "sha256:858ac0b02280fa582b5080d68db0899c62a80375e0e5413a74970c5e518b6986"},
     {file = "hpack-4.2.0.tar.gz", hash = "sha256:0895cfa3b5531fc65fe439c05eb65144f123bf7a394fcaa56aa423548d8e45c0"},
 ]
+
+[[package]]
+name = "http-ece"
+version = "1.2.1"
+description = "Encrypted Content Encoding for HTTP"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "http_ece-1.2.1.tar.gz", hash = "sha256:8c6ab23116bbf6affda894acfd5f2ca0fb8facbcbb72121c11c75c33e7ce8cff"},
+]
+
+[package.dependencies]
+cryptography = ">=2.5"
 
 [[package]]
 name = "httpcore"
@@ -2514,10 +2522,9 @@ ujson = ["ujson (>=5.10.0)"]
 name = "multidict"
 version = "7.1.0"
 description = "multidict implementation"
-optional = true
+optional = false
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "extra == \"geoip\" or extra == \"all\" or extra == \"search-elasticsearch\""
 files = [
     {file = "multidict-7.1.0-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:24ad4921135a1410d95b1f1504f4901e1c64cea680014ce2c3c7a825f4f259fc"},
     {file = "multidict-7.1.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:8b8429361241da973e594d15344a0989f44fd288ea58d33a6221fb7cc0daf27e"},
@@ -2937,10 +2944,9 @@ files = [
 name = "propcache"
 version = "0.5.4"
 description = "Accelerated property cache"
-optional = true
+optional = false
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "extra == \"geoip\" or extra == \"all\" or extra == \"search-elasticsearch\""
 files = [
     {file = "propcache-0.5.4-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:b77c313314524ca9c38fbd70f73515d04597ac58c40c939bc0e71eeb4abff680"},
     {file = "propcache-0.5.4-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:8f911c395cef73c510bac566da9507bb6a43e7763d0c79138dc60ee53f11207e"},
@@ -3081,6 +3087,23 @@ files = [
     {file = "propcache-0.5.4-py3-none-any.whl", hash = "sha256:62c60aec739ed00124573cce1178138fd690c7676352d67a37328c1cf51d7468"},
     {file = "propcache-0.5.4.tar.gz", hash = "sha256:ff6b113f50bc066a698db5d944d2c6dc7507168dd3341e255a8892fd0715a558"},
 ]
+
+[[package]]
+name = "py-vapid"
+version = "1.9.6"
+description = "Simple VAPID header generation library"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "py_vapid-1.9.6-py2.py3-none-any.whl", hash = "sha256:06d775951016f63f0d0d6dd8babd333fc2f831f0769fd5db2e1ec8cfbbccc70f"},
+]
+
+[package.dependencies]
+cryptography = ">=46"
+
+[package.extras]
+test = ["coverage", "flake8", "mock (>=1.0)", "pytest"]
 
 [[package]]
 name = "pyasn1"
@@ -3491,6 +3514,28 @@ text-unidecode = ">=1.3"
 unidecode = ["Unidecode (>=1.1.1)"]
 
 [[package]]
+name = "pywebpush"
+version = "2.3.0"
+description = "WebPush publication library"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "pywebpush-2.3.0-py3-none-any.whl", hash = "sha256:3d97469fb14d4323c362319d438183737249a4115b50e146ce233e7f01e3cf98"},
+    {file = "pywebpush-2.3.0.tar.gz", hash = "sha256:d1e27db8de9e6757c1875f67292554bd54c41874c36f4b5c4ebb5442dce204f2"},
+]
+
+[package.dependencies]
+aiohttp = "*"
+cryptography = ">=2.6.1"
+http-ece = ">=1.1.0"
+py-vapid = ">=1.7.0"
+requests = ">=2.21.0"
+
+[package.extras]
+dev = ["black", "mock", "pytest"]
+
+[[package]]
 name = "quart"
 version = "0.20.0"
 description = "A Python ASGI web framework with the same API as Flask"
@@ -3541,10 +3586,9 @@ ocsp = ["cryptography (>=36.0.1)", "pyopenssl (==23.2.1)", "requests (>=2.31.0)"
 name = "requests"
 version = "2.34.2"
 description = "Python HTTP for Humans."
-optional = true
+optional = false
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "extra == \"geoip\" or extra == \"all\" or extra == \"search-typesense\""
 files = [
     {file = "requests-2.34.2-py3-none-any.whl", hash = "sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"},
     {file = "requests-2.34.2.tar.gz", hash = "sha256:f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed"},
@@ -3819,10 +3863,9 @@ typing-extensions = ">=4.15.0"
 name = "urllib3"
 version = "2.8.0"
 description = "HTTP library with thread-safe connection pooling, file post, and more."
-optional = true
+optional = false
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "extra == \"geoip\" or extra == \"all\" or extra == \"search-typesense\" or extra == \"search-elasticsearch\""
 files = [
     {file = "urllib3-2.8.0-py3-none-any.whl", hash = "sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3"},
     {file = "urllib3-2.8.0.tar.gz", hash = "sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63"},
@@ -4040,10 +4083,9 @@ h11 = ">=0.16.0,<1"
 name = "yarl"
 version = "1.25.1"
 description = "Yet another URL library"
-optional = true
+optional = false
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "extra == \"geoip\" or extra == \"all\" or extra == \"search-elasticsearch\""
 files = [
     {file = "yarl-1.25.1-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:142c06c4d6a35ee3ec5da08499805e879cb3ca7c1fbfbecb0140fe72403818d6"},
     {file = "yarl-1.25.1-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:24ce942011a61953e7d313438038f4d32ff21387b775f58a957f7a07dd55ef95"},
@@ -4218,4 +4260,4 @@ wysiwyg = ["markdownify"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.14"
-content-hash = "f06839c7831d0aa1184f144d111105d5d1149972756bc12e88b26fbb00a1ea89"
+content-hash = "d97b250a460a3ff167d4ae74ed78d9fa620579cd35fa167641a7bd47e52a2064"

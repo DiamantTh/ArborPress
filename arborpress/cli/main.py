@@ -57,6 +57,7 @@ federation_app = typer.Typer(help="Federation / ActivityPub (§5, §14)", no_arg
 mail_app = typer.Typer(help="Mail queue (§13)", no_args_is_help=True)
 mail_profiles_app = typer.Typer(help="Named SMTP profiles", no_args_is_help=True)
 mail_queue_app = typer.Typer(help="Durable mail outbox diagnostics", no_args_is_help=True)
+notifications_app = typer.Typer(help="User notification delivery", no_args_is_help=True)
 plugin_app = typer.Typer(help="Third-party plugin diagnostics and enablement", no_args_is_help=True)
 plugin_runtime_app = typer.Typer(help="Plugin-local isolated interpreters", no_args_is_help=True)
 webauthn_app = typer.Typer(help="WebAuthn / Passkey recovery (§17)", no_args_is_help=True)
@@ -73,6 +74,7 @@ app.add_typer(search_app, name="search")
 app.add_typer(cache_app, name="cache")
 app.add_typer(federation_app, name="federation")
 app.add_typer(mail_app, name="mail")
+app.add_typer(notifications_app, name="notifications")
 mail_app.add_typer(mail_profiles_app, name="profiles")
 mail_app.add_typer(mail_queue_app, name="queue")
 app.add_typer(plugin_app, name="plugins")
@@ -2785,6 +2787,16 @@ def mail_worker(interval: int = typer.Option(5, "--interval", min=1)) -> None:
     from arborpress.mail.queue import run_queue_worker
 
     asyncio.run(run_queue_worker(interval=interval))
+
+
+@notifications_app.command("worker")
+def notifications_worker(
+    interval: int | None = typer.Option(None, "--interval", min=1, max=60),
+) -> None:
+    """Run the durable Web Push delivery worker used by embedded instances."""
+    from arborpress.notifications.push import run_notification_worker
+
+    asyncio.run(run_notification_worker(interval=interval))
 
 
 # ---------------------------------------------------------------------------
