@@ -44,7 +44,7 @@ async def test_public_guest_submission_stores_only_hash_and_confirmation_consume
 
     sent: dict[str, str] = {}
 
-    async def capture_confirmation(comment, post, token):
+    async def capture_confirmation(comment, post, token, *, session=None):
         sent["token"] = token
         return True
 

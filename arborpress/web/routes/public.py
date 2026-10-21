@@ -755,7 +755,8 @@ async def author_profile(handle: str):
             Post.author_id == str(user.id),
         )
         posts_stmt = (
-            select(Post).distinct()
+            select(Post)
+            .distinct()
             .outerjoin(PostAuthorRelation, PostAuthorRelation.post_id == Post.id)
             .where(
                 authored,
@@ -987,6 +988,10 @@ async def post_comment_submit(slug: str):
             await flash(str(exc), "error")
             return redirect(url_for("public.post_detail", slug=canonical) + "#comment-form")
         comment = creation.comment
+        # Persist the confirmation delivery in the same transaction as its
+        # comment and token evidence; a crash cannot commit one without the other.
+        if not blocked and creation.confirmation_token:
+            await send_comment_confirmation(comment, post, creation.confirmation_token, session=db)
         await db.commit()
         await db.refresh(comment)
 
@@ -1003,7 +1008,6 @@ async def post_comment_submit(slug: str):
                 "success",
             )
         elif creation.confirmation_token:
-            await send_comment_confirmation(comment, post, creation.confirmation_token)
             await flash(
                 "Thank you for your comment! Please confirm it via the link "
                 "in the e-mail we sent you.",
@@ -1038,12 +1042,12 @@ async def comment_confirm(token: str):
         try:
             settings = await get_section("comments", db)
             comment = await confirm_guest_comment(db, token=token, settings=settings)
+            if comment.status == CommentStatus.PENDING_MODERATION:
+                await send_comment_notification(comment, comment.post, session=db)
             await db.commit()
         except CommentTokenError:
             await db.rollback()
         else:
-            if comment.status == CommentStatus.PENDING_MODERATION:
-                await send_comment_notification(comment, comment.post)
             result = "published" if comment.status == CommentStatus.APPROVED else "moderation"
     response = await make_response(
         redirect(url_for("public.comment_confirmation_result", state=result))
@@ -1120,8 +1124,8 @@ async def comment_confirmation_resend() -> ResponseReturnValue:
                             comment=comment,
                             ttl_hours=int(settings.get("confirmation_ttl_hours", 24)),
                         )
+                        await send_comment_confirmation(comment, comment.post, token, session=db)
                         await db.commit()
-                        await send_comment_confirmation(comment, comment.post, token)
                     else:
                         await db.rollback()
                 else:

@@ -488,6 +488,8 @@ def create_app() -> Quart:
     subscribe("comment.approved", _plugin_comment_approved)
     plugin_job_worker_task = None
     plugin_supervisor_task = None
+    mail_worker_task = None
+    mail_worker_stop_event = None
 
     # §9 Theme static files are served only when declared in a valid manifest.
     @app.route("/static/themes/<theme_id>/<path:filename>")
@@ -518,7 +520,8 @@ def create_app() -> Quart:
     # §12 DB-Capability-Detection beim Start
     @app.before_serving
     async def _on_startup() -> None:
-        nonlocal plugin_job_worker_task, plugin_supervisor_task
+        nonlocal plugin_job_worker_task, plugin_supervisor_task, mail_worker_task
+        nonlocal mail_worker_stop_event
         import asyncio
         import logging as _log
         import secrets as _sec
@@ -593,7 +596,10 @@ def create_app() -> Quart:
             # Mail-Queue-Worker starten
             from arborpress.mail.queue import run_queue_worker
 
-            asyncio.ensure_future(run_queue_worker())
+            mail_worker_stop_event = asyncio.Event()
+            mail_worker_task = asyncio.create_task(
+                run_queue_worker(stop_event=mail_worker_stop_event)
+            )
 
             # Plugin startup/restarts are isolated and bounded. A broken plugin
             # does not prevent the Core or another plugin from serving.
@@ -603,6 +609,14 @@ def create_app() -> Quart:
 
     @app.after_serving
     async def _on_shutdown() -> None:
+        if mail_worker_task is not None:
+            if mail_worker_stop_event is not None:
+                mail_worker_stop_event.set()
+            try:
+                await asyncio.wait_for(asyncio.shield(mail_worker_task), timeout=25)
+            except TimeoutError:
+                mail_worker_task.cancel()
+                await asyncio.gather(mail_worker_task, return_exceptions=True)
         if plugin_job_worker_task is not None:
             plugin_job_worker_task.cancel()
             await asyncio.gather(plugin_job_worker_task, return_exceptions=True)

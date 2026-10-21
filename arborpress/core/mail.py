@@ -1,35 +1,10 @@
-"""E-mail sending (aiosmtplib, TLS/STARTTLS).
-
-Supported backends (config.toml → [mail]):
-  backend = "none"   – no sending, logging only (default on first install)
-  backend = "smtp"   – real SMTP via aiosmtplib
-
-SMTP configuration (examples for config.toml):
-  # --- STARTTLS (port 587, recommended) ---
-  [mail]
-  backend        = "smtp"
-  smtp_host      = "mail.example.com"
-  smtp_port      = 587
-  smtp_starttls  = true
-  smtp_tls       = false
-  smtp_user      = "user@example.com"
-  smtp_password  = "secret"
-  from_address   = "blog@example.com"
-  from_name      = "My Blog"
-
-  # --- Implicit TLS (port 465) ---
-  [mail]
-  backend   = "smtp"
-  smtp_port = 465
-  smtp_tls  = true
-  smtp_starttls = false
-"""
+"""Core mail producers. Delivery is persisted to the SMTP-profile DB outbox."""
 
 from __future__ import annotations
 
 import logging
 from html import escape
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 log = logging.getLogger("arborpress.mail")
 
@@ -37,15 +12,17 @@ if TYPE_CHECKING:
     from arborpress.models.content import Comment, Post
 
 
-def _mail_s() -> dict:
+def _mail_s() -> dict[str, Any]:
     """Return mail settings (cached or defaults)."""
     from arborpress.core.site_settings import get_cached, get_defaults
+
     return get_cached("mail") or get_defaults("mail")
 
 
-def _comments_s() -> dict:
+def _comments_s() -> dict[str, Any]:
     """Return comment settings (cached or defaults)."""
     from arborpress.core.site_settings import get_cached, get_defaults
+
     return get_cached("comments") or get_defaults("comments")
 
 
@@ -53,12 +30,16 @@ def _comments_s() -> dict:
 # Base send function
 # ---------------------------------------------------------------------------
 
+
 async def _send(
     to_address: str,
     to_name: str,
     subject: str,
     body_text: str,
     body_html: str | None = None,
+    *,
+    session: Any | None = None,
+    purpose: str = "transactional",
 ) -> bool:
     """Enqueue an e-mail for delivery via the async mail queue.
 
@@ -69,10 +50,7 @@ async def _send(
     mc = _mail_s()
 
     if mc.get("backend", "none") == "none":
-        log.info(
-            "[mail:none] to=%s | subject=%s",
-            to_address, subject,
-        )
+        log.info("[mail:none] message suppressed (mail transport not configured)")
         return False
 
     from arborpress.mail.queue import enqueue_mail
@@ -83,11 +61,15 @@ async def _send(
             subject=subject,
             body_text=body_text,
             body_html=body_html,
+            purpose=purpose,
+            session=session,
         )
-        log.debug("Mail enqueued: to=%s subject=%r", to_address, subject)
+        log.debug("Mail enqueued for recipient domain=%s", to_address.rpartition("@")[2])
         return True
     except Exception as exc:
-        log.error("Failed to enqueue mail for %s: %s", to_address, exc)
+        if session is not None:
+            raise
+        log.error("Failed to enqueue mail (error_type=%s)", type(exc).__name__)
         return False
 
 
@@ -95,7 +77,10 @@ async def _send(
 # Comment confirmation e-mail (to author)
 # ---------------------------------------------------------------------------
 
-async def send_comment_confirmation(comment: Comment, post: Post, token: str) -> bool:
+
+async def send_comment_confirmation(
+    comment: Comment, post: Post, token: str, *, session: Any | None = None
+) -> bool:
     """Send the confirmation link to the comment author.
 
     The user must click this link so that the comment is forwarded
@@ -105,8 +90,8 @@ async def send_comment_confirmation(comment: Comment, post: Post, token: str) ->
 
     if not comment.author_email:
         return False
-    base_url    = get_settings().web.base_url.rstrip("/")
-    from_name   = _mail_s().get("from_name", "ArborPress")
+    base_url = get_settings().web.base_url.rstrip("/")
+    from_name = _mail_s().get("from_name", "ArborPress")
     confirm_url = f"{base_url}/comment/confirm/{token}"
     confirm_href = escape(confirm_url, quote=True)
     author_name = escape(comment.author_name)
@@ -160,6 +145,8 @@ async def send_comment_confirmation(comment: Comment, post: Post, token: str) ->
         subject=subject,
         body_text=body_text,
         body_html=body_html,
+        session=session,
+        purpose="comment-confirmation",
     )
 
 
@@ -167,7 +154,10 @@ async def send_comment_confirmation(comment: Comment, post: Post, token: str) ->
 # Admin notification (new confirmed comment)
 # ---------------------------------------------------------------------------
 
-async def send_comment_notification(comment: Comment, post: Post) -> bool:
+
+async def send_comment_notification(
+    comment: Comment, post: Post, *, session: Any | None = None
+) -> bool:
     """Notify the admin about a new (confirmed) comment.
 
     Sent after the author has confirmed via e-mail.
@@ -181,7 +171,7 @@ async def send_comment_notification(comment: Comment, post: Post) -> bool:
 
     base_url = get_settings().web.base_url.rstrip("/")
     approve_url = f"{base_url}/admin/comments/{comment.id}/approve"
-    reject_url  = f"{base_url}/admin/comments/{comment.id}/reject"
+    reject_url = f"{base_url}/admin/comments/{comment.id}/reject"
 
     subject = f"New comment awaiting approval – {post.title}"
     html_author = escape(comment.author_name)
@@ -246,4 +236,6 @@ async def send_comment_notification(comment: Comment, post: Post) -> bool:
         subject=subject,
         body_text=body_text,
         body_html=body_html,
+        session=session,
+        purpose="comment-notification",
     )

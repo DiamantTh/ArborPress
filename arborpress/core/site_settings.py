@@ -6,7 +6,7 @@ config.toml only retains: [db], [web] (host/port/secret), [auth], [logging], [pl
 Sections and their defaults:
   general    – blog title, description, language, posts per page
   theme      – active theme, external themes folder
-  mail       – SMTP backend, host, port, credentials, from address
+  mail       – mail routing and compatibility metadata (SMTP profiles own secrets)
   comments   – moderation, e-mail confirmation, rate limit
   captcha    – type, custom questions, provider keys
   federation – ActivityPub mode, instance name
@@ -53,11 +53,12 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "bg_pattern_opacity": 0.07,  # 0–1
     },
     "mail": {
-        "backend": "none",  # smtp | console | none
+        "backend": "none",  # none | profiles (legacy smtp is migrated on first use)
+        "transactional_profile": "transactional",
+        "bulk_profile": "",
         "smtp_host": "localhost",
         "smtp_port": 587,
         "smtp_user": "",
-        "smtp_password": "",  # NOT displayed in the browser
         "smtp_tls": False,  # real TLS (port 465)
         "smtp_starttls": True,  # STARTTLS upgrade (port 587)
         "from_address": "noreply@example.com",
