@@ -70,6 +70,29 @@ class NotificationChannelPreference(Base):
     )
 
 
+class NotificationTypePreference(Base):
+    """Explicit per-type channel choices; omitted rows use conservative catalog defaults."""
+
+    __tablename__ = "notification_type_preferences"
+    __table_args__ = (
+        UniqueConstraint("user_id", "notification_type", name="uq_notification_type_preference"),
+        Index("ix_notification_type_preference_user", "user_id", "notification_type"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    notification_type: Mapped[str] = mapped_column(String(96), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    live_wss_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    web_push_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    email_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class NotificationWSTicket(Base):
     """Short-lived, one-shot proof bound to one authenticated session and origin."""
 

@@ -137,6 +137,7 @@ packages = [{ include = "arborpress" }]
 include = [
     { path = "arborpress/**/*.css", format = ["sdist", "wheel"] },
     { path = "arborpress/**/*.html", format = ["sdist", "wheel"] },
+    { path = "arborpress/mail/templates/**/*.j2", format = ["sdist", "wheel"] },
     { path = "arborpress/**/*.ini", format = ["sdist", "wheel"] },
     { path = "arborpress/**/*.json", format = ["sdist", "wheel"] },
     { path = "arborpress/**/*.js", format = ["sdist", "wheel"] },

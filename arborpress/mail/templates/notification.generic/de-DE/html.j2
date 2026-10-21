@@ -1,0 +1,7 @@
+<!doctype html><html lang="de"><meta charset="utf-8"><body>
+<h1>{{ notification_title }}</h1>
+<p>Hallo {{ display_name }},</p>
+<p>{{ notification_message }}</p>
+{% if action_url %}<p><a href="{{ action_url }}">Details ansehen</a></p>{% endif %}
+<p>{{ site_name }}</p>
+</body></html>

@@ -53,6 +53,7 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(128), nullable=False)
     email: Mapped[str | None] = mapped_column(String(254), unique=True, nullable=True)
+    locale: Mapped[str | None] = mapped_column(String(16), nullable=True)
     account_type: Mapped[AccountType] = mapped_column(
         Enum(AccountType), nullable=False, default=AccountType.PUBLIC
     )

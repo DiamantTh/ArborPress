@@ -67,6 +67,9 @@ async def enqueue_mail(
     headers: dict[str, str] | None = None,
     envelope_sender: str | None = None,
     session: Any = None,
+    template_id: str | None = None,
+    template_locale: str | None = None,
+    template_revision: str | None = None,
 ) -> str:
     """Persist one envelope delivery. Passing ``session`` makes it transactional
     with the producer's domain write; otherwise the function owns its transaction.
@@ -155,6 +158,9 @@ async def enqueue_mail(
             headers=headers or {},
             profile_id=profile_id,
             message_type=purpose,
+            template_id=template_id,
+            template_locale=template_locale,
+            template_revision=template_revision,
             message_id=_message_id(row_id),
             envelope_sender=envelope_sender,
             status=MailStatus.PENDING,

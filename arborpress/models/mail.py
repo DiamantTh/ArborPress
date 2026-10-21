@@ -6,7 +6,19 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, LargeBinary, String, Text, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from arborpress.core.db import Base
@@ -74,6 +86,9 @@ class MailQueue(Base):
     headers: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
     profile_id: Mapped[str] = mapped_column(String(64), nullable=False, default="transactional")
     message_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    template_id: Mapped[str | None] = mapped_column(String(96), nullable=True)
+    template_locale: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    template_revision: Mapped[str | None] = mapped_column(String(96), nullable=True)
     message_id: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     envelope_sender: Mapped[str | None] = mapped_column(String(254), nullable=True)
     pgp_encrypted: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -94,3 +109,51 @@ class MailQueue(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class MailTemplateOverride(Base):
+    """Current instance-local template source; package files remain immutable."""
+
+    __tablename__ = "mail_template_overrides"
+    __table_args__ = (UniqueConstraint("template_id", "locale", name="uq_mail_template_override"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    template_id: Mapped[str] = mapped_column(String(96), nullable=False)
+    locale: Mapped[str] = mapped_column(String(16), nullable=False)
+    subject_source: Mapped[str] = mapped_column(Text, nullable=False)
+    plain_source: Mapped[str] = mapped_column(Text, nullable=False)
+    html_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    current_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class MailTemplateRevision(Base):
+    """Immutable validated source snapshot for an override or reset operation."""
+
+    __tablename__ = "mail_template_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "template_id", "locale", "revision_number", name="uq_mail_template_revision_number"
+        ),
+        Index("ix_mail_template_revision_history", "template_id", "locale", "revision_number"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    template_id: Mapped[str] = mapped_column(String(96), nullable=False)
+    locale: Mapped[str] = mapped_column(String(16), nullable=False)
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    actor_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    subject_source: Mapped[str] = mapped_column(Text, nullable=False)
+    plain_source: Mapped[str] = mapped_column(Text, nullable=False)
+    html_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    previous_revision_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("mail_template_revisions.id", ondelete="SET NULL"), nullable=True
+    )

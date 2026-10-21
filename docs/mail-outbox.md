@@ -61,6 +61,20 @@ Administrative diagnostics are server-rendered at `/admin/mail`; they omit
 message bodies and recipient local-parts. Retry/cancel forms require the normal
 admin role and CSRF validation.
 
+Core producers render registered templates before enqueueing. The subject and
+both bodies are snapshotted in `mail_queue`; `template_id`, selected locale, and
+the effective package/override revision are retained as diagnostic metadata.
+Retries therefore cannot change content after an administrator edits a
+template. Guest confirmation and comment review mail use package defaults by
+stable ID, and notification email uses the same outbox only when the user opts
+into email delivery for that notification type.
+
+Template defaults are package resources under `arborpress/mail/templates/` and
+are not themes. Administrators manage instance-local overrides, preview, reset,
+and immutable revisions at `/admin/mail/templates`. Edits use a strict Jinja
+sandbox, a registered context allowlist, HTML sanitization, CSRF, admin access,
+and step-up authentication. Already queued mail remains unchanged.
+
 ## Envelope, VERP, and DSN
 
 `From`, visible recipients, `Reply-To`, and custom headers are distinct from the
