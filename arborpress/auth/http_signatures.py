@@ -158,6 +158,15 @@ async def verify_request_signature(
     valid, reason = verify_legacy_signature_with_pem(
         method=method, path=path, headers=normalized, body=body, pem=pem
     )
+    if not valid and reason == "signature_invalid":
+        # A remote actor may have rotated the key behind a stable key ID. Make
+        # exactly one guarded refresh and retry; never accept a mismatched owner.
+        refreshed = await resolve_remote_key(db, key_id, federation_settings, force_refresh=True)
+        if refreshed is not None and refreshed[0] == owner and refreshed[1] != pem:
+            owner, pem = refreshed
+            valid, reason = verify_legacy_signature_with_pem(
+                method=method, path=path, headers=normalized, body=body, pem=pem
+            )
     return SignatureResult(valid, reason, owner if valid else None, key_id)
 
 

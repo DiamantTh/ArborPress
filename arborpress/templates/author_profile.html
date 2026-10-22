@@ -5,6 +5,7 @@
 <header class="author-profile">
   <h1>{{ author.display_name }}</h1>
   <p class="author-profile__handle">@{{ author.username }}</p>
+  {% if federation_active and federation_actor %}<p><span aria-label="ActivityPub Federation">Fediverse:</span> <a href="{{ federation_actor.actor_uri | e }}" rel="me nofollow noopener">@{{ federation_actor.preferred_username }}@{{ federation_actor.actor_uri.split('/')[2] }}</a></p>{% endif %}
   {% if author.bio %}<p class="author-profile__bio">{{ author.bio | e | nl2br }}</p>{% endif %}
 </header>
 <section aria-labelledby="author-posts-heading">

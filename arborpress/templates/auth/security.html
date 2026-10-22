@@ -12,6 +12,11 @@
   {% endif %}
 
   <section>
+    <h2>{{ _('Fediverse / ActivityPub') }}</h2>
+    <p>{{ _('Die Föderation ist eine getrennte öffentliche Identität und kann in Ihrem Konto verwaltet werden.') }}</p>
+    <a class="btn" href="{{ url_for('auth.federation_account_page') }}">{{ _('Fediverse-Einstellungen') }}</a>
+  </section>
+  <section>
     <h2>{{ _('FIDO2-Sicherheitsschlüssel — EMPFOHLEN') }}</h2>
     {% if recovery_only %}
     <a class="btn btn--primary" href="{{ url_for('auth.register_page') }}">

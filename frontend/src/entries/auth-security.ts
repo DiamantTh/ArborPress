@@ -52,7 +52,8 @@ function installSecurity(root: HTMLElement): void {
   }
 
   for (const button of root.querySelectorAll<HTMLButtonElement>('.stepup-redirect')) {
-    button.addEventListener('click', async () => {
+    button.addEventListener('click', async (event) => {
+      event.preventDefault()
       button.disabled = true
       if (error) error.hidden = true
       try {
@@ -118,7 +119,9 @@ function installSecurity(root: HTMLElement): void {
   })
 
   for (const button of root.querySelectorAll<HTMLButtonElement>('.stepup-remove, .recovery-remove')) {
-    button.addEventListener('click', async () => {
+    button.addEventListener('click', async (event) => {
+      // Step-up must complete before a surrounding SSR form is allowed to post.
+      event.preventDefault()
       const url = button.dataset.url
       if (!url) return
       button.disabled = true
@@ -130,10 +133,10 @@ function installSecurity(root: HTMLElement): void {
           if (!action || !target) throw new Error('Die Aktion ist unvollständig konfiguriert.')
           await authenticateFor(action, target, button.dataset.allowTotp === 'true')
         }
-        await postAuthJson(url, {}, 'Credential konnte nicht entfernt werden.')
+        await postAuthJson(url, {}, 'Aktion konnte nicht ausgeführt werden.')
         window.location.reload()
       } catch (caught: unknown) {
-        showFailure(caught, 'Credential konnte nicht entfernt werden.')
+        showFailure(caught, 'Aktion konnte nicht ausgeführt werden.')
       } finally {
         button.disabled = false
       }

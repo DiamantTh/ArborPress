@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from arborpress.core.validators import _ip_is_blocked
 
@@ -119,8 +120,14 @@ async def fetch_remote(
     max_bytes: int = MAX_REMOTE_BYTES,
     allowed_types: frozenset[str] = ACTIVITY_MEDIA_TYPES,
     transport: httpx.AsyncBaseTransport | None = None,
+    db: AsyncSession | None = None,
+    signing_actor_id: str | None = None,
 ) -> RemoteResponse:
-    """Fetch a bounded ActivityPub document, rechecking each redirect hop."""
+    """Fetch bounded ActivityPub data; optionally sign each guarded GET hop.
+
+    Signed fetch is opt-in per call and requires an enabled local actor. The
+    URL, domain policy, redirect and peer checks remain identical either way.
+    """
     current = url
     async with _FETCH_SEMAPHORE:
         async with httpx.AsyncClient(
@@ -132,8 +139,27 @@ async def fetch_remote(
         ) as client:
             for redirect_count in range(MAX_REDIRECTS + 1):
                 await validate_remote_url(current)
+                headers = {}
+                if signing_actor_id is not None:
+                    if db is None:
+                        raise FederationFetchError("signed_fetch_database_required")
+                    from urllib.parse import urlsplit
+
+                    from arborpress.auth.http_signatures import sign_legacy_request
+
+                    target = urlsplit(current)
+                    target_path = target.path or "/"
+                    if target.query:
+                        target_path += "?" + target.query
+                    headers = await sign_legacy_request(
+                        db,
+                        signing_actor_id,
+                        method="GET",
+                        path=target_path,
+                        host=target.netloc,
+                    )
                 try:
-                    async with client.stream("GET", current) as response:
+                    async with client.stream("GET", current, headers=headers) as response:
                         peer = _peer_address(response)
                         if peer is not None:
                             ip = ipaddress.ip_address(peer)

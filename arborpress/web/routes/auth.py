@@ -23,9 +23,11 @@ import secrets
 import uuid
 from base64 import urlsafe_b64encode
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 from urllib.parse import urlparse
 
 from quart import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
+from quart.typing import ResponseReturnValue
 from sqlalchemy import func, select, update
 
 from arborpress.auth.stepup import (
@@ -147,6 +149,10 @@ _AUTHENTICATED_ENDPOINTS = frozenset({
     "auth.totp_remove",
     "auth.webauthn_credential_remove",
     "auth.account_security_page",
+    "auth.federation_account_page",
+    "auth.federation_account_enable",
+    "auth.federation_account_disable",
+    "auth.federation_account_rotate_key",
     "auth.recovery_complete",
 })
 
@@ -1837,6 +1843,184 @@ async def account_security_page():
             recovery_baseline_webauthn_ids=recovery_baseline_webauthn_ids,
             recovery_baseline_totp_ids=recovery_baseline_totp_ids,
         )
+
+
+@auth_bp.get("/federation")
+async def federation_account_page() -> ResponseReturnValue:
+    """Per-author federation opt-in and stable identity management."""
+    user_id = str(session.get("user_id") or "")
+    if not user_id or session.get("recovery_only"):
+        abort(403)
+    from arborpress.core.site_settings import get_section
+    from arborpress.federation.policy import canonical_origin, federation_is_enabled
+    from arborpress.models.federation import FederationActorKeyHistory, LocalFederationActor
+    from arborpress.models.user import (
+        AccountType,
+        ActorKeypair,
+        Follower,
+        FollowerDirection,
+        FollowerState,
+        User,
+    )
+
+    async for db in get_db_session():
+        user = await db.get(User, user_id)
+        if user is None or not user.is_active:
+            abort(401)
+        settings = await get_section("federation", db)
+        actor = (
+            await db.execute(
+                select(LocalFederationActor).where(LocalFederationActor.user_id == user_id)
+            )
+        ).scalar_one_or_none()
+        key = (
+            await db.get(ActorKeypair, actor.current_keypair_id)
+            if actor and actor.current_keypair_id
+            else None
+        )
+        history = (
+            await db.scalars(
+                select(FederationActorKeyHistory)
+                .where(FederationActorKeyHistory.actor_id == actor.id)
+                .order_by(FederationActorKeyHistory.retired_at.desc())
+                .limit(5)
+            )
+        ).all() if actor else []
+        followers = int(
+            await db.scalar(
+                select(func.count(Follower.id)).where(
+                    Follower.local_user_id == user_id,
+                    Follower.direction == FollowerDirection.INBOUND,
+                    Follower.state == FollowerState.ACCEPTED,
+                )
+            ) or 0
+        )
+    origin = "unavailable"
+    try:
+        origin = canonical_origin()
+    except ValueError:
+        pass
+    actor_url = actor.actor_uri if actor else f"{origin}/ap/actor/{user.username}"
+    return await render_template(
+        "auth/federation.html", user=user, actor=actor, actor_url=actor_url, key=key,
+        history=history, followers=followers, federation_enabled=federation_is_enabled(settings),
+        allow_per_account=bool(settings.get("allow_per_account_federation", True)),
+        can_federate=user.account_type == AccountType.PUBLIC and user.is_active,
+        identity_handle_matches=actor is None or actor.preferred_username == user.username,
+        noindex=True,
+    )
+
+
+@auth_bp.post("/federation/enable")
+async def federation_account_enable() -> ResponseReturnValue:
+    user_id = str(session.get("user_id") or "")
+    if not user_id or session.get("recovery_only"):
+        abort(403)
+    from arborpress.core.audit import write_audit_event
+    from arborpress.core.site_settings import get_section
+    from arborpress.federation.actors import enable_local_actor
+    from arborpress.federation.policy import federation_is_enabled
+    from arborpress.models.user import User
+
+    async for db in get_db_session():
+        try:
+            await assert_stepup(
+                cast(dict[str, Any], session), user_id, "toggle_actor_federation", target=user_id
+            )
+        except PermissionError:
+            return jsonify({"error": "step_up_required"}), 403
+        user = await db.get(User, user_id)
+        settings = await get_section("federation", db)
+        if user is None or not federation_is_enabled(settings):
+            abort(409, description="Federation is unavailable")
+        if not settings.get("allow_per_account_federation", True):
+            abort(403)
+        user.federation_opt_out = False
+        try:
+            actor = await enable_local_actor(db, user)
+        except (ValueError, RuntimeError) as exc:
+            abort(409, description=str(exc))
+        await write_audit_event(
+            event_type="federation.actor.enabled", outcome="success", actor_id=user_id,
+            target_id=actor.id, detail="explicit author federation opt-in", db=db
+        )
+        await db.commit()
+    if request.is_json:
+        return jsonify({"status": "enabled"})
+    return redirect(url_for("auth.federation_account_page"))
+
+
+@auth_bp.post("/federation/disable")
+async def federation_account_disable() -> ResponseReturnValue:
+    user_id = str(session.get("user_id") or "")
+    if not user_id or session.get("recovery_only"):
+        abort(403)
+    from arborpress.core.audit import write_audit_event
+    from arborpress.federation.actors import disable_local_actor
+    from arborpress.models.federation import LocalFederationActor
+    from arborpress.models.user import User
+
+    async for db in get_db_session():
+        try:
+            await assert_stepup(
+                cast(dict[str, Any], session), user_id, "toggle_actor_federation", target=user_id
+            )
+        except PermissionError:
+            return jsonify({"error": "step_up_required"}), 403
+        user = await db.get(User, user_id)
+        actor = (
+            await db.execute(
+                select(LocalFederationActor).where(LocalFederationActor.user_id == user_id)
+            )
+        ).scalar_one_or_none()
+        if user is None or actor is None:
+            abort(404)
+        await disable_local_actor(db, actor)
+        user.federation_opt_out = True
+        await write_audit_event(
+            event_type="federation.actor.disabled", outcome="success", actor_id=user_id,
+            target_id=actor.id, detail="author federation opt-out; remote copies may remain", db=db
+        )
+        await db.commit()
+    if request.is_json:
+        return jsonify({"status": "disabled"})
+    return redirect(url_for("auth.federation_account_page"))
+
+
+@auth_bp.post("/federation/rotate-key")
+async def federation_account_rotate_key() -> ResponseReturnValue:
+    user_id = str(session.get("user_id") or "")
+    if not user_id or session.get("recovery_only"):
+        abort(403)
+    from arborpress.core.audit import write_audit_event
+    from arborpress.federation.actors import rotate_local_actor_key
+    from arborpress.models.federation import LocalFederationActor
+
+    async for db in get_db_session():
+        actor = (
+            await db.execute(
+                select(LocalFederationActor).where(LocalFederationActor.user_id == user_id)
+            )
+        ).scalar_one_or_none()
+        if actor is None or not actor.enabled:
+            abort(404)
+        try:
+            await assert_stepup(
+                cast(dict[str, Any], session), user_id, "rotate_key", target=actor.id
+            )
+            _, rotated_at = await rotate_local_actor_key(db, actor.id)
+        except PermissionError:
+            return jsonify({"error": "step_up_required"}), 403
+        except ValueError as exc:
+            abort(409, description=str(exc))
+        await write_audit_event(
+            event_type="federation.actor.key_rotated", outcome="success", actor_id=user_id,
+            target_id=actor.id, detail=f"rotated_at={rotated_at.isoformat()}", db=db
+        )
+        await db.commit()
+    if request.is_json:
+        return jsonify({"status": "rotated"})
+    return redirect(url_for("auth.federation_account_page"))
 
 
 @auth_bp.post("/recovery/complete")

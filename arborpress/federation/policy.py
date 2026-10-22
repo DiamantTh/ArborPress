@@ -44,10 +44,12 @@ async def domain_allowed(db: AsyncSession, domain: str, settings: dict[str, Any]
         normalized = normalize_domain(domain)
     except FederationFetchError:
         return False
-    result = await db.execute(
-        select(FederationDomainRule).where(FederationDomainRule.domain == normalized)
-    )
-    rule = result.scalar_one_or_none()
+    rules = (await db.scalars(select(FederationDomainRule))).all()
+    matching = [
+        item for item in rules
+        if normalized == item.domain
+        or (item.include_subdomains and normalized.endswith("." + item.domain))
+    ]
     legacy_blocks: set[str] = set()
     for item in settings.get("inbox_blocklist_domains", []):
         if not isinstance(item, str):
@@ -56,8 +58,8 @@ async def domain_allowed(db: AsyncSession, domain: str, settings: dict[str, Any]
             legacy_blocks.add(normalize_domain(item))
         except FederationFetchError:
             continue
-    if normalized in legacy_blocks or (rule and rule.rule == "block"):
+    if normalized in legacy_blocks or any(item.rule == "block" for item in matching):
         return False
     if settings.get("domain_policy", "open") == "limited" or settings.get("allowlist_mode", False):
-        return bool(rule and rule.rule == "allow")
+        return any(item.rule == "allow" for item in matching)
     return True

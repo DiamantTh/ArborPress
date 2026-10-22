@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 
 from cryptography.fernet import Fernet
@@ -58,6 +59,10 @@ async def enable_local_actor(db: AsyncSession, user: User) -> LocalFederationAct
         select(LocalFederationActor).where(LocalFederationActor.user_id == str(user.id))
     )
     existing = existing_result.scalar_one_or_none()
+    if existing is not None and existing.preferred_username != user.username:
+        # A handle change is an identity migration, not a side effect of a
+        # routine enable/re-enable operation. Keep the stable actor mapping.
+        raise RuntimeError("preferred_username_change_requires_explicit_migration")
     actor_uri = existing.actor_uri if existing else f"{origin}/ap/actor/{user.username}"
     key_result = await db.execute(select(ActorKeypair).where(ActorKeypair.user_id == str(user.id)))
     keypair = key_result.scalar_one_or_none()
@@ -92,7 +97,6 @@ async def enable_local_actor(db: AsyncSession, user: User) -> LocalFederationAct
     await db.flush()
     if existing:
         existing.enabled = True
-        existing.preferred_username = user.username
         existing.current_keypair_id = keypair.id
         await db.flush()
         return existing
@@ -112,3 +116,61 @@ async def disable_local_actor(db: AsyncSession, actor: LocalFederationActor) -> 
     actor.enabled = False
     actor.updated_at = datetime.now(UTC).replace(tzinfo=None)
     await db.flush()
+
+
+async def rotate_local_actor_key(
+    db: AsyncSession, actor_id: str
+) -> tuple[LocalFederationActor, datetime]:
+    """Atomically replace an actor's current key and retain only retired public metadata.
+
+    The key ID remains the actor's stable ``#main-key`` identifier. Remote caches
+    must refresh the actor document after a verification failure; ArborPress
+    never signs with the retired key after this transaction commits.
+    """
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    from arborpress.models.federation import FederationActorKeyHistory
+    from arborpress.models.user import ActorKeypair
+
+    actor = (
+        await db.execute(
+            select(LocalFederationActor)
+            .where(LocalFederationActor.id == actor_id, LocalFederationActor.enabled.is_(True))
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if actor is None or actor.current_keypair_id is None:
+        raise ValueError("enabled_actor_with_current_key_required")
+    current = (
+        await db.execute(
+            select(ActorKeypair)
+            .where(ActorKeypair.id == actor.current_keypair_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if current is None or current.algorithm != "rsa-sha256":
+        raise ValueError("current_actor_rsa_key_required")
+
+    old_public = serialization.load_pem_public_key(current.public_key_pem.encode("ascii"))
+    fingerprint = hashlib.sha256(
+        old_public.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    ).hexdigest()
+    now = datetime.now(UTC).replace(tzinfo=None)
+    created_at = current.rotated_at or current.created_at or now
+    db.add(
+        FederationActorKeyHistory(
+            actor_id=actor.id,
+            key_id=current.key_id_url,
+            public_key_pem=current.public_key_pem,
+            fingerprint_sha256=fingerprint,
+            created_at=created_at,
+            retired_at=now,
+        )
+    )
+    public_pem, encrypted_private = generate_rsa_keypair()
+    current.public_key_pem = public_pem
+    current.private_key_enc = encrypted_private
+    current.rotated_at = now
+    actor.updated_at = now
+    await db.flush()
+    return actor, now

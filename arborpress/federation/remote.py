@@ -40,6 +40,7 @@ async def fetch_remote_actor(
     settings: dict[str, Any],
     *,
     force: bool = False,
+    signing_actor_id: str | None = None,
 ) -> RemoteActor:
     parts = urlsplit(actor_uri)
     try:
@@ -57,7 +58,16 @@ async def fetch_remote_actor(
     if cached and cached.expires_at > now and not force:
         return cached
 
-    response = await fetch_remote(normalized)
+    try:
+        response = await fetch_remote(normalized, db=db, signing_actor_id=signing_actor_id)
+    except FederationFetchError as exc:
+        if cached is not None and str(exc) in {"http_status_404", "http_status_410"}:
+            cached.health_state = "gone"
+            cached.last_error = str(exc)
+            cached.fetched_at = now
+            cached.expires_at = now + ACTOR_TTL
+            await db.flush()
+        raise
     try:
         document = json.loads(response.body)
     except (ValueError, UnicodeDecodeError) as exc:
@@ -115,6 +125,8 @@ async def fetch_remote_actor(
         cached.expires_at = now + ACTOR_TTL
         cached.etag = response.headers.get("etag")
         cached.modified = response.headers.get("last-modified")
+        cached.health_state = "active"
+        cached.last_error = None
     await db.flush()
 
     keys = document.get("publicKey", [])

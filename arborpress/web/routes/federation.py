@@ -25,7 +25,7 @@ from typing import Any, cast
 from urllib.parse import urlparse
 
 import bleach  # type: ignore[import-untyped]
-from quart import Blueprint, abort, jsonify, request
+from quart import Blueprint, Response, abort, jsonify, request
 from quart.typing import ResponseReturnValue
 from sqlalchemy import func, select
 
@@ -64,6 +64,52 @@ def _federation_active(settings: dict[str, Any]) -> bool:
         return federation_is_enabled(settings)
     except Exception:
         return False
+
+
+async def _require_signed_fetch(settings: dict[str, Any]) -> None:
+    """Enforce the optional authorized-fetch policy on ActivityPub GET routes."""
+    if not settings.get("authorized_fetch", False):
+        return
+    from arborpress.auth.http_signatures import verify_request_signature
+
+    path = request.path
+    if request.query_string:
+        path += "?" + request.query_string.decode("latin-1")
+    async for db in get_db_session():
+        result = await verify_request_signature(
+            method="GET",
+            path=path,
+            headers=dict(request.headers),
+            body=b"",
+            db=db,
+            federation_settings=settings,
+        )
+        if not result.valid or result.actor_uri is None:
+            from arborpress.federation.operations import record_signature_failure
+
+            await record_signature_failure(db, result.reason)
+            await db.commit()
+            abort(401, description="A valid ActivityPub HTTP Signature is required")
+        from arborpress.federation.policy import domain_allowed
+        from arborpress.federation.security import normalize_domain
+
+        try:
+            domain = normalize_domain(urlparse(result.actor_uri).hostname or "")
+        except ValueError:
+            abort(401)
+        if not await domain_allowed(db, domain, settings):
+            abort(403)
+        return
+
+
+@federation_bp.after_request
+async def _federation_cache_policy(response: Response) -> Response:
+    """Keep negotiated/signature-gated federation representations isolated."""
+    response.headers.add("Vary", "Accept")
+    if _fed().get("authorized_fetch", False):
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers.add("Vary", "Signature")
+    return response
 
 
 async def _load_local_actor(route_name: str) -> Any | None:
@@ -302,8 +348,16 @@ async def _receive_inbox(fed: dict[str, Any], target_actor: Any | None) -> Respo
             federation_settings=fed,
         )
         if not signature.valid:
+            from arborpress.federation.operations import record_signature_failure
+
+            await record_signature_failure(db, signature.reason)
+            await db.commit()
             abort(401, "HTTP Signature invalid")
         if signature.actor_uri != actor_uri:
+            from arborpress.federation.operations import record_signature_failure
+
+            await record_signature_failure(db, "actor_mismatch")
+            await db.commit()
             abort(401, "Activity actor does not own signing key")
         if not check_rate_limit(f"federation-actor:{signature.actor_uri}", "60/minute"):
             return jsonify({"error": "rate_limited"}), 429
@@ -507,6 +561,7 @@ async def ap_actor(handle: str) -> ResponseReturnValue:
     fed = _fed()
     if not _federation_active(fed):
         abort(404)
+    await _require_signed_fetch(fed)
     local_actor = await _load_local_actor(handle)
     if local_actor is None:
         abort(404)
@@ -574,6 +629,7 @@ async def ap_outbox(handle: str) -> ResponseReturnValue:
     fed = _fed()
     if not _federation_active(fed):
         abort(404)
+    await _require_signed_fetch(fed)
     if fed.get("mode", "disabled") == "inbox_only":
         abort(405)
 
@@ -649,6 +705,7 @@ async def _follower_collection(handle: str, direction: str) -> ResponseReturnVal
     fed = _fed()
     if not _federation_active(fed):
         abort(404)
+    await _require_signed_fetch(fed)
     actor = await _load_local_actor(handle)
     if actor is None:
         abort(404)
@@ -710,6 +767,7 @@ async def ap_object(obj_id: str) -> ResponseReturnValue:
     fed = _fed()
     if not _federation_active(fed):
         abort(404)
+    await _require_signed_fetch(fed)
     try:
         origin = _base_url()
     except FederationFetchError:
@@ -762,6 +820,7 @@ async def ap_comment_object(comment_id: str) -> ResponseReturnValue:
     fed = _fed()
     if not _federation_active(fed):
         abort(404)
+    await _require_signed_fetch(fed)
     import uuid
 
     try:

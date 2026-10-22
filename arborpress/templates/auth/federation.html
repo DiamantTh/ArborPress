@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Fediverse – {{ user.display_name }}{% endblock %}
+{% set noindex = true %}
+{% block body_class %}auth-page{% endblock %}
+{% block content %}
+<div class="auth-box auth-box--wide" data-ap-auth-security>
+  <h1>Fediverse / ActivityPub</h1>
+  <p>Diese öffentliche Identität ist unabhängig von Ihrem ArborPress-Login. Die Instanzföderation ist derzeit <strong>{{ 'aktiv' if federation_enabled else 'deaktiviert' }}</strong>.</p>
+  {% if not allow_per_account %}<p>Die Administration hat Autor-Opt-ins deaktiviert.</p>{% endif %}
+  {% if not can_federate %}<p>Nur aktive öffentliche Autorprofile können eine Fediverse-Identität aktivieren.</p>{% endif %}
+  <section>
+    <h2>Identität</h2>
+    {% if actor %}
+      <p>Status: <strong>{{ 'aktiv' if actor.enabled else 'deaktiviert' }}</strong></p>
+      <p>Fediversehandle: <code>@{{ actor.preferred_username }}@{{ actor.actor_uri.split('/')[2] }}</code></p>
+      {% if not identity_handle_matches %}<p role="status">Ihr ArborPress-Benutzername wurde geändert. Die veröffentlichte Fediverse-Identität bleibt unverändert; eine sichere Handle-Migration ist derzeit nicht verfügbar.</p>{% endif %}
+      <p>Actor URL: <a href="{{ actor.actor_uri | e }}">{{ actor.actor_uri }}</a></p>
+      <p>Angenommenen Follower: {{ followers }}</p>
+      <p>Aktueller Schlüssel: {{ key.algorithm if key else 'nicht verfügbar' }} · erstellt {{ (key.rotated_at or key.created_at) if key else '–' }}</p>
+      {% if actor.enabled %}
+      <form method="post" action="{{ url_for('auth.federation_account_disable') }}">
+        {{ csrf_input() }}
+        <button class="btn stepup-remove" type="submit" data-action="toggle_actor_federation" data-target="{{ user.id }}" data-url="{{ url_for('auth.federation_account_disable') }}">Föderation für mein Konto deaktivieren</button>
+      </form>
+      {% else %}
+      <form method="post" action="{{ url_for('auth.federation_account_enable') }}">
+        {{ csrf_input() }}
+        <button class="btn btn--primary {{ 'stepup-remove' if federation_enabled and allow_per_account and can_federate and identity_handle_matches else '' }}" type="submit" data-action="toggle_actor_federation" data-target="{{ user.id }}" data-url="{{ url_for('auth.federation_account_enable') }}" {% if not federation_enabled or not allow_per_account or not can_federate or not identity_handle_matches %}disabled{% endif %}>Erneut aktivieren</button>
+      </form>
+      {% endif %}
+      {% if actor.enabled %}
+      <button class="btn btn--small stepup-remove" disabled data-action="rotate_key" data-target="{{ actor.id }}" data-url="{{ url_for('auth.federation_account_rotate_key') }}">Signaturschlüssel rotieren</button>
+      {% endif %}
+      <h3>Frühere Schlüssel (nur öffentlicher Fingerabdruck)</h3>
+      <ul>{% for item in history %}<li><code>{{ item.fingerprint_sha256 }}</code> · retired {{ item.retired_at }}</li>{% else %}<li>Keine frühere Rotation.</li>{% endfor %}</ul>
+    {% else %}
+      <p>Vorgesehener Handle: <code>@{{ user.username }}@{{ actor_url.split('/')[2] }}</code></p>
+      <p>Actor URL: <code>{{ actor_url }}</code></p>
+      <p>Beim Aktivieren wird diese stabile Actor-ID registriert und ein Signaturschlüssel erzeugt.</p>
+      <form method="post" action="{{ url_for('auth.federation_account_enable') }}">
+        {{ csrf_input() }}
+        <button class="btn btn--primary {{ 'stepup-remove' if federation_enabled and allow_per_account and can_federate else '' }}" type="submit" data-action="toggle_actor_federation" data-target="{{ user.id }}" data-url="{{ url_for('auth.federation_account_enable') }}" {% if not federation_enabled or not allow_per_account or not can_federate %}disabled{% endif %}>Fediverse-Identität aktivieren</button>
+      </form>
+    {% endif %}
+  </section>
+  <section>
+    <h2>Was die Aktivierung bedeutet</h2>
+    <p>Öffentliche Beiträge und freigegebene Kommentare können an bekannte fremde Server übertragen werden. Diese Server können eigene Kopien behalten. Das Deaktivieren stoppt neue Aktivitäten, garantiert aber nicht die Löschung bereits verteilter Kopien.</p>
+  </section>
+  <p id="security-error" class="flash--error" data-auth-error role="alert" aria-live="assertive" hidden></p>
+  <p><a href="{{ url_for('auth.account_security_page') }}">Zur Kontosicherheit</a></p>
+</div>
+{% endblock %}
+{% block scripts %}
+{% from "macros/assets.html" import vite_script with context %}
+{{ vite_script('auth-security') }}
+{% endblock %}

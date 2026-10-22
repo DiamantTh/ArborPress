@@ -761,6 +761,8 @@ async def author_profile(handle: str):
     """Public profile – PUBLIC accounts only (§4 security separation)."""
     from arborpress.models.user import AccountType, User
 
+    actor = None
+    federation_active = False
     async for db in get_db_session():
         stmt = select(User).where(
             func.lower(User.username) == handle.lower(),
@@ -769,6 +771,21 @@ async def author_profile(handle: str):
         )
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
+        if user is not None:
+            from arborpress.core.site_settings import get_section
+            from arborpress.federation.policy import federation_is_enabled
+            from arborpress.models.federation import LocalFederationActor
+
+            federation_active = federation_is_enabled(await get_section("federation", db))
+            if federation_active and not user.federation_opt_out:
+                actor = (
+                    await db.execute(
+                        select(LocalFederationActor).where(
+                            LocalFederationActor.user_id == str(user.id),
+                            LocalFederationActor.enabled.is_(True),
+                        )
+                    )
+                ).scalar_one_or_none()
 
     if user is None:
         abort(404)
@@ -809,6 +826,8 @@ async def author_profile(handle: str):
         "author_profile.html",
         posts=posts,
         author=user,
+        federation_actor=actor,
+        federation_active=federation_active,
         page=page,
         has_next=has_next,
         noindex=False,

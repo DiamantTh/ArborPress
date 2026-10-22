@@ -24,6 +24,7 @@ STEPUP_POLICIES: dict[str, str] = {
     "change_roles": "target",
     "modify_auth_policy": "instance",
     "toggle_federation": "instance",
+    "toggle_actor_federation": "target",
     "install_plugin": "target",
     "enable_plugin": "target",
     "disable_plugin": "target",
