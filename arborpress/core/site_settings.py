@@ -144,6 +144,8 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "turnstile_verify_url": "https://challenges.cloudflare.com/turnstile/v0/siteverify",
     },
     "federation": {
+        "enabled": False,  # Explicit 10A master switch; legacy mode alone never enables federation.
+        "domain_policy": "open",  # open | limited; block rules always take precedence.
         "mode": "disabled",  # full|outgoing_only|inbox_only|disabled
         "instance_name": "ArborPress",
         "instance_description": "",

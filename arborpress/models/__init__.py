@@ -24,6 +24,14 @@ from arborpress.models.content import (  # noqa: F401
     PostVisibility,
     Tag,
 )
+from arborpress.models.federation import (  # noqa: F401
+    FederationDomainRule,
+    FederationInboxActivity,
+    FederationInstanceIdentity,
+    LocalFederationActor,
+    RemoteActor,
+    RemoteActorKey,
+)
 from arborpress.models.mail import (  # noqa: F401
     MailQueue,
     MailStatus,

@@ -322,6 +322,12 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
         "mail_template_overrides",
         "mail_template_revisions",
         "notification_type_preferences",
+        "local_federation_actors",
+        "remote_actors",
+        "remote_actor_keys",
+        "federation_inbox_activities",
+        "federation_domain_rules",
+        "federation_instance_identity",
     }:
         return False
     allowed_columns = {
@@ -379,6 +385,12 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "missing table mail_template_overrides",
             "missing table mail_template_revisions",
             "missing table notification_type_preferences",
+            "missing table local_federation_actors",
+            "missing table remote_actors",
+            "missing table remote_actor_keys",
+            "missing table federation_inbox_activities",
+            "missing table federation_domain_rules",
+            "missing table federation_instance_identity",
         }:
             continue
         if error == "unexpected column comments.confirmation_token":
