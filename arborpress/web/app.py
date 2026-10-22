@@ -534,6 +534,9 @@ def create_app() -> Quart:
     mail_worker_stop_event = None
     notification_worker_task = None
     notification_worker_stop_event = None
+    federation_inbox_worker_task = None
+    federation_delivery_worker_task = None
+    federation_worker_stop_event = None
 
     # §9 Theme static files are served only when declared in a valid manifest.
     @app.route("/static/themes/<theme_id>/<path:filename>")
@@ -566,6 +569,8 @@ def create_app() -> Quart:
     async def _on_startup() -> None:
         nonlocal plugin_job_worker_task, plugin_supervisor_task, mail_worker_task
         nonlocal mail_worker_stop_event, notification_worker_task, notification_worker_stop_event
+        nonlocal federation_inbox_worker_task, federation_delivery_worker_task
+        nonlocal federation_worker_stop_event
         import asyncio
         import logging as _log
         import secrets as _sec
@@ -652,6 +657,21 @@ def create_app() -> Quart:
                 run_notification_worker(stop_event=notification_worker_stop_event)
             )
 
+            from arborpress.federation.inbox import run_worker as run_federation_inbox_worker
+            from arborpress.federation.services import run_worker as run_federation_delivery_worker
+
+            federation_worker_stop_event = asyncio.Event()
+            federation_inbox_worker_task = asyncio.create_task(
+                run_federation_inbox_worker(
+                    get_session_factory(), stop_event=federation_worker_stop_event
+                )
+            )
+            federation_delivery_worker_task = asyncio.create_task(
+                run_federation_delivery_worker(
+                    get_session_factory(), stop_event=federation_worker_stop_event
+                )
+            )
+
             # Plugin startup/restarts are isolated and bounded. A broken plugin
             # does not prevent the Core or another plugin from serving.
             plugin_supervisor_task = asyncio.create_task(
@@ -660,6 +680,15 @@ def create_app() -> Quart:
 
     @app.after_serving
     async def _on_shutdown() -> None:
+        if federation_worker_stop_event is not None:
+            federation_worker_stop_event.set()
+        for worker_task in (federation_inbox_worker_task, federation_delivery_worker_task):
+            if worker_task is not None:
+                try:
+                    await asyncio.wait_for(asyncio.shield(worker_task), timeout=20)
+                except TimeoutError:
+                    worker_task.cancel()
+                    await asyncio.gather(worker_task, return_exceptions=True)
         if notification_worker_task is not None:
             if notification_worker_stop_event is not None:
                 notification_worker_stop_event.set()

@@ -54,6 +54,14 @@ async def _publish_scheduled() -> int:
                 if not post.published_at:
                     post.published_at = now
                 db.add(post)
+                from arborpress.federation.services import enqueue_post_activity
+
+                await enqueue_post_activity(
+                    db,
+                    post_id=str(post.id),
+                    activity_type="Create",
+                    source_revision=str(post.updated_at or post.id),
+                )
                 log.info("Scheduler: post published | slug=%s id=%s", post.slug, post.id)
 
             if posts:

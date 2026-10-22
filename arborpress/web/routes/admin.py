@@ -475,6 +475,16 @@ async def post_new_save():
             change_summary="Initial",
         )
         db.add(rev)
+        if post.status == PostStatus.PUBLISHED and post.visibility == PostVisibility.PUBLIC:
+            from arborpress.federation.services import enqueue_post_activity
+
+            await db.flush()
+            await enqueue_post_activity(
+                db,
+                post_id=str(post.id),
+                activity_type="Create",
+                source_revision=str(rev.rev_number),
+            )
         await db.commit()
 
     audit.info(
@@ -556,12 +566,18 @@ async def post_edit_save(slug: str):
 
         if action == "delete":
             require_role("editor")
+            from arborpress.federation.services import enqueue_post_delete
+
+            await enqueue_post_delete(db, post=post)
             await db.delete(post)
             await db.commit()
             audit.info("POST deleted | slug=%s user=%s", slug, session.get("user_id", ""))
             return redirect(url_for("admin.posts"))
 
         title = (form.get("title") or "").strip()[:256]
+        old_status = post.status
+        old_visibility = post.visibility
+        old_federated_fields = (post.title, post.body_html, post.excerpt, post.slug)
         new_slug = (form.get("slug") or "").strip()[:128] or slug
         status_val = form.get("status", post.status.value)
         visibility_val = form.get("visibility", post.visibility.value)
@@ -645,6 +661,31 @@ async def post_edit_save(slug: str):
             change_summary=change_summary,
         )
         db.add(rev)
+
+        now_public = (
+            post.status == PostStatus.PUBLISHED and post.visibility == PostVisibility.PUBLIC
+        )
+        was_public = old_status == PostStatus.PUBLISHED and old_visibility == PostVisibility.PUBLIC
+        federated_fields_changed = old_federated_fields != (
+            post.title,
+            post.body_html,
+            post.excerpt,
+            post.slug,
+        )
+        if was_public and not now_public:
+            from arborpress.federation.services import enqueue_post_delete
+
+            await enqueue_post_delete(db, post=post)
+        elif now_public and (not was_public or federated_fields_changed):
+            from arborpress.federation.services import enqueue_post_activity
+
+            await db.flush()
+            await enqueue_post_activity(
+                db,
+                post_id=str(post.id),
+                activity_type="Update" if was_public else "Create",
+                source_revision=str(rev.rev_number),
+            )
 
         await db.commit()
         audit.info(

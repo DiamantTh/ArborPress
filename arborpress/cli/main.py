@@ -2191,42 +2191,44 @@ def cache_warm() -> None:
 def federation_inbox_process(
     batch: int = typer.Option(50, "--batch", "-n", help="Number of items per run"),
 ) -> None:
-    """Report intake status; Phase 10A does not apply federation side effects."""
+    """Process a bounded batch of authenticated, persisted inbox activities."""
 
     async def _process() -> None:
-        from sqlalchemy import func, select
+        from arborpress.core.db import get_session_factory
+        from arborpress.federation.inbox import process_inbox_batch
 
-        from arborpress.core.db import get_db_session
-        from arborpress.core.site_settings import get_section
-        from arborpress.federation.policy import federation_is_enabled
-        from arborpress.models.federation import FederationInboxActivity
-
-        async for db in get_db_session():
-            fed = await get_section("federation", db)
-        if not federation_is_enabled(fed):
-            typer.echo("Federation is disabled; no intake processing is allowed.", err=True)
-            raise typer.Exit(1)
-        async for db in get_db_session():
-            total = (
-                await db.execute(select(func.count()).select_from(FederationInboxActivity))
-            ).scalar_one()
-            recent = (
-                (
-                    await db.execute(
-                        select(FederationInboxActivity.id)
-                        .order_by(FederationInboxActivity.received_at.desc())
-                        .limit(max(1, min(batch, 500)))
-                    )
-                )
-                .scalars()
-                .all()
-            )
-        typer.echo(f"Persisted intake items: {total}; recent IDs shown: {len(recent)}")
-        typer.echo(
-            "Phase 10A records intake only; Follow, Post and Comment effects are deferred to 10B."
-        )
+        count = await process_inbox_batch(get_session_factory(), batch_size=batch)
+        typer.echo(f"Processed inbox activities: {count}")
 
     asyncio.run(_process())
+
+
+@federation_app.command("worker")
+def federation_worker() -> None:
+    """Run the persistent inbox and outbound-delivery workers."""
+
+    async def _run() -> None:
+        from arborpress.core.db import get_session_factory
+        from arborpress.federation.inbox import run_worker as run_inbox_worker
+        from arborpress.federation.services import run_worker as run_delivery_worker
+
+        stop = asyncio.Event()
+        tasks = [
+            asyncio.create_task(run_inbox_worker(get_session_factory(), stop_event=stop)),
+            asyncio.create_task(run_delivery_worker(get_session_factory(), stop_event=stop)),
+        ]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            stop.set()
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        typer.echo("Federation worker stopped.")
 
 
 @federation_app.command("status")

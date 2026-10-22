@@ -307,7 +307,11 @@ async def post_detail(slug: str):
                 Comment.post_id == post.id,
                 Comment.status.in_([CommentStatus.APPROVED, CommentStatus.DELETED]),
             )
-            .options(selectinload(Comment.quoted), selectinload(Comment.author_user))
+            .options(
+                selectinload(Comment.quoted),
+                selectinload(Comment.author_user),
+                selectinload(Comment.remote_actor),
+            )
             .order_by(Comment.created_at, Comment.id)
         )
         visible_comments = list(comments_result.scalars().all())

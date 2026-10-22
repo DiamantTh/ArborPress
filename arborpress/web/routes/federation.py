@@ -133,15 +133,21 @@ def _post_to_activity(post: Any, handle: str, actor_uri: str | None = None) -> d
             dt = dt.replace(tzinfo=UTC)
         published = dt.isoformat().replace("+00:00", "Z")
 
+    safe_content = bleach.clean(
+        post.body_html or "",
+        tags=["p", "br", "strong", "em", "a", "ul", "ol", "li", "blockquote", "span"],
+        attributes={"a": ["href", "title"]},
+        protocols=["http", "https", "mailto"],
+        strip=True,
+    )
     payload = {
         "id": object_id,
         "type": "Article",
         "attributedTo": actor_uri or f"{base}/ap/actor/{handle}",
         "url": post_url,
         "name": post.title,
-        "summary": post.excerpt or "",
-        "content": post.body_html,
-        "contentMap": {"de": post.body_html},
+        "summary": bleach.clean(post.excerpt or "", tags=[], strip=True)[:4000],
+        "content": safe_content[:100_000],
         "published": published,
         "to": ["https://www.w3.org/ns/activitystreams#Public"],
         "cc": [f"{base}/ap/actor/{handle}/followers"],
@@ -529,6 +535,8 @@ async def ap_actor(handle: str) -> ResponseReturnValue:
         "inbox": f"{base}/ap/inbox/{local_actor.actor_uri.rsplit('/', 1)[-1]}",
         "outbox": f"{base}/ap/outbox/{local_actor.actor_uri.rsplit('/', 1)[-1]}",
         "followers": f"{base}/ap/actor/{local_actor.actor_uri.rsplit('/', 1)[-1]}/followers",
+        "following": f"{base}/ap/actor/{local_actor.actor_uri.rsplit('/', 1)[-1]}/following",
+        "endpoints": {"sharedInbox": f"{base}/ap/inbox"},
     }
     if key is not None:
         actor["publicKey"] = {
@@ -572,37 +580,129 @@ async def ap_outbox(handle: str) -> ResponseReturnValue:
     local_actor = await _load_local_actor(handle)
     if local_actor is None:
         abort(404)
-    user = await _load_actor_user(local_actor)
-    if user is None:
-        abort(404)
+    from arborpress.models.federation import FederationOutboxActivity
 
-    from arborpress.models.content import Post, PostStatus, PostVisibility
-
+    page_requested = request.args.get("page", "false").lower() == "true"
+    try:
+        offset = max(0, min(int(request.args.get("cursor", "0")), 1_000_000))
+    except ValueError:
+        offset = 0
     items: list[dict[str, Any]] = []
+    total = 0
     async for db in get_db_session():
-        stmt = (
-            select(Post)
-            .where(
-                Post.author_id == user.id,
-                Post.status == PostStatus.PUBLISHED,
-                Post.visibility == PostVisibility.PUBLIC,
-            )
-            .order_by(Post.published_at.desc())
-            .limit(20)
+        filters = (
+            FederationOutboxActivity.actor_uri == local_actor.actor_uri,
+            FederationOutboxActivity.audience_public.is_(True),
         )
-        result = await db.execute(stmt)
-        posts = result.scalars().all()
-        items = [_post_to_activity(post, user.username, local_actor.actor_uri) for post in posts]
+        total = int(
+            await db.scalar(select(func.count(FederationOutboxActivity.id)).where(*filters)) or 0
+        )
+        if page_requested:
+            activities = list(
+                (
+                    await db.scalars(
+                        select(FederationOutboxActivity)
+                        .where(*filters)
+                        .order_by(
+                            FederationOutboxActivity.created_at.desc(), FederationOutboxActivity.id
+                        )
+                        .offset(offset)
+                        .limit(20)
+                    )
+                ).all()
+            )
+            items = [json.loads(item.payload_json) for item in activities]
 
     base = _base_url()
     outbox = {
         "@context": "https://www.w3.org/ns/activitystreams",
-        "type": "OrderedCollection",
-        "id": f"{base}/ap/outbox/{user.username}",
-        "totalItems": len(items),
-        "orderedItems": items,
+        "id": f"{base}/ap/outbox/{local_actor.preferred_username}",
+        "totalItems": total,
     }
+    if page_requested:
+        outbox.update(
+            {
+                "type": "OrderedCollectionPage",
+                "id": f"{outbox['id']}?page=true&cursor={offset}",
+                "partOf": outbox["id"],
+                "orderedItems": items,
+            }
+        )
+        if offset + len(items) < total:
+            outbox["next"] = f"{outbox['id']}?page=true&cursor={offset + len(items)}"
+    else:
+        outbox.update({"type": "OrderedCollection", "first": f"{outbox['id']}?page=true&cursor=0"})
     return jsonify(outbox), 200, {"Content-Type": _AP_CONTENT_TYPE}
+
+
+@federation_bp.get("/ap/actor/<handle>/followers")
+async def ap_followers(handle: str) -> ResponseReturnValue:
+    return await _follower_collection(handle, "inbound")
+
+
+@federation_bp.get("/ap/actor/<handle>/following")
+async def ap_following(handle: str) -> ResponseReturnValue:
+    return await _follower_collection(handle, "outbound")
+
+
+async def _follower_collection(handle: str, direction: str) -> ResponseReturnValue:
+    fed = _fed()
+    if not _federation_active(fed):
+        abort(404)
+    actor = await _load_local_actor(handle)
+    if actor is None:
+        abort(404)
+    if direction == "inbound" and not fed.get("followers_visible", True):
+        abort(404)
+    if direction == "outbound" and not fed.get("following_visible", True):
+        abort(404)
+    from arborpress.models.user import Follower, FollowerDirection, FollowerState
+
+    dir_value = FollowerDirection.INBOUND if direction == "inbound" else FollowerDirection.OUTBOUND
+    page_requested = request.args.get("page") == "true"
+    try:
+        offset = max(0, min(int(request.args.get("cursor", "0")), 1_000_000))
+    except ValueError:
+        offset = 0
+    async for db in get_db_session():
+        filters = (
+            Follower.local_user_id == actor.user_id,
+            Follower.direction == dir_value,
+            Follower.state == FollowerState.ACCEPTED,
+        )
+        total = int(await db.scalar(select(func.count(Follower.id)).where(*filters)) or 0)
+        members = (
+            list(
+                (
+                    await db.scalars(
+                        select(Follower.remote_actor_uri)
+                        .where(*filters)
+                        .order_by(Follower.created_at, Follower.id)
+                        .offset(offset)
+                        .limit(100)
+                    )
+                ).all()
+            )
+            if page_requested
+            else []
+        )
+    collection_url = f"{actor.actor_uri}/{direction}"
+    collection: dict[str, Any] = {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": collection_url,
+        "type": "OrderedCollection",
+        "totalItems": total,
+    }
+    if page_requested:
+        collection["id"] = f"{collection_url}?page=true&cursor={offset}"
+        collection.update(
+            {"partOf": collection_url, "type": "OrderedCollectionPage", "orderedItems": members}
+        )
+        if offset + len(members) < total:
+            collection["next"] = f"{collection_url}?page=true&cursor={offset + len(members)}"
+    else:
+        collection["first"] = f"{collection_url}?page=true&cursor=0"
+    return jsonify(collection), 200, {"Content-Type": _AP_CONTENT_TYPE}
 
 
 @federation_bp.get("/ap/object/<obj_id>")
@@ -615,16 +715,24 @@ async def ap_object(obj_id: str) -> ResponseReturnValue:
     except FederationFetchError:
         abort(503, "Federation HTTPS origin is not configured")
 
-    from arborpress.models.content import Post, PostStatus, PostVisibility
+    from arborpress.models.content import (
+        Post,
+        PostAuthorRelation,
+        PostAuthorRole,
+        PostStatus,
+        PostVisibility,
+    )
     from arborpress.models.federation import FederationInstanceIdentity, LocalFederationActor
     from arborpress.models.user import AccountType, User
 
     async for db in get_db_session():
         stmt = (
             select(Post, User, LocalFederationActor)
-            .join(User, User.id == Post.author_id)
+            .join(PostAuthorRelation, PostAuthorRelation.post_id == Post.id)
+            .join(User, User.id == PostAuthorRelation.user_id)
             .join(LocalFederationActor, LocalFederationActor.user_id == User.id)
             .where(
+                PostAuthorRelation.role == PostAuthorRole.PRIMARY,
                 (Post.short_id == obj_id) | (Post.id == obj_id) | (Post.ap_object_id == obj_id),
                 Post.status == PostStatus.PUBLISHED,
                 Post.visibility == PostVisibility.PUBLIC,
@@ -644,6 +752,71 @@ async def ap_object(obj_id: str) -> ResponseReturnValue:
         if identity is not None and identity.canonical_origin != origin:
             abort(503, "Federation origin migration is required")
         payload = _post_to_activity(post, user.username, local_actor.actor_uri)
+        return jsonify(payload), 200, {"Content-Type": _AP_CONTENT_TYPE}
+
+    abort(404)
+
+
+@federation_bp.get("/ap/comment/<comment_id>")
+async def ap_comment_object(comment_id: str) -> ResponseReturnValue:
+    fed = _fed()
+    if not _federation_active(fed):
+        abort(404)
+    import uuid
+
+    try:
+        local_comment_id = str(uuid.UUID(comment_id))
+    except ValueError:
+        abort(404)
+    from arborpress.models.content import Comment, CommentStatus, Post, PostStatus, PostVisibility
+    from arborpress.models.federation import LocalFederationActor
+
+    async for db in get_db_session():
+        row = (
+            await db.execute(
+                select(Comment, Post, LocalFederationActor)
+                .join(Post, Post.id == Comment.post_id)
+                .join(LocalFederationActor, LocalFederationActor.user_id == Comment.author_user_id)
+                .where(
+                    Comment.id == local_comment_id,
+                    Comment.status == CommentStatus.APPROVED,
+                    Comment.remote_actor_id.is_(None),
+                    Post.status == PostStatus.PUBLISHED,
+                    Post.visibility == PostVisibility.PUBLIC,
+                    LocalFederationActor.enabled.is_(True),
+                )
+                .limit(1)
+            )
+        ).first()
+        if row is None:
+            abort(404)
+        comment, post, actor = row
+        origin = _base_url()
+        parent_uri = post.ap_object_id or f"{origin}/ap/object/{post.short_id}"
+        if comment.parent_id:
+            parent = await db.get(Comment, comment.parent_id)
+            if parent is not None:
+                parent_uri = parent.remote_object_uri or f"{origin}/ap/comment/{parent.id}"
+        object_uri = comment.remote_object_uri or f"{origin}/ap/comment/{comment.id}"
+        payload = {
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "id": object_uri,
+            "type": "Note",
+            "attributedTo": actor.actor_uri,
+            "content": bleach.clean(
+                comment.body,
+                tags=_HTML_TAGS,
+                attributes={"a": ["href", "title"]},
+                protocols=["https", "http"],
+                strip=True,
+            ),
+            "inReplyTo": parent_uri,
+            "published": (comment.published_at or comment.created_at)
+            .replace(tzinfo=UTC)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        }
         return jsonify(payload), 200, {"Content-Type": _AP_CONTENT_TYPE}
 
     abort(404)

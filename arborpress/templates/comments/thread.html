@@ -20,10 +20,18 @@
       {% endif %}
       <header class="comment__header">
         <strong class="comment__author">
-          {% if comment.author_url %}
+          {% if comment.remote_actor %}
+          <a href="{{ comment.remote_actor.actor_uri | e }}" rel="nofollow noopener" target="_blank">{{ comment.author_name }}</a>
+          {% elif comment.author_url %}
           <a href="{{ comment.author_url | e }}" rel="nofollow noopener" target="_blank">{{ comment.author_name }}</a>
           {% else %}{{ comment.author_name }}{% endif %}
         </strong>
+        {% if comment.remote_actor %}
+          <span class="comment__remote-marker">Fediverse</span>
+          {% if comment.remote_actor.preferred_username %}
+          <span class="comment__remote-handle">@{{ comment.remote_actor.preferred_username }}@{{ comment.remote_actor.domain }}</span>
+          {% endif %}
+        {% endif %}
         {% if comment.author_user_id and comment.author_user_id in comment_author_ids %}
           <span class="comment__author-marker">Autor</span>
         {% endif %}
