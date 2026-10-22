@@ -330,6 +330,8 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
         "federation_deliveries",
         "federation_domain_rules",
         "federation_instance_identity",
+        "federation_actor_key_history",
+        "federation_signature_failure_daily",
     }:
         return False
     allowed_columns = {
@@ -343,6 +345,7 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "parent_id",
             "remote_actor_id",
             "remote_object_uri",
+            "federation_inbox_activity_id",
         },
         "posts": {"comments_enabled", "guest_confirmation_required", "comment_moderation_mode"},
         "users": {"comment_trusted", "locale"},
@@ -398,6 +401,8 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "missing table federation_deliveries",
             "missing table federation_domain_rules",
             "missing table federation_instance_identity",
+            "missing table federation_actor_key_history",
+            "missing table federation_signature_failure_daily",
         }:
             continue
         if error == "unexpected column comments.confirmation_token":

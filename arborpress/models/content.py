@@ -334,6 +334,12 @@ class Comment(Base):
         String(36), ForeignKey("remote_actors.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     remote_object_uri: Mapped[str | None] = mapped_column(String(2048), nullable=True, unique=True)
+    federation_inbox_activity_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("federation_inbox_activities.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     # Autor-Angaben (kein Account erforderlich)
     author_name: Mapped[str] = mapped_column(String(128), nullable=False)
     author_email: Mapped[str | None] = mapped_column(String(256), nullable=True)

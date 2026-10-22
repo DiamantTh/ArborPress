@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -54,6 +55,45 @@ class LocalFederationActor(Base):
     __table_args__ = (Index("ix_local_federation_actor_enabled", "enabled", "preferred_username"),)
 
 
+class FederationActorKeyHistory(Base):
+    """Public, non-secret metadata for retired local actor signing keys."""
+
+    __tablename__ = "federation_actor_key_history"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    actor_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("local_federation_actors.id", ondelete="CASCADE"), nullable=False
+    )
+    key_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    public_key_pem: Mapped[str] = mapped_column(Text, nullable=False)
+    fingerprint_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    retired_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_federation_actor_key_history_actor", "actor_id", "retired_at"),
+        UniqueConstraint("actor_id", "fingerprint_sha256", name="uq_fed_actor_key_fingerprint"),
+    )
+
+
+class FederationSignatureFailureDaily(Base):
+    """Privacy-preserving counters by UTC day and bounded signature failure class."""
+
+    __tablename__ = "federation_signature_failure_daily"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    date_bucket: Mapped[date] = mapped_column(Date, nullable=False)
+    category: Mapped[str] = mapped_column(String(64), nullable=False)
+    failure_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("date_bucket", "category", name="uq_fed_signature_failure_day_class"),
+        Index("ix_fed_signature_failure_date", "date_bucket"),
+    )
+
+
 class RemoteActor(Base):
     """Small, expiring cache for a validated remote actor document."""
 
@@ -74,6 +114,10 @@ class RemoteActor(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     etag: Mapped[str | None] = mapped_column(String(512), nullable=True)
     modified: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    health_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default="active"
+    )
+    last_error: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class RemoteActorKey(Base):
@@ -202,6 +246,10 @@ class FederationDomainRule(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     domain: Mapped[str] = mapped_column(String(253), nullable=False, unique=True)
     rule: Mapped[str] = mapped_column(String(8), nullable=False)  # allow | block
+    include_subdomains: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    note: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     created_by: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True

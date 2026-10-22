@@ -25,11 +25,13 @@ from arborpress.models.content import (  # noqa: F401
     Tag,
 )
 from arborpress.models.federation import (  # noqa: F401
+    FederationActorKeyHistory,
+    FederationDelivery,
     FederationDomainRule,
     FederationInboxActivity,
-    FederationOutboxActivity,
-    FederationDelivery,
     FederationInstanceIdentity,
+    FederationOutboxActivity,
+    FederationSignatureFailureDaily,
     LocalFederationActor,
     RemoteActor,
     RemoteActorKey,
