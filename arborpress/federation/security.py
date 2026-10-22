@@ -186,6 +186,47 @@ async def fetch_remote(
     raise FederationFetchError("redirect_limit")
 
 
+async def post_remote(
+    url: str,
+    *,
+    body: bytes,
+    headers: dict[str, str],
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> int:
+    """Send one bounded signed delivery without following redirects.
+
+    The destination is revalidated immediately before connecting and the peer
+    address is checked when the transport exposes it. Redirects are returned to
+    the caller as statuses; credentials/signatures are never forwarded.
+    """
+    await validate_remote_url(url)
+    if len(body) > 256 * 1024:
+        raise FederationFetchError("request_too_large")
+    async with _FETCH_SEMAPHORE:
+        try:
+            async with httpx.AsyncClient(
+                timeout=REMOTE_TIMEOUT,
+                follow_redirects=False,
+                verify=True,
+                transport=transport,
+                headers={"User-Agent": "ArborPress-Federation/1"},
+            ) as client:
+                async with client.stream("POST", url, content=body, headers=headers) as response:
+                    peer = _peer_address(response)
+                    if peer is not None:
+                        address = ipaddress.ip_address(peer)
+                        if _ip_is_blocked(str(address)) or not address.is_global:
+                            raise FederationFetchError("blocked_peer")
+                    size = 0
+                    async for chunk in response.aiter_bytes():
+                        size += len(chunk)
+                        if size > 64 * 1024:
+                            raise FederationFetchError("delivery_response_too_large")
+                    return response.status_code
+        except httpx.HTTPError as exc:
+            raise FederationFetchError("delivery_transport_failed") from exc
+
+
 def _peer_address(response: httpx.Response) -> str | None:
     stream = response.extensions.get("network_stream")
     if stream is None:

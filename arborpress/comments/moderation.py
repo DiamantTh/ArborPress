@@ -330,6 +330,26 @@ async def moderate_comment(
             source_type="comment",
             source_id=comment.id,
         )
+    if outcome in {"approve", "restore"}:
+        from arborpress.federation.services import enqueue_comment_activity
+
+        await enqueue_comment_activity(
+            db,
+            comment_id=str(comment.id),
+            activity_type="Create",
+            revision=str(decision.id),
+        )
+    elif (
+        outcome == "delete"
+        and comment.author_user_id is not None
+        and comment.remote_actor_id is None
+        and comment.remote_object_uri is not None
+    ):
+        from arborpress.federation.services import enqueue_comment_activity
+
+        await enqueue_comment_activity(
+            db, comment_id=str(comment.id), activity_type="Delete", revision=str(decision.id)
+        )
     return decision
 
 
@@ -410,6 +430,15 @@ async def moderate_revision(
             dedupe_key=f"decision:{decision.id}",
             source_type="comment",
             source_id=str(comment.id),
+        )
+    if outcome == "approve" and comment.author_user_id is not None and comment.remote_object_uri:
+        from arborpress.federation.services import enqueue_comment_activity
+
+        await enqueue_comment_activity(
+            db,
+            comment_id=str(comment.id),
+            activity_type="Update",
+            revision=str(revision.id),
         )
     return decision
 

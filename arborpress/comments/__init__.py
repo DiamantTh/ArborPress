@@ -21,6 +21,7 @@ from arborpress.comments.service import (
     confirm_guest_comment,
     create_comment,
     create_comment_revision,
+    create_remote_comment_revision,
     issue_guest_confirmation,
     review_comment_revision,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "confirm_guest_comment",
     "create_comment",
     "create_comment_revision",
+    "create_remote_comment_revision",
     "decisions_for_target",
     "get_comment_vote_counts",
     "issue_guest_confirmation",

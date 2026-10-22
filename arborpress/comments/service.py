@@ -85,6 +85,8 @@ async def create_comment(
     body: str,
     author_url: str | None = None,
     author_user: Any | None = None,
+    remote_actor: Any | None = None,
+    remote_object_uri: str | None = None,
     parent_id: str | None = None,
     quote_of_id: str | None = None,
     spam: bool = False,
@@ -95,7 +97,13 @@ async def create_comment(
     """Validate relations and persist one comment; plaintext token is returned once."""
     if not policy.enabled:
         raise CommentPolicyError("Comments are disabled for this content.")
-    if author_user is None and not policy.allow_guests:
+    if author_user is not None and remote_actor is not None:
+        raise CommentPolicyError("A comment cannot have both a local and remote account author.")
+    if remote_actor is not None and (author_email is not None or not remote_object_uri):
+        raise CommentPolicyError(
+            "Federated comments require a remote object and cannot have e-mail."
+        )
+    if author_user is None and remote_actor is None and not policy.allow_guests:
         raise CommentPolicyError("Guest comments are disabled.")
     if not author_name.strip() or not body.strip():
         raise CommentPolicyError("Author name and comment body are required.")
@@ -120,7 +128,7 @@ async def create_comment(
     now = _now()
     if spam:
         status = CommentStatus.SPAM
-    elif author_user is None and policy.guest_confirmation_required:
+    elif author_user is None and remote_actor is None and policy.guest_confirmation_required:
         if not author_email:
             raise CommentPolicyError("Guest e-mail is required for confirmation.")
         confirmation_token, digest = _token_pair()
@@ -139,6 +147,8 @@ async def create_comment(
         id=str(uuid.uuid4()),
         post_id=str(post.id),
         author_user_id=str(author_user.id) if author_user else None,
+        remote_actor_id=str(remote_actor.id) if remote_actor else None,
+        remote_object_uri=remote_object_uri,
         author_name=author_name.strip()[:128],
         author_email=author_email,
         author_url=author_url,
@@ -160,6 +170,10 @@ async def create_comment(
     )
     db.add(comment)
     await db.flush()
+    if status == CommentStatus.APPROVED and author_user is not None and remote_actor is None:
+        from arborpress.federation.services import enqueue_comment_activity
+
+        await enqueue_comment_activity(db, comment_id=str(comment.id), activity_type="Create")
     if status in {CommentStatus.APPROVED, CommentStatus.SPAM}:
         from arborpress.comments.moderation import record_automatic_decision
 
@@ -446,6 +460,72 @@ async def create_comment_revision(
         target_id=comment.id,
         db=db,
         detail=f"revision={revision.revision_number};state={revision.status.value}",
+    )
+    return revision
+
+
+async def create_remote_comment_revision(
+    db: Any,
+    *,
+    comment: Comment,
+    remote_actor_id: str,
+    body: str,
+    policy: CommentPolicy,
+) -> CommentRevision:
+    """Record a remote edit through the same pending-revision moderation model.
+
+    Remote servers control their own edit clocks, so the local author edit window
+    does not apply. Ownership and stable Object URI must be checked by the
+    federation processor before this service is called.
+    """
+    if not policy.enabled or comment.remote_actor_id != remote_actor_id:
+        raise CommentPolicyError("Remote comment ownership or policy check failed.")
+    if comment.status != CommentStatus.APPROVED:
+        raise CommentPolicyError("Only published comments can receive remote revisions.")
+    if not body.strip() or len(body) > policy.max_comment_length:
+        raise CommentPolicyError("Edited comment is empty or exceeds the maximum length.")
+    pending = await db.scalar(
+        select(func.count(CommentRevision.id)).where(
+            CommentRevision.comment_id == comment.id,
+            CommentRevision.status == CommentRevisionStatus.PENDING,
+        )
+    )
+    if pending:
+        raise CommentPolicyError("A comment revision is already awaiting moderation.")
+    count = int(
+        await db.scalar(
+            select(func.max(CommentRevision.revision_number)).where(
+                CommentRevision.comment_id == comment.id
+            )
+        )
+        or 0
+    )
+    revision = CommentRevision(
+        comment_id=comment.id,
+        editor_user_id=None,
+        revision_number=count + 1,
+        previous_body=comment.body,
+        body=body.strip(),
+        status=CommentRevisionStatus.PENDING,
+        pending_key=comment.id,
+        is_author_edit=False,
+    )
+    db.add(revision)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        raise CommentPolicyError(
+            "A concurrent comment revision conflicted; reload and retry."
+        ) from exc
+    from arborpress.core.audit import write_audit_event
+
+    await write_audit_event(
+        event_type="federation_comment_revision_received",
+        outcome="success",
+        actor_id=None,
+        target_id=comment.id,
+        db=db,
+        detail=f"revision={revision.revision_number};source=remote",
     )
     return revision
 
