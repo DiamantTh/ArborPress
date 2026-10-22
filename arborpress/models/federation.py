@@ -118,12 +118,79 @@ class FederationInboxActivity(Base):
         Integer, nullable=False, default=0, server_default="0"
     )
     last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     received_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("activity_uri", "body_sha256", name="uq_federation_activity_body"),
         Index("ix_federation_inbox_received", "processing_state", "received_at"),
+    )
+
+
+class FederationOutboxActivity(Base):
+    """Immutable local ActivityPub activity, separate from per-inbox delivery."""
+
+    __tablename__ = "federation_outbox_activities"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_type", "source_id", "source_revision", name="uq_fed_outbox_source_revision"
+        ),
+        Index("ix_fed_outbox_actor_created", "actor_uri", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    activity_uri: Mapped[str] = mapped_column(String(2048), nullable=False, unique=True)
+    actor_uri: Mapped[str] = mapped_column(String(2048), nullable=False)
+    activity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    object_uri: Mapped[str] = mapped_column(String(2048), nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    source_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+    audience_public: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="1"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class FederationDelivery(Base):
+    """Leased delivery of one immutable activity to one remote inbox."""
+
+    __tablename__ = "federation_deliveries"
+    __table_args__ = (
+        UniqueConstraint("activity_id", "target_inbox", name="uq_federation_delivery_target"),
+        Index("ix_federation_delivery_due", "status", "next_attempt_at"),
+        Index("ix_federation_delivery_lease", "status", "lease_until"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    activity_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("federation_outbox_activities.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_inbox: Mapped[str] = mapped_column(String(2048), nullable=False)
+    domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    max_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=8, server_default="8"
+    )
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    response_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
     )
 
 

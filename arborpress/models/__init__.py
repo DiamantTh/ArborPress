@@ -27,6 +27,8 @@ from arborpress.models.content import (  # noqa: F401
 from arborpress.models.federation import (  # noqa: F401
     FederationDomainRule,
     FederationInboxActivity,
+    FederationOutboxActivity,
+    FederationDelivery,
     FederationInstanceIdentity,
     LocalFederationActor,
     RemoteActor,

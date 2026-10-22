@@ -24,7 +24,7 @@ from arborpress.core.migrations import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pre_alembic_phase1_schema.sql"
-CURRENT_HEAD = "0009_activitypub_foundation"
+CURRENT_HEAD = "0010_federation_follow_delivery_comments"
 
 
 def _sqlite_engine(path: Path) -> AsyncEngine:
@@ -149,7 +149,7 @@ async def test_empty_database_upgrade_noop_and_repeated_install(tmp_path: Path) 
         assert status.is_current
         assert status.current_revisions == (CURRENT_HEAD,)
         before = await _schema_snapshot(engine)
-        assert len(before) == 48
+        assert len(before) == 50
         assert "webauthn_credentials" in before
 
         async with engine.connect() as connection:
@@ -561,7 +561,7 @@ async def test_known_older_revision_is_reported_as_behind_head(
     versions.mkdir()
     (versions / "0002_test_next.py").write_text(
         "revision = '9999_test_next'\n"
-        "down_revision = '0009_activitypub_foundation'\n"
+        f"down_revision = '{CURRENT_HEAD}'\n"
         "branch_labels = None\n"
         "depends_on = None\n"
         "def upgrade(): pass\n"

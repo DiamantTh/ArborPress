@@ -326,6 +326,8 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
         "remote_actors",
         "remote_actor_keys",
         "federation_inbox_activities",
+        "federation_outbox_activities",
+        "federation_deliveries",
         "federation_domain_rules",
         "federation_instance_identity",
     }:
@@ -339,6 +341,8 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "published_at",
             "edited_at",
             "parent_id",
+            "remote_actor_id",
+            "remote_object_uri",
         },
         "posts": {"comments_enabled", "guest_confirmation_required", "comment_moderation_mode"},
         "users": {"comment_trusted", "locale"},
@@ -364,6 +368,7 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "template_locale",
             "template_revision",
         },
+        "federation_inbox_activities": {"lease_owner", "lease_until"},
     }
     errors = _expected_schema_errors(connection, allow_extra_tables=False)
     for error in errors:
@@ -389,6 +394,8 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "missing table remote_actors",
             "missing table remote_actor_keys",
             "missing table federation_inbox_activities",
+            "missing table federation_outbox_activities",
+            "missing table federation_deliveries",
             "missing table federation_domain_rules",
             "missing table federation_instance_identity",
         }:
@@ -414,6 +421,7 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "enum values mismatch for comments.status",
             "length mismatch for comments.status",
             "foreign key mismatch for comments",
+            "unique constraint mismatch for comments",
             "index mismatch for comments",
         }:
             continue

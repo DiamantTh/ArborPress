@@ -29,6 +29,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from arborpress.core.db import Base
+from arborpress.models.federation import RemoteActor
 from arborpress.models.user import User
 
 # ---------------------------------------------------------------------------
@@ -329,6 +330,10 @@ class Comment(Base):
     author_user_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    remote_actor_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("remote_actors.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    remote_object_uri: Mapped[str | None] = mapped_column(String(2048), nullable=True, unique=True)
     # Autor-Angaben (kein Account erforderlich)
     author_name: Mapped[str] = mapped_column(String(128), nullable=False)
     author_email: Mapped[str | None] = mapped_column(String(256), nullable=True)
@@ -380,6 +385,7 @@ class Comment(Base):
 
     post: Mapped[Post] = relationship("Post", back_populates="comments", lazy="selectin")
     author_user: Mapped[User | None] = relationship("User", foreign_keys=[author_user_id])
+    remote_actor: Mapped[RemoteActor | None] = relationship("RemoteActor", lazy="selectin")
     parent: Mapped[Comment | None] = relationship(
         "Comment", remote_side="Comment.id", foreign_keys=[parent_id], back_populates="replies"
     )
