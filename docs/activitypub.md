@@ -41,3 +41,56 @@ The existing SSRF guard in `arborpress.core.validators` remains shared with othe
 `FederationInboxActivity` is the durable, idempotent intake boundary. Activity IDs are unique; the SHA-256 of the exact signed body detects conflicting reuse. Its allowlisted intake types are `Follow`, `Accept`, `Reject`, `Undo`, `Create`, `Update`, and `Delete`; types outside that list are recorded as ignored. The next phase can claim `received` items and apply domain behavior transactionally, using `activity_uri` as the idempotency anchor.
 
 `LocalFederationActor`, `RemoteActor`, `RemoteActorKey`, `FederationDomainRule`, `federation_is_enabled`, `domain_allowed`, `fetch_remote_actor`, `resolve_remote_key`, `verify_request_signature`, and `sign_legacy_request` are the Core contracts intended for 10B. Keep remote fetching centralized and do not interpret intake JSON as trusted HTML or ORM data.
+
+## Phase 10B: follows, delivery, posts, and comments
+
+Phase 10B extends those 10A contracts in place. The legacy `Follower` model in
+`arborpress.models.user` is the sole follow/follower store. Incoming Follow,
+Accept, Reject and Undo are processed by `arborpress.federation.inbox`; outgoing
+Follow requests and Undo use `follow_remote_actor` and `unfollow_remote_actor`.
+Incoming Follow is automatically accepted by default for an explicitly enabled
+local actor. Set `require_approval_to_follow` in the instance Federation settings
+to retain new requests as pending; the service `respond_inbound_follow` queues
+the corresponding Accept or Reject.
+
+Outbound activities are immutable `FederationOutboxActivity` rows, with one
+`FederationDelivery` row per destination inbox. Delivery uses expiring leases,
+bounded retry/backoff and the existing legacy RSA HTTP-signature signer. Shared
+inboxes are deduplicated when recipients are enqueued. The `federation worker`
+CLI command processes both durable inbox intake and delivery; the same services
+are also run as lifecycle-owned embedded tasks. GET actor outboxes and
+followers/following collections are cursor-paged. ActivityPub client-to-server
+POSTs remain unsupported.
+
+Public Articles are emitted only when their primary author has an enabled local
+Federation actor. A coauthor is never substituted for a non-federating primary
+author. Post publication, public edits and removal enqueue Create/Update/Delete
+inside the Core database transaction; no remote HTTP request runs in the user
+request. A Delete is sent only to inboxes previously recorded for that post's
+public Create/Update deliveries. Existing public object IDs remain stable.
+
+Remote Note replies are represented as ordinary ArborPress `Comment` rows with
+`remote_actor_id` and a unique `remote_object_uri`; no remote identity is
+created in the local User table. Remote comments have no guest email or
+confirmation token, bypass no trust/reputation rule, and enter the configured
+CommentPolicy (pending moderation by default). HTML is reduced to plain text
+before storage. Remote Update creates a normal pending `CommentRevision`; the
+approved body remains visible until the existing moderator approves it. Remote
+Delete is ownership-checked and leaves a neutral deleted-comment placeholder.
+These decisions and appeals remain local; internal reasons are not federated.
+
+Locally authored registered-user comments are federated only after approval,
+only under an already federated public post, and only when their author has an
+enabled LocalFederationActor. Guest and remote comments are never re-signed as
+local authors. Moderative removal of a local federated comment can emit a
+Tombstone as that local author; local moderators never emit a Delete pretending
+to be the remote author of a remote comment.
+
+Delivery targets are checked against the shared domain policy and the central
+SSRF-safe fetch validation before each POST. Redirects are not followed. A 404
+or 410 permits exactly one forced refresh of a known remote actor/inbox; failed
+or unchanged refresh becomes dead-lettered. There is intentionally no delivery
+fallback between signature formats in this release: Phase 10A provides legacy
+Fediverse RSA signatures only and explicitly rejects RFC 9421 verification.
+The existing DNS rebinding TOCTOU limitation documented above also applies to
+outbound delivery.

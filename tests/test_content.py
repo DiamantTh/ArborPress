@@ -153,7 +153,7 @@ class TestFederationHelpers:
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_outbox_lists_published_posts(self, test_engine, client, monkeypatch):
+    async def test_outbox_lists_persisted_public_activities(self, test_engine, client, monkeypatch):
         from sqlalchemy.ext.asyncio import async_sessionmaker
 
         import arborpress.models  # noqa: F401
@@ -207,7 +207,12 @@ class TestFederationHelpers:
                 _fake_db_session,
             )
 
-            from arborpress.models.federation import LocalFederationActor
+            import json
+
+            from arborpress.models.federation import (
+                FederationOutboxActivity,
+                LocalFederationActor,
+            )
 
             db_session.add(
                 LocalFederationActor(
@@ -217,13 +222,42 @@ class TestFederationHelpers:
                     enabled=True,
                 )
             )
+            db_session.add(
+                FederationOutboxActivity(
+                    activity_uri="https://blog.example.com/ap/activities/activity-1",
+                    actor_uri="https://blog.example.com/ap/actor/alice",
+                    activity_type="Create",
+                    object_uri="https://blog.example.com/ap/object/abc123",
+                    payload_json=json.dumps(
+                        {
+                            "id": "https://blog.example.com/ap/activities/activity-1",
+                            "type": "Create",
+                            "actor": "https://blog.example.com/ap/actor/alice",
+                            "object": {
+                                "id": "https://blog.example.com/ap/object/abc123",
+                                "type": "Article",
+                            },
+                        }
+                    ),
+                    source_type="post",
+                    source_id=str(post.id),
+                    source_revision="1",
+                    audience_public=True,
+                )
+            )
             await db_session.commit()
 
             resp = await client.get("/ap/outbox/alice")
             payload = await resp.get_json()
             assert resp.status_code == 200
             assert payload["totalItems"] == 1
-            assert payload["orderedItems"][0]["type"] in {"Article", "Note"}
+            assert payload["type"] == "OrderedCollection"
+            assert payload["first"].endswith("?page=true&cursor=0")
+            page = await client.get("/ap/outbox/alice?page=true&cursor=0")
+            page_payload = await page.get_json()
+            assert page.status_code == 200
+            assert page_payload["type"] == "OrderedCollectionPage"
+            assert page_payload["orderedItems"][0]["object"]["type"] == "Article"
 
 
 # ---------------------------------------------------------------------------

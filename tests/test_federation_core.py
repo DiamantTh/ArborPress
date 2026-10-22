@@ -227,7 +227,13 @@ async def test_explicit_local_actor_and_webfinger_omit_private_account_fields(
 
     import arborpress.models  # noqa: F401
     from arborpress.core.db import Base
-    from arborpress.models.content import Post, PostStatus, PostVisibility
+    from arborpress.models.content import (
+        Post,
+        PostAuthorRelation,
+        PostAuthorRole,
+        PostStatus,
+        PostVisibility,
+    )
     from arborpress.models.federation import FederationInstanceIdentity, LocalFederationActor
     from arborpress.models.user import AccountType, ActorKeypair, User, UserRole
 
@@ -273,6 +279,14 @@ async def test_explicit_local_actor_and_webfinger_omit_private_account_fields(
         )
         db.add(key)
         await db.flush()
+        db.add(
+            PostAuthorRelation(
+                post_id=str(post.id),
+                user_id=str(user.id),
+                role=PostAuthorRole.PRIMARY,
+                position=0,
+            )
+        )
         db.add(FederationInstanceIdentity(id=1, canonical_origin="https://blog.example.com"))
         db.add(
             LocalFederationActor(
