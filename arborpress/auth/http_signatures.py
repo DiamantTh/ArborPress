@@ -1,159 +1,164 @@
-"""HTTP Signature verification for incoming ActivityPub requests (§5).
+"""Strict legacy ActivityPub HTTP Signatures and local signing primitives.
 
-Implements cavage-http-signatures (draft-cavage-http-signatures-12),
-which is the de-facto standard used by Mastodon, Pleroma, Misskey, etc.
-
-Supported algorithms:
-  - rsa-sha256  (RSA + PKCS#1v15 + SHA-256) – legacy, most common
-  - ed25519     (Ed25519) – modern, growing adoption
-
-Flow for each incoming AP inbox request:
-  1. Parse `Signature:` header into its components (keyId, algorithm,
-     headers list, base64 signature).
-  2. Verify the `Date:` header is within ±30 s of server time
-     (replay-attack protection).
-  3. Verify the `Digest:` header matches SHA-256(body)
-     (body-integrity check).
-  4. Fetch the remote actor's public key PEM from `keyId` URL,
-     using SSRF-guard from `arborpress.core.validators`.
-     Results are cached for 1 hour (TTL is reset on each cache hit).
-  5. Reconstruct the signed string from the listed headers.
-  6. Verify the signature with the fetched public key.
-
-Public API:
-  verify_http_signature(method, path, headers, body)
-    → (ok: bool, reason: str)
-
-  invalidate_key_cache(key_id=None)
-    → clears one or all cached public keys
+This module intentionally supports the widely deployed Cavage-style
+``rsa-sha256`` format. RFC 9421 inputs are rejected explicitly until an
+established structured-fields implementation is added; they are never
+misinterpreted as a weaker legacy signature.
 """
 
 from __future__ import annotations
 
 import base64
 import hashlib
-import logging
 import re
 import time
+from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
+from typing import Any
 
-log = logging.getLogger("arborpress.http_signatures")
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from sqlalchemy.ext.asyncio import AsyncSession
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+from arborpress.federation.remote import resolve_remote_key
 
-_SKEW_SECONDS: int = 30        # max allowed Date header drift
-_CACHE_TTL:    int = 3600      # public-key cache TTL (seconds)
-_FETCH_TIMEOUT: float = 6.0    # HTTP timeout for key fetching
-
-# keyId → (expire_monotonic, pem_str)
-_KEY_CACHE: dict[str, tuple[float, str]] = {}
-
-_SIG_RE = re.compile(r'(\w+)="([^"]*)"')
-
-# ---------------------------------------------------------------------------
-# Public helpers
-# ---------------------------------------------------------------------------
+_SKEW_SECONDS = 300
+_PARAM_RE = re.compile(r'\s*([A-Za-z][A-Za-z0-9_-]*)="([^"\r\n]*)"\s*')
+_HEADER_NAME_RE = re.compile(r"^[a-z0-9-]+$")
 
 
-def invalidate_key_cache(key_id: str | None = None) -> None:
-    """Clear the in-memory public-key cache."""
-    if key_id:
-        _KEY_CACHE.pop(key_id, None)
-    else:
-        _KEY_CACHE.clear()
+@dataclass(frozen=True)
+class SignatureResult:
+    valid: bool
+    reason: str
+    actor_uri: str | None = None
+    key_id: str | None = None
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-def _parse_sig_header(header: str) -> dict[str, str]:
-    """Parse `Signature: keyId="...", algorithm="...", ...` into a dict."""
-    return {k: v for k, v in _SIG_RE.findall(header)}
-
-
-async def _fetch_public_key_pem(key_id: str) -> str | None:
-    """Fetch the PEM-encoded public key for *key_id*.
-
-    *key_id* is typically a URL like
-    ``https://mastodon.social/users/alice#main-key``.
-    The actor document is fetched from the base URL (without the fragment),
-    then ``publicKey.publicKeyPem`` is extracted.
-
-    Results are cached for _CACHE_TTL seconds.
-    SSRF-guard: delegates to :func:`arborpress.core.validators.is_safe_external_url`.
-    """
-    cached = _KEY_CACHE.get(key_id)
-    if cached and cached[0] > time.monotonic():
-        return cached[1]
-
-    # SSRF guard
-    from arborpress.core.validators import is_safe_external_url
-    if not await is_safe_external_url(key_id):
-        log.warning("AP sig: blocked SSRF attempt for key_id=%s", key_id)
-        return None
-
-    # Actor document URL (strip fragment)
-    actor_url = key_id.split("#")[0]
-    try:
-        import httpx  # already in deps (§5 / §11)
-        async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT, follow_redirects=True) as client:
-            r = await client.get(
-                actor_url,
-                headers={"Accept": "application/activity+json, application/ld+json"},
-            )
-        if r.status_code != 200:
-            log.debug("AP sig: actor fetch returned %d for %s", r.status_code, actor_url)
+def _parse_signature_header(value: str) -> dict[str, str] | None:
+    fields: dict[str, str] = {}
+    for item in value.split(","):
+        match = _PARAM_RE.fullmatch(item)
+        if not match:
             return None
-        data: dict = r.json()
-    except Exception as exc:
-        log.warning("AP sig: key fetch failed for %s: %s", key_id, exc)
-        return None
-
-    # Extract publicKey block
-    pub_key_block = data.get("publicKey", {})
-    # Some implementations return a list
-    if isinstance(pub_key_block, list):
-        pub_key_block = next(
-            (k for k in pub_key_block if isinstance(k, dict) and k.get("id") == key_id),
-            {},
-        )
-
-    pem: str = pub_key_block.get("publicKeyPem", "") if isinstance(pub_key_block, dict) else ""
-    if not pem:
-        log.debug("AP sig: no publicKeyPem found for keyId=%s", key_id)
-        return None
-
-    _KEY_CACHE[key_id] = (time.monotonic() + _CACHE_TTL, pem)
-    return pem
+        name, content = match.groups()
+        name = name.lower()
+        if name in fields:
+            return None
+        fields[name] = content
+    return fields
 
 
-def _build_signed_string(
-    headers_list: list[str],
-    request_headers: dict[str, str],
+def _build_legacy_base(
+    names: list[str], headers: dict[str, str], method: str, path: str
+) -> bytes | None:
+    lines: list[str] = []
+    for name in names:
+        if name == "(request-target)":
+            lines.append(f"(request-target): {method.lower()} {path}")
+        elif name in headers:
+            lines.append(f"{name}: {headers[name].strip()}")
+        else:
+            return None
+    return "\n".join(lines).encode("utf-8")
+
+
+def verify_legacy_signature_with_pem(
+    *,
     method: str,
     path: str,
-) -> str:
-    """Reconstruct the string that was signed by the remote server.
+    headers: dict[str, str],
+    body: bytes,
+    pem: str,
+    now: float | None = None,
+) -> tuple[bool, str]:
+    """Verify the cryptographic and request/body binding of a legacy signature."""
+    normalized = {key.lower(): value for key, value in headers.items()}
+    raw_header = normalized.get("signature")
+    if not raw_header:
+        return False, "missing_signature"
+    params = _parse_signature_header(raw_header)
+    if not params:
+        return False, "malformed_signature"
+    if params.get("algorithm", "").lower() != "rsa-sha256":
+        return False, "unsupported_signature_algorithm"
+    key_id = params.get("keyid", "")
+    signature_text = params.get("signature", "")
+    names = [name.lower() for name in params.get("headers", "").split()]
+    if not key_id or not signature_text or not names or len(names) != len(set(names)):
+        return False, "malformed_signature"
+    if any(name != "(request-target)" and not _HEADER_NAME_RE.fullmatch(name) for name in names):
+        return False, "invalid_signed_header_name"
+    required = {"(request-target)", "host", "date"}
+    if method.upper() == "POST" or body:
+        required.add("digest")
+    if not required.issubset(names):
+        return False, "required_component_not_covered"
+    if not normalized.get("host") or not normalized.get("date"):
+        return False, "required_header_missing"
+    try:
+        timestamp = parsedate_to_datetime(normalized["date"]).timestamp()
+    except TypeError, ValueError, OverflowError:
+        return False, "invalid_date"
+    if abs((time.time() if now is None else now) - timestamp) > _SKEW_SECONDS:
+        return False, "stale_date"
 
-    ``(request-target)`` is a pseudo-header: ``<method> <path>``.
-    All header names are lower-cased per the spec.
-    """
-    parts: list[str] = []
-    for h in headers_list:
-        if h == "(request-target)":
-            parts.append(f"(request-target): {method.lower()} {path}")
-        else:
-            val = request_headers.get(h.lower(), "")
-            parts.append(f"{h.lower()}: {val}")
-    return "\n".join(parts)
+    if "digest" in required:
+        match = re.fullmatch(r"SHA-256=([A-Za-z0-9+/]+={0,2})", normalized.get("digest", ""))
+        if not match:
+            return False, "invalid_digest"
+        expected = base64.b64encode(hashlib.sha256(body).digest()).decode("ascii")
+        if not __import__("hmac").compare_digest(match.group(1), expected):
+            return False, "digest_mismatch"
+
+    base = _build_legacy_base(names, normalized, method, path)
+    if base is None:
+        return False, "signed_header_missing"
+    try:
+        signature = base64.b64decode(signature_text, validate=True)
+        public_key = serialization.load_pem_public_key(pem.encode("ascii"))
+        if not isinstance(public_key, rsa.RSAPublicKey) or public_key.key_size < 2048:
+            return False, "unsafe_public_key"
+        public_key.verify(signature, base, padding.PKCS1v15(), hashes.SHA256())
+    except Exception:  # malformed key/signature and invalid signature are equivalent to caller
+        return False, "signature_invalid"
+    return True, "ok"
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+async def verify_request_signature(
+    *,
+    method: str,
+    path: str,
+    headers: dict[str, str],
+    body: bytes,
+    db: AsyncSession,
+    federation_settings: dict[str, Any],
+) -> SignatureResult:
+    normalized = {key.lower(): value for key, value in headers.items()}
+    if (
+        normalized.get("signature-input")
+        or normalized.get("signature")
+        and normalized["signature"].startswith("sig1=")
+    ):
+        return SignatureResult(False, "rfc9421_not_supported")
+    parsed = _parse_signature_header(normalized.get("signature", ""))
+    if not parsed:
+        return SignatureResult(False, "missing_or_malformed_signature")
+    key_id = parsed.get("keyid", "")
+    from arborpress.federation.security import validate_remote_url_syntax
+
+    try:
+        validate_remote_url_syntax(key_id)
+    except ValueError:
+        return SignatureResult(False, "invalid_key_id")
+    resolved = await resolve_remote_key(db, key_id, federation_settings)
+    if resolved is None:
+        return SignatureResult(False, "remote_key_unavailable", key_id=key_id)
+    owner, pem = resolved
+    valid, reason = verify_legacy_signature_with_pem(
+        method=method, path=path, headers=normalized, body=body, pem=pem
+    )
+    return SignatureResult(valid, reason, owner if valid else None, key_id)
 
 
 async def verify_http_signature(
@@ -161,90 +166,81 @@ async def verify_http_signature(
     path: str,
     headers: dict[str, str],
     body: bytes,
+    *,
+    db: AsyncSession | None = None,
+    federation_settings: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
-    """Verify an HTTP Signature on an incoming ActivityPub request.
+    """Compatibility wrapper around the strict verifier (no unsafe network fallback)."""
+    if db is None or federation_settings is None:
+        return False, "verification_context_required"
+    result = await verify_request_signature(
+        method=method,
+        path=path,
+        headers=headers,
+        body=body,
+        db=db,
+        federation_settings=federation_settings,
+    )
+    return result.valid, result.reason
 
-    Args:
-        method:  HTTP method (e.g. ``"POST"``).
-        path:    Request path including query string (e.g. ``"/ap/inbox/alice"``).
-        headers: Lower-cased request headers dict.
-        body:    Raw request body bytes.
 
-    Returns:
-        ``(True, "ok")`` on success.
-        ``(False, reason)`` with a human-readable reason on failure.
-    """
-    # Normalise header keys to lower-case
-    lc_headers = {k.lower(): v for k, v in headers.items()}
+async def sign_legacy_request(
+    db: AsyncSession,
+    actor_id: str,
+    *,
+    method: str,
+    path: str,
+    host: str,
+    body: bytes = b"",
+    date: str | None = None,
+) -> dict[str, str]:
+    """Create signed request headers without exposing the local private key."""
+    from cryptography.fernet import Fernet, InvalidToken
+    from sqlalchemy import select
 
-    sig_header = lc_headers.get("signature", "")
-    if not sig_header:
-        return False, "Missing Signature header"
+    from arborpress.core.config import get_settings
+    from arborpress.models.federation import LocalFederationActor
+    from arborpress.models.user import ActorKeypair
 
-    params = _parse_sig_header(sig_header)
-    key_id    = params.get("keyId", "")
-    algorithm = params.get("algorithm", "rsa-sha256").lower()
-    headers_param = params.get("headers", "date").split()
-    sig_b64   = params.get("signature", "")
-
-    if not key_id or not sig_b64:
-        return False, "Malformed Signature header: missing keyId or signature"
-
-    # 1. Date header replay-attack protection
-    if "date" in headers_param:
-        from email.utils import parsedate_to_datetime
-        date_val = lc_headers.get("date", "")
-        try:
-            req_ts = parsedate_to_datetime(date_val).timestamp()
-            skew = abs(time.time() - req_ts)
-            if skew > _SKEW_SECONDS:
-                return False, f"Date header out of acceptable window ({skew:.0f}s > {_SKEW_SECONDS}s)"
-        except Exception:
-            return False, f"Unparseable Date header: {date_val!r}"
-
-    # 2. Digest header body-integrity check
-    if "digest" in headers_param:
-        digest_val = lc_headers.get("digest", "")
-        if digest_val.startswith("SHA-256="):
-            expected = base64.b64encode(hashlib.sha256(body).digest()).decode()
-            actual   = digest_val[8:]
-            if expected != actual:
-                return False, "Digest header mismatch – body integrity check failed"
-
-    # 3. Fetch public key
-    pem = await _fetch_public_key_pem(key_id)
-    if pem is None:
-        return False, f"Could not fetch public key for keyId={key_id!r}"
-
-    # 4. Reconstruct signed string
-    signed_string = _build_signed_string(headers_param, lc_headers, method, path)
-
-    # 5. Verify signature
+    actor_result = await db.execute(
+        select(LocalFederationActor).where(
+            LocalFederationActor.id == actor_id, LocalFederationActor.enabled.is_(True)
+        )
+    )
+    actor = actor_result.scalar_one_or_none()
+    if actor is None or actor.current_keypair_id is None:
+        raise ValueError("local_signing_actor_unavailable")
+    key_result = await db.execute(
+        select(ActorKeypair).where(ActorKeypair.id == actor.current_keypair_id)
+    )
+    key = key_result.scalar_one_or_none()
+    config_key = get_settings().auth.actor_key_enc_key
+    if key is None or config_key is None or key.algorithm != "rsa-sha256":
+        raise ValueError("local_signing_key_unavailable")
     try:
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
-        from cryptography.hazmat.primitives.serialization import load_pem_public_key
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
+        private_pem = Fernet(config_key.get_secret_value().encode()).decrypt(key.private_key_enc)
+        private_key = serialization.load_pem_private_key(private_pem, password=None)
+    except (InvalidToken, ValueError, TypeError) as exc:
+        raise ValueError("local_signing_key_unavailable") from exc
+    if not isinstance(private_key, rsa.RSAPrivateKey) or private_key.key_size < 2048:
+        raise ValueError("local_signing_key_unsafe")
+    from email.utils import formatdate
 
-        pub_key = load_pem_public_key(pem.encode())
-        sig_bytes    = base64.b64decode(sig_b64)
-        signed_bytes = signed_string.encode()
-
-        if isinstance(pub_key, Ed25519PublicKey):
-            pub_key.verify(sig_bytes, signed_bytes)
-        elif isinstance(pub_key, RSAPublicKey):
-            pub_key.verify(
-                sig_bytes,
-                signed_bytes,
-                asym_padding.PKCS1v15(),
-                hashes.SHA256(),
-            )
-        else:
-            return False, f"Unsupported public key type: {type(pub_key).__name__}"
-
-    except Exception as exc:
-        return False, f"Signature verification failed: {exc}"
-
-    log.debug("AP sig: verified OK | keyId=%s algorithm=%s", key_id, algorithm)
-    return True, "ok"
+    date_value = date or formatdate(usegmt=True)
+    values = {"(request-target)": f"{method.lower()} {path}", "host": host, "date": date_value}
+    signed_names = ["(request-target)", "host", "date"]
+    if method.upper() == "POST" or body:
+        digest_value = base64.b64encode(hashlib.sha256(body).digest()).decode("ascii")
+        values["digest"] = f"SHA-256={digest_value}"
+        signed_names.append("digest")
+    signing_base = "\n".join(f"{name}: {values[name]}" for name in signed_names).encode()
+    signature = private_key.sign(signing_base, padding.PKCS1v15(), hashes.SHA256())
+    signature_b64 = base64.b64encode(signature).decode("ascii")
+    sig = (
+        f'keyId="{key.key_id_url}",algorithm="rsa-sha256",'
+        f'headers="{" ".join(signed_names)}",signature="{signature_b64}"'
+    )
+    result = {"Host": host, "Date": date_value, "Signature": sig}
+    if "digest" in values:
+        result["Digest"] = values["digest"]
+    return result
