@@ -5,6 +5,11 @@
 <h1>Kommentar-Details</h1>
 <dl>
   <dt>Autor</dt><dd>{{ comment.author_name }}</dd>
+  {% if comment.remote_actor %}
+  <dt>Föderierter Autor</dt><dd><a href="{{ comment.remote_actor.actor_uri | e }}" rel="nofollow noopener" target="_blank">{{ comment.remote_actor.preferred_username or comment.remote_actor.display_name or comment.remote_actor.domain }}</a> · {{ comment.remote_actor.domain }} · Domainpolicy {{ 'allowed' if remote_domain_allowed else 'blocked' }}</dd>
+  <dt>Remote Object URI</dt><dd><code>{{ comment.remote_object_uri }}</code></dd>
+  <dt>Inbox activity</dt><dd>{% if federation_intake %}<a href="{{ url_for('admin.federation_inbox_detail', intake_id=federation_intake.id) }}">{{ federation_intake.activity_type }} · {{ federation_intake.activity_uri }}</a>{% else %}unavailable{% endif %}</dd>
+  {% endif %}
   <dt>Status</dt><dd>{{ comment.status.value }}</dd>
   <dt>Artikel</dt><dd><a href="{{ url_for('public.post_detail', slug=comment.post.slug) }}">{{ comment.post.title }}</a></dd>
   <dt>Thread</dt><dd>{% if comment.parent_id %}<a href="{{ url_for('admin.comment_detail', comment_id=comment.parent_id) }}">Parent {{ comment.parent_id }}</a>{% else %}Root{% endif %}</dd>

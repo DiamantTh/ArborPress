@@ -202,6 +202,17 @@
   </form>
 </section>
 {% endif %}
+
+{% if post %}
+<section class="admin-panel" aria-labelledby="post-federation-heading">
+  <h3 id="post-federation-heading">ActivityPub delivery</h3>
+  {% if post.ap_object_id %}<p>Object URI: <code>{{ post.ap_object_id }}</code></p>{% else %}<p>No stable federated object has been created.</p>{% endif %}
+  {% if federation_activities %}<p>Recent activities: {% for state, count in federation_delivery_counts.items() %}{{ state }} {{ count }}{% if not loop.last %} · {% endif %}{% else %}no delivery rows{% endfor %}</p>
+  <ul>{% for activity in federation_activities %}<li>{{ activity.activity_type }} · {{ activity.created_at }} · <code>{{ activity.activity_uri }}</code></li>{% endfor %}</ul>
+  <a class="btn btn--small" href="{{ url_for('admin.federation_deliveries_page') }}">Delivery diagnostics</a>
+  {% else %}<p>No public ActivityPub activity is recorded for this post.</p>{% endif %}
+</section>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}{{ super() }}

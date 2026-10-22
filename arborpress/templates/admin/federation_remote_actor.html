@@ -1,0 +1,17 @@
+{% extends "admin/_base.html" %}
+{% block title %}Remote Actor – Admin{% endblock %}
+{% block admin_content %}
+<h2>Remote actor cache</h2>
+<dl><dt>Actor URI</dt><dd><code>{{ actor.actor_uri }}</code></dd><dt>Domain</dt><dd>{{ actor.domain }}</dd><dt>Name</dt><dd>{{ actor.display_name or '–' }}</dd><dt>Handle</dt><dd>{{ actor.preferred_username or '–' }}</dd><dt>Actor type</dt><dd>{{ actor.actor_type }}</dd><dt>Inbox</dt><dd><code>{{ actor.inbox_uri }}</code></dd><dt>Shared inbox</dt><dd><code>{{ actor.shared_inbox_uri or '–' }}</code></dd><dt>Health</dt><dd>{{ actor.health_state }} · {{ actor.last_error or '–' }}</dd><dt>Fetched / expires</dt><dd>{{ actor.fetched_at }} / {{ actor.expires_at }}</dd><dt>Federated comments</dt><dd>{{ comment_count }}</dd><dt>Follow rows</dt><dd>{{ follows|length }}</dd></dl>
+<h3>Cached key metadata</h3><ul>{% for key in keys %}<li><code>{{ key.key_id }}</code> · owner-bound · fetched {{ key.fetched_at }} · expires {{ key.expires_at }}</li>{% else %}<li>No cached keys.</li>{% endfor %}</ul>
+<form method="post" action="{{ url_for('admin.federation_remote_actor_refresh', actor_id=actor.id) }}">{{ csrf_input() }}
+  {% if local_actors %}<label>Optional signed-fetch identity <select name="signing_actor_id"><option value="">Unsigned guarded fetch</option>{% for local in local_actors %}<option value="{{ local.id }}">{{ local.preferred_username }}</option>{% endfor %}</select></label>{% endif %}
+  <button class="btn" type="submit">Refresh through guarded fetcher</button></form>
+<p>Refresh uses the existing HTTPS, domain, DNS, redirect, size, owner and key checks. Optional signed fetch signs each request hop as the explicitly selected local actor; signatures are never forwarded across redirects. This does not let an administrator pin arbitrary public-key material.</p>
+<form method="post" action="{{ url_for('admin.federation_domain_rule_save') }}" data-stepup-action="toggle_federation" data-stepup-target="instance">
+  {{ csrf_input() }}<input type="hidden" name="domain" value="{{ actor.domain }}"><input type="hidden" name="rule" value="block"><input type="hidden" name="note" value="Blocked from remote actor detail">
+  <label>Confirm block by typing {{ actor.domain }} <input name="confirm_domain" required maxlength="253" autocomplete="off"></label>
+  <button class="btn" type="submit">Block this exact domain</button>
+</form>
+<p><a href="{{ url_for('admin.federation_diagnostics') }}">Federation overview</a></p>
+{% endblock %}

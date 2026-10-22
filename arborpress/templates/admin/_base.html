@@ -28,6 +28,7 @@
 <a href="{{ url_for('admin.themes_overview') }}"{% if request.endpoint and request.endpoint.startswith('admin.theme') %} aria-current="page"{% endif %}>{{ _('Themes') }}</a>
 <a href="{{ url_for('admin.plugins_list') }}"{% if request.endpoint == 'admin.plugins_list' %} aria-current="page"{% endif %}>{{ _('Plugins') }}</a>
 <a href="{{ url_for('admin.security') }}"{% if request.endpoint == 'admin.security' %} aria-current="page"{% endif %}>{{ _('Sicherheit') }}</a>
+<a href="{{ url_for('admin.federation_diagnostics') }}"{% if request.endpoint and request.endpoint.startswith('admin.federation') %} aria-current="page"{% endif %}>{{ _('Federation') }}</a>
 {% endif %}
 <form method="post" action="{{ url_for('auth.logout') }}" style="display:inline">
   {{ csrf_input() }}

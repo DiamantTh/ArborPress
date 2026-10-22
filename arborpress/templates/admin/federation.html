@@ -5,21 +5,43 @@
 <p>Status: <strong>{{ 'enabled' if enabled else 'disabled' }}</strong></p>
 <p>Configured canonical origin: <code>{{ origin }}</code></p>
 <p>Pinned federation origin: <code>{{ pinned_origin or 'not pinned (no actor enabled yet)' }}</code></p>
-<p>Legacy mode: {{ settings.get('mode', 'disabled') }} · Domain policy: {{ settings.get('domain_policy', 'open') }}</p>
+<p>Mode: {{ settings.get('mode', 'disabled') }} · Domain policy: {{ settings.get('domain_policy', 'open') }} · Authorized Fetch (signed reads): {{ 'enabled' if signed_fetch else 'disabled' }}</p>
+<p>HTTP signature support: legacy RSA-SHA256 verify/sign; RFC 9421 is not supported. Runtime worker is lifecycle-managed or can be started with <code>arborpress federation worker</code>.</p>
+<p>Worker status: {% for name, state in worker_status.items() %}{{ name }} {{ state }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+<p>Stored follows: {{ follow_count }} · Outbox activities: {{ activity_count }}</p>
+<p><a href="{{ url_for('admin.federation_inbox_page') }}">Inbox intake</a> · <a href="{{ url_for('admin.federation_deliveries_page') }}">Delivery queue</a> · <a href="{{ url_for('admin.site_settings_page') }}#sec-federation">Federation settings</a></p>
 
 <h3>Local actors</h3>
 {% if actors %}<ul>{% for actor in actors %}
-  <li>{{ actor.preferred_username }} — {{ 'enabled' if actor.enabled else 'disabled' }} — <code>{{ actor.actor_uri }}</code></li>
+  <li>{{ actor.preferred_username }} — {{ 'enabled' if actor.enabled else 'disabled' }} — <code>{{ actor.actor_uri }}</code> — key {{ key_metadata.get(actor.id).rotated_at or key_metadata.get(actor.id).created_at if key_metadata.get(actor.id) else 'missing' }}</li>
 {% endfor %}</ul>{% else %}<p>No explicit local actors are enabled.</p>{% endif %}
 
 <h3>Remote actor cache</h3>
 {% if remotes %}<ul>{% for actor in remotes %}
-  <li>{{ actor.display_name or actor.preferred_username or actor.actor_type }} — {{ actor.domain }} — expires {{ actor.expires_at }}</li>
+  <li><a href="{{ url_for('admin.federation_remote_actor_detail', actor_id=actor.id) }}">{{ actor.display_name or actor.preferred_username or actor.actor_type }}</a> — {{ actor.domain }} — {{ actor.health_state }} — cache expires {{ actor.expires_at }}</li>
 {% endfor %}</ul>{% else %}<p>No remote actors cached.</p>{% endif %}
 
 <h3>Inbox intake</h3>
 {% if inbox_states %}<ul>{% for state, count in inbox_states.items() %}<li>{{ state }}: {{ count }}</li>{% endfor %}</ul>{% else %}<p>No activities received.</p>{% endif %}
+<h3>Signature failure classes (last 30 days)</h3>
+{% if signature_failures %}<ul>{% for category, count in signature_failures.items() %}<li>{{ category }}: {{ count }}</li>{% endfor %}</ul>{% else %}<p>No signature failures recorded.</p>{% endif %}
 
 <h3>Domain rules</h3>
-{% if domain_rules %}<ul>{% for item in domain_rules %}<li>{{ item.domain }} — {{ item.rule }}</li>{% endfor %}</ul>{% else %}<p>No explicit domain rules.</p>{% endif %}
+{% if domain_rules %}<ul>{% for item in domain_rules %}<li>{{ item.domain }} — {{ item.rule }}{% if item.include_subdomains %} (includes subdomains){% endif %}{% if item.note %} — {{ item.note }}{% endif %}
+  <form method="post" action="{{ url_for('admin.federation_domain_rule_save') }}" data-stepup-action="toggle_federation" data-stepup-target="instance" style="display:inline">
+    {{ csrf_input() }}<input type="hidden" name="domain" value="{{ item.domain }}"><input type="hidden" name="rule" value="remove"><label>Confirm {{ item.domain }} <input name="confirm_domain" required maxlength="253" autocomplete="off"></label><button class="btn btn--small" type="submit">Remove</button>
+  </form></li>{% endfor %}</ul>{% else %}<p>No explicit domain rules.</p>{% endif %}
+<form method="post" action="{{ url_for('admin.federation_domain_rule_save') }}" class="admin-form" data-stepup-action="toggle_federation" data-stepup-target="instance">
+  {{ csrf_input() }}
+  <label>Exact domain <input name="domain" required maxlength="253" autocomplete="off"></label>
+  <label>Rule <select name="rule"><option value="allow">Allow</option><option value="block">Block</option></select></label>
+  <label><input type="checkbox" name="include_subdomains" value="1"> Include subdomains</label>
+  <label>To block, type the exact domain again <input name="confirm_domain" maxlength="253" autocomplete="off"></label>
+  <label>Internal note <input name="note" maxlength="512"></label>
+  <button class="btn btn--primary" type="submit">Save domain rule</button>
+</form>
+
+<h3>Transport retention</h3>
+<p>Delivered delivery rows older than 90 days and completed inbox payloads older than 30 days can be cleaned. Activity IDs, body hashes and outbox activity history remain.</p>
+<form method="post" action="{{ url_for('admin.federation_retention_run') }}">{{ csrf_input() }}<button class="btn" type="submit">Run retention cleanup</button></form>
 {% endblock %}

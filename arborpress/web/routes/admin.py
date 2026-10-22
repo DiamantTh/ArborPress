@@ -17,6 +17,7 @@ import logging
 import math
 import secrets
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 
 from jinja2 import TemplateError
@@ -223,20 +224,36 @@ async def dashboard():
     return await render_template("admin/dashboard.html", stats=stats, noindex=True)
 
 
+def _federation_filter_time(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value[:40])
+    except ValueError:
+        abort(400, description="Invalid federation date filter")
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(UTC).replace(tzinfo=None)
+    return parsed
+
+
 @admin_bp.get("/federation")
-async def federation_diagnostics():
+async def federation_diagnostics() -> ResponseReturnValue:
     """Read-only SSR federation inventory; never exposes key material or payloads."""
     _require_session()
     require_role("admin")
     from arborpress.core.site_settings import get_section
     from arborpress.federation.policy import federation_is_enabled
     from arborpress.models.federation import (
+        FederationDelivery,
         FederationDomainRule,
         FederationInboxActivity,
         FederationInstanceIdentity,
+        FederationOutboxActivity,
+        FederationSignatureFailureDaily,
         LocalFederationActor,
         RemoteActor,
     )
+    from arborpress.models.user import ActorKeypair, Follower
 
     async for db in get_db_session():
         settings = await get_section("federation", db)
@@ -268,6 +285,45 @@ async def federation_diagnostics():
                 )
             ).all()
         )
+        delivery_states = dict(
+            (
+                await db.execute(
+                    select(FederationDelivery.status, func.count()).group_by(
+                        FederationDelivery.status
+                    )
+                )
+            ).all()
+        )
+        signature_failures = dict(
+            (
+                await db.execute(
+                    select(
+                        FederationSignatureFailureDaily.category,
+                        func.sum(FederationSignatureFailureDaily.failure_count),
+                    )
+                    .where(
+                        FederationSignatureFailureDaily.date_bucket
+                        >= (datetime.now(UTC).date() - timedelta(days=30))
+                    )
+                    .group_by(FederationSignatureFailureDaily.category)
+                    .order_by(FederationSignatureFailureDaily.category)
+                )
+            ).all()
+        )
+        follow_count = int(await db.scalar(select(func.count()).select_from(Follower)) or 0)
+        activity_count = int(
+            await db.scalar(select(func.count()).select_from(FederationOutboxActivity)) or 0
+        )
+        key_metadata = {}
+        for actor in actors:
+            if actor.current_keypair_id:
+                key = await db.get(ActorKeypair, actor.current_keypair_id)
+                if key is not None:
+                    key_metadata[actor.id] = {
+                        "algorithm": key.algorithm,
+                        "created_at": key.created_at,
+                        "rotated_at": key.rotated_at,
+                    }
         identity = await db.get(FederationInstanceIdentity, 1)
     from arborpress.core.config import get_settings as _get_settings
 
@@ -275,6 +331,13 @@ async def federation_diagnostics():
         origin = _get_settings().web.base_url
     except Exception:
         origin = "unavailable"
+    workers = current_app.extensions.get("arborpress_federation_workers", {})
+    worker_status = {
+        name: ("running" if task and not task.done() else "stopped")
+        for name, task in workers.items()
+    }
+    if not workers:
+        worker_status = {"embedded": "not active in this process"}
     return await render_template(
         "admin/federation.html",
         enabled=federation_is_enabled(settings),
@@ -285,8 +348,300 @@ async def federation_diagnostics():
         remotes=remotes,
         domain_rules=domain_rules,
         inbox_states=inbox_states,
+        delivery_states=delivery_states,
+        signature_failures=signature_failures,
+        follow_count=follow_count,
+        activity_count=activity_count,
+        key_metadata=key_metadata,
+        signed_fetch=bool(settings.get("authorized_fetch", False)),
+        worker_status=worker_status,
         noindex=True,
     )
+
+
+@admin_bp.get("/federation/deliveries")
+async def federation_deliveries_page() -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    from arborpress.models.federation import FederationDelivery, FederationOutboxActivity
+
+    status = request.args.get("status", "")[:16]
+    activity_type = request.args.get("type", "")[:32]
+    domain = request.args.get("domain", "")[:253].strip().lower()
+    since = _federation_filter_time(request.args.get("since", ""))
+    until = _federation_filter_time(request.args.get("until", ""))
+    stmt = select(FederationDelivery, FederationOutboxActivity).join(
+        FederationOutboxActivity, FederationDelivery.activity_id == FederationOutboxActivity.id
+    )
+    if status in {"pending", "sending", "retry", "delivered", "dead", "cancelled"}:
+        stmt = stmt.where(FederationDelivery.status == status)
+    if activity_type in {"Follow", "Accept", "Reject", "Undo", "Create", "Update", "Delete"}:
+        stmt = stmt.where(FederationOutboxActivity.activity_type == activity_type)
+    if domain:
+        stmt = stmt.where(FederationDelivery.domain == domain)
+    if since is not None:
+        stmt = stmt.where(FederationDelivery.created_at >= since)
+    if until is not None:
+        stmt = stmt.where(FederationDelivery.created_at < until)
+    stmt = stmt.order_by(FederationDelivery.created_at.desc()).limit(200)
+    async for db in get_db_session():
+        rows = (await db.execute(stmt)).all()
+    return await render_template(
+        "admin/federation_deliveries.html", rows=rows, status=status,
+        activity_type=activity_type, domain=domain, since=request.args.get("since", ""),
+        until=request.args.get("until", ""), noindex=True
+    )
+
+
+@admin_bp.post("/federation/deliveries/<delivery_id>/retry")
+async def federation_delivery_retry(delivery_id: str) -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    from arborpress.federation.operations import retry_delivery
+
+    actor_id = str(session.get("user_id") or "")
+    async for db in get_db_session():
+        try:
+            delivery = await retry_delivery(db, delivery_id)
+        except ValueError as exc:
+            abort(409, description=str(exc))
+        await write_audit_event(
+            event_type="federation.delivery.retried", outcome="success", actor_id=actor_id,
+            target_id=delivery.id, detail="same activity requeued after policy validation", db=db
+        )
+        await db.commit()
+    return redirect(url_for("admin.federation_deliveries_page"))
+
+
+@admin_bp.post("/federation/deliveries/<delivery_id>/cancel")
+async def federation_delivery_cancel(delivery_id: str) -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    from arborpress.federation.operations import cancel_delivery
+
+    actor_id = str(session.get("user_id") or "")
+    async for db in get_db_session():
+        try:
+            delivery = await cancel_delivery(db, delivery_id)
+        except ValueError as exc:
+            abort(409, description=str(exc))
+        await write_audit_event(
+            event_type="federation.delivery.cancelled", outcome="success", actor_id=actor_id,
+            target_id=delivery.id, db=db
+        )
+        await db.commit()
+    return redirect(url_for("admin.federation_deliveries_page"))
+
+
+@admin_bp.get("/federation/inbox")
+async def federation_inbox_page() -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    from arborpress.models.federation import FederationInboxActivity
+
+    state = request.args.get("state", "")[:16]
+    activity_type = request.args.get("type", "")[:32]
+    domain = request.args.get("domain", "")[:253].strip().lower()
+    since = _federation_filter_time(request.args.get("since", ""))
+    until = _federation_filter_time(request.args.get("until", ""))
+    stmt = select(FederationInboxActivity)
+    if state in {"received", "processing", "processed", "ignored", "rejected", "failed"}:
+        stmt = stmt.where(FederationInboxActivity.processing_state == state)
+    if activity_type in {"Follow", "Accept", "Reject", "Undo", "Create", "Update", "Delete"}:
+        stmt = stmt.where(FederationInboxActivity.activity_type == activity_type)
+    if domain:
+        stmt = stmt.where(FederationInboxActivity.source_domain == domain)
+    if since is not None:
+        stmt = stmt.where(FederationInboxActivity.received_at >= since)
+    if until is not None:
+        stmt = stmt.where(FederationInboxActivity.received_at < until)
+    stmt = stmt.order_by(FederationInboxActivity.received_at.desc()).limit(200)
+    async for db in get_db_session():
+        rows = (await db.scalars(stmt)).all()
+    return await render_template(
+        "admin/federation_inbox.html", rows=rows, state=state,
+        activity_type=activity_type, domain=domain, since=request.args.get("since", ""),
+        until=request.args.get("until", ""), noindex=True
+    )
+
+
+@admin_bp.get("/federation/inbox/<intake_id>")
+async def federation_inbox_detail(intake_id: str) -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    from arborpress.models.federation import FederationInboxActivity
+
+    async for db in get_db_session():
+        item = await db.get(FederationInboxActivity, intake_id)
+    if item is None:
+        abort(404)
+    return await render_template("admin/federation_inbox_detail.html", item=item, noindex=True)
+
+
+@admin_bp.get("/federation/remote-actors/<actor_id>")
+async def federation_remote_actor_detail(actor_id: str) -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    from arborpress.models.content import Comment
+    from arborpress.models.federation import LocalFederationActor, RemoteActor, RemoteActorKey
+    from arborpress.models.user import Follower
+
+    async for db in get_db_session():
+        actor = await db.get(RemoteActor, actor_id)
+        if actor is None:
+            abort(404)
+        keys = (
+            await db.scalars(
+                select(RemoteActorKey)
+                .where(RemoteActorKey.remote_actor_id == actor.id)
+                .order_by(RemoteActorKey.fetched_at.desc())
+                .limit(8)
+            )
+        ).all()
+        comment_count = int(
+            await db.scalar(
+                select(func.count(Comment.id)).where(Comment.remote_actor_id == actor.id)
+            ) or 0
+        )
+        follows = (
+            await db.scalars(
+                select(Follower).where(Follower.remote_actor_uri == actor.actor_uri).limit(20)
+            )
+        ).all()
+        local_actors = (
+            await db.scalars(
+                select(LocalFederationActor).where(LocalFederationActor.enabled.is_(True))
+                .order_by(LocalFederationActor.preferred_username)
+            )
+        ).all()
+    return await render_template(
+        "admin/federation_remote_actor.html", actor=actor, keys=keys,
+        comment_count=comment_count, follows=follows, local_actors=local_actors, noindex=True
+    )
+
+
+@admin_bp.post("/federation/inbox/<intake_id>/reprocess")
+async def federation_inbox_reprocess(intake_id: str) -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    from arborpress.federation.operations import reprocess_inbox
+
+    actor_id = str(session.get("user_id") or "")
+    async for db in get_db_session():
+        try:
+            item = await reprocess_inbox(db, intake_id)
+        except ValueError as exc:
+            abort(409, description=str(exc))
+        await write_audit_event(
+            event_type="federation.inbox.reprocessed", outcome="success", actor_id=actor_id,
+            target_id=item.id, detail="previously verified transient failure", db=db
+        )
+        await db.commit()
+    return redirect(url_for("admin.federation_inbox_page"))
+
+
+@admin_bp.post("/federation/domains")
+async def federation_domain_rule_save() -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    actor_id = str(session.get("user_id") or "")
+    try:
+        await assert_stepup(
+            cast(dict[str, Any], session), actor_id, "toggle_federation", target="instance"
+        )
+    except PermissionError:
+        return jsonify({"error": "step_up_required"}), 403
+    from arborpress.federation.security import normalize_domain
+    from arborpress.models.federation import FederationDomainRule
+
+    form = await request.form
+    try:
+        domain = normalize_domain((form.get("domain") or "").strip())
+    except ValueError:
+        abort(400, description="Invalid IDNA domain")
+    rule = (form.get("rule") or "").strip()
+    if rule not in {"allow", "block", "remove"}:
+        abort(400)
+    if rule in {"block", "remove"}:
+        try:
+            confirmation = normalize_domain((form.get("confirm_domain") or "").strip())
+        except ValueError:
+            abort(400, description="Type the exact domain to confirm the domain policy change")
+        if confirmation != domain:
+            abort(400, description="Domain confirmation did not match")
+    include_subdomains = form.get("include_subdomains") == "1"
+    note = (form.get("note") or "").strip()[:512] or None
+    async for db in get_db_session():
+        existing = (
+            await db.execute(
+                select(FederationDomainRule).where(FederationDomainRule.domain == domain)
+            )
+        ).scalar_one_or_none()
+        if rule == "remove":
+            if existing is not None:
+                await db.delete(existing)
+        elif existing is None:
+            db.add(
+                FederationDomainRule(
+                    domain=domain, rule=rule, include_subdomains=include_subdomains,
+                    note=note, created_by=actor_id
+                )
+            )
+        else:
+            existing.rule = rule
+            existing.include_subdomains = include_subdomains
+            existing.note = note
+            existing.created_by = actor_id
+        await write_audit_event(
+            event_type="federation.domain_rule.changed", outcome="success", actor_id=actor_id,
+            target_id=hashlib.sha256(domain.encode()).hexdigest()[:36],
+            detail=f"rule={rule};include_subdomains={include_subdomains}", db=db
+        )
+        await db.commit()
+    return redirect(url_for("admin.federation_diagnostics"))
+
+
+@admin_bp.post("/federation/remote-actors/<actor_id>/refresh")
+async def federation_remote_actor_refresh(actor_id: str) -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    from arborpress.federation.operations import refresh_remote_actor
+
+    user_id = str(session.get("user_id") or "")
+    form = await request.form
+    signing_actor_id = (form.get("signing_actor_id") or "").strip() or None
+    async for db in get_db_session():
+        try:
+            actor = await refresh_remote_actor(
+                db, actor_id, signing_actor_id=signing_actor_id
+            )
+        except ValueError as exc:
+            abort(404, description=str(exc))
+        except Exception as exc:  # sanitized HTTP-facing diagnostic
+            abort(400, description=f"Remote refresh rejected: {type(exc).__name__}")
+        await write_audit_event(
+            event_type="federation.remote_actor.refreshed", outcome="success", actor_id=user_id,
+            target_id=actor.id, detail=f"domain={actor.domain}", db=db
+        )
+        await db.commit()
+    return redirect(url_for("admin.federation_diagnostics"))
+
+
+@admin_bp.post("/federation/retention")
+async def federation_retention_run() -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    actor_id = str(session.get("user_id") or "")
+    async for db in get_db_session():
+        from arborpress.federation.operations import cleanup_transport_metadata
+
+        result = await cleanup_transport_metadata(db)
+        await write_audit_event(
+            event_type="federation.transport.retention", outcome="success", actor_id=actor_id,
+            detail=" ".join(f"{key}={value}" for key, value in result.items()), db=db
+        )
+        await db.commit()
+    return redirect(url_for("admin.federation_diagnostics"))
 
 
 async def _get_stats() -> dict:
@@ -523,6 +878,30 @@ async def post_edit(slug: str):
         relations = (
             await object_relations_for_post(db, str(post.id)) if can_manage_relations else []
         )
+        from arborpress.models.federation import FederationDelivery, FederationOutboxActivity
+
+        activities = (
+            await db.scalars(
+                select(FederationOutboxActivity)
+                .where(
+                    FederationOutboxActivity.source_type == "post",
+                    FederationOutboxActivity.source_id == str(post.id),
+                )
+                .order_by(FederationOutboxActivity.created_at.desc())
+                .limit(5)
+            )
+        ).all()
+        delivery_counts: dict[str, int] = {}
+        if activities:
+            delivery_counts = dict(
+                (
+                    await db.execute(
+                        select(FederationDelivery.status, func.count())
+                        .where(FederationDelivery.activity_id.in_([item.id for item in activities]))
+                        .group_by(FederationDelivery.status)
+                    )
+                ).all()
+            )
     return await render_template(
         "admin/post_edit.html",
         post=post,
@@ -540,6 +919,8 @@ async def post_edit(slug: str):
         object_relations=relations,
         can_manage_relations=can_manage_relations,
         relation_choices=["editor", "comment_moderator"],
+        federation_activities=activities,
+        federation_delivery_counts=delivery_counts,
     )
 
 
@@ -2236,6 +2617,7 @@ async def comment_detail(comment_id: str) -> ResponseReturnValue:
         CommentModerationAppeal,
         CommentRevision,
     )
+    from arborpress.models.federation import FederationInboxActivity
     from arborpress.models.user import User
 
     async for db in get_db_session():
@@ -2267,6 +2649,20 @@ async def comment_detail(comment_id: str) -> ResponseReturnValue:
             )
         )
         appeals = {str(item.decision_id): item for item in appeals_result.scalars().all()}
+        remote_domain_allowed = None
+        if comment.remote_actor is not None:
+            from arborpress.core.site_settings import get_section
+            from arborpress.federation.policy import domain_allowed
+
+            remote_domain_allowed = await domain_allowed(
+                db,
+                comment.remote_actor.domain,
+                await get_section("federation", db),
+            )
+        intake = (
+            await db.get(FederationInboxActivity, comment.federation_inbox_activity_id)
+            if comment.federation_inbox_activity_id else None
+        )
     return await render_template(
         "admin/comment_detail.html",
         comment=comment,
@@ -2274,6 +2670,8 @@ async def comment_detail(comment_id: str) -> ResponseReturnValue:
         decisions=decisions,
         appeals=appeals,
         reasons=REASON_CATALOG,
+        remote_domain_allowed=remote_domain_allowed,
+        federation_intake=intake,
         noindex=True,
     )
 
@@ -3001,6 +3399,19 @@ async def site_settings_save():
         elif section == "federation":
             previous_enabled = bool(current.get("enabled", False))
             next_enabled = form.get("enabled") == "1"
+            next_domain_policy = "limited" if form.get("domain_policy") == "limited" else "open"
+            next_authorized_fetch = form.get("authorized_fetch") == "1"
+            if (
+                previous_enabled != next_enabled
+                or current.get("domain_policy", "open") != next_domain_policy
+                or bool(current.get("authorized_fetch", False)) != next_authorized_fetch
+            ):
+                try:
+                    await assert_stepup(
+                        session, str(user_id), "toggle_federation", target="instance"
+                    )
+                except PermissionError:
+                    return jsonify({"error": "step_up_required"}), 403
             if next_enabled:
                 from arborpress.federation.policy import canonical_origin
                 from arborpress.models.federation import FederationInstanceIdentity
@@ -3017,15 +3428,39 @@ async def site_settings_save():
                             "Federation origin changed; an explicit identity migration is required."
                         ),
                     )
+                from arborpress.models.federation import LocalFederationActor
+                from arborpress.models.user import ActorKeypair
+
+                active_actors = (
+                    await db.execute(
+                        select(LocalFederationActor).where(LocalFederationActor.enabled.is_(True))
+                    )
+                ).scalars().all()
+                if active_actors:
+                    for actor in active_actors:
+                        key = (
+                            await db.get(ActorKeypair, actor.current_keypair_id)
+                            if actor.current_keypair_id else None
+                        )
+                        if key is None or key.algorithm != "rsa-sha256":
+                            abort(
+                                400,
+                                description=(
+                                    "Every enabled local actor needs a current RSA signing key."
+                                ),
+                            )
             mode = (form.get("mode") or "disabled").strip()
             if mode not in {"disabled", "full", "inbox_only", "outgoing_only"}:
                 abort(400, description="Invalid federation mode.")
+            if next_enabled and mode == "disabled":
+                abort(
+                    400,
+                    description="Select an active federation mode before enabling federation.",
+                )
             current.update(
                 {
                     "enabled": next_enabled,
-                    "domain_policy": "limited"
-                    if form.get("domain_policy") == "limited"
-                    else "open",
+                    "domain_policy": next_domain_policy,
                     "mode": mode,
                     "instance_name": (form.get("instance_name") or "").strip(),
                     "instance_description": (form.get("instance_description") or "").strip(),
@@ -3038,7 +3473,7 @@ async def site_settings_save():
                     "federate_media": form.get("federate_media") == "1",
                     "max_note_length": int(form.get("max_note_length") or 500),
                     "require_http_signature": form.get("require_http_signature") == "1",
-                    "authorized_fetch": form.get("authorized_fetch") == "1",
+                    "authorized_fetch": next_authorized_fetch,
                     "allowlist_mode": form.get("allowlist_mode") == "1",
                     "inbox_blocklist_domains": [
                         d.strip()

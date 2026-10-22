@@ -1,0 +1,11 @@
+{% extends "admin/_base.html" %}
+{% block title %}Federation Inbox – Admin{% endblock %}
+{% block admin_content %}
+<h2>Federation inbox intake</h2>
+<form method="get"><label>State <select name="state"><option value="">all</option>{% for item in ['received','processing','processed','ignored','rejected','failed'] %}<option value="{{ item }}" {{ 'selected' if state == item else '' }}>{{ item }}</option>{% endfor %}</select></label><label>Activity type <select name="type"><option value="">all</option>{% for item in ['Follow','Accept','Reject','Undo','Create','Update','Delete'] %}<option value="{{ item }}" {{ 'selected' if activity_type == item else '' }}>{{ item }}</option>{% endfor %}</select></label><label>Domain <input name="domain" value="{{ domain }}" maxlength="253"></label><label>Since <input type="datetime-local" name="since" value="{{ since }}"></label><label>Until <input type="datetime-local" name="until" value="{{ until }}"></label><button class="btn btn--small">Filter</button></form>
+<p>Payloads and signature headers are not displayed here. Reprocess is offered only for authenticated intake with a transient internal processing failure.</p>
+<table><thead><tr><th>Received</th><th>Type</th><th>Actor</th><th>Domain</th><th>Activity ID</th><th>Body SHA-256</th><th>State</th><th>Attempts / Error</th><th>Action</th></tr></thead><tbody>
+{% for item in rows %}<tr><td>{{ item.received_at }}</td><td>{{ item.activity_type }}</td><td><code>{{ item.actor_uri[:96] }}</code></td><td>{{ item.source_domain }}</td><td><a href="{{ url_for('admin.federation_inbox_detail', intake_id=item.id) }}"><code>{{ item.activity_uri[:100] }}</code></a></td><td><code>{{ item.body_sha256 }}</code></td><td>{{ item.processing_state }}</td><td>{{ item.attempt_count }} · {{ item.last_error or '–' }}</td><td>{% if item.processing_state == 'failed' and item.last_error == 'internal_processing_error' %}<form method="post" action="{{ url_for('admin.federation_inbox_reprocess', intake_id=item.id) }}">{{ csrf_input() }}<button class="btn btn--small" type="submit">Reprocess</button></form>{% else %}–{% endif %}</td></tr>{% else %}<tr><td colspan="9">No inbox activities.</td></tr>{% endfor %}
+</tbody></table>
+<p><a href="{{ url_for('admin.federation_diagnostics') }}">Federation overview</a></p>
+{% endblock %}

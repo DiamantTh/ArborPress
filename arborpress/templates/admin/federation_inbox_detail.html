@@ -1,0 +1,8 @@
+{% extends "admin/_base.html" %}
+{% block title %}Federation Activity Intake – Admin{% endblock %}
+{% block admin_content %}
+<h2>Federation activity intake</h2>
+<dl><dt>Activity ID</dt><dd><code>{{ item.activity_uri }}</code></dd><dt>Type</dt><dd>{{ item.activity_type }}</dd><dt>Actor</dt><dd><code>{{ item.actor_uri }}</code></dd><dt>Source domain</dt><dd>{{ item.source_domain }}</dd><dt>Local target actor id</dt><dd>{{ item.target_actor_id or '–' }}</dd><dt>Body SHA-256</dt><dd><code>{{ item.body_sha256 }}</code></dd><dt>State</dt><dd>{{ item.processing_state }}</dd><dt>Attempts</dt><dd>{{ item.attempt_count }}</dd><dt>Received / processed</dt><dd>{{ item.received_at }} / {{ item.processed_at or '–' }}</dd><dt>Sanitized error</dt><dd>{{ item.last_error or '–' }}</dd><dt>Stored payload</dt><dd>{% if item.payload_json == '{}' %}redacted by retention{% else %}withheld from admin HTML{% endif %}</dd></dl>
+{% if item.processing_state == 'failed' and item.last_error == 'internal_processing_error' %}<form method="post" action="{{ url_for('admin.federation_inbox_reprocess', intake_id=item.id) }}">{{ csrf_input() }}<button class="btn" type="submit">Reprocess verified transient failure</button></form>{% endif %}
+<p><a href="{{ url_for('admin.federation_inbox_page') }}">Inbox list</a></p>
+{% endblock %}

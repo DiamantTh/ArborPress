@@ -79,6 +79,9 @@ async def test_admin_pages_are_server_rendered_and_form_csrf_is_present(
         "/admin/mail",
         "/admin/mail/templates",
         "/admin/mail/templates/comment.guest_confirmation/en-GB",
+        "/admin/federation",
+        "/admin/federation/inbox",
+        "/admin/federation/deliveries",
         "/admin/sessions",
     )
     pages: dict[str, str] = {}
@@ -122,6 +125,13 @@ async def test_admin_pages_are_server_rendered_and_form_csrf_is_present(
     assert "/static/dist/assets/auth-security-" in security_html
     assert "auth-security.js" not in security_html
 
+    federation_response = await client.get("/auth/federation")
+    assert federation_response.status_code == 200
+    federation_html = await federation_response.get_data(as_text=True)
+    assert "Fediverse / ActivityPub" in federation_html
+    assert "Nur aktive öffentliche Autorprofile" in federation_html
+    assert "private_key_enc" not in federation_html
+
     template_config = cast(dict[str, dict[str, object]], app.jinja_env.globals["config"])
     monkeypatch.setitem(template_config["web"], "admin_editor", "easymde")
     fallback_response = await client.get("/admin/posts/new")
@@ -130,6 +140,35 @@ async def test_admin_pages_are_server_rendered_and_form_csrf_is_present(
     assert "Konfigurierter Editor nicht unterstützt" in fallback_html
     assert 'name="body"' in fallback_html
     assert "/static/dist/assets/editor-tiptap-" not in fallback_html
+
+
+@pytest.mark.asyncio
+async def test_federation_admin_pages_are_server_rendered_and_withhold_transport_payloads(
+    client: QuartClient,
+    test_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _login_admin(client, test_engine, monkeypatch)
+    overview = await client.get("/admin/federation")
+    assert overview.status_code == 200
+    overview_html = await overview.get_data(as_text=True)
+    assert "ActivityPub Federation" in overview_html
+    assert "legacy RSA-SHA256" in overview_html
+    assert 'name="confirm_domain"' in overview_html
+    for path in ("/admin/federation/inbox", "/admin/federation/deliveries"):
+        response = await client.get(path)
+        assert response.status_code == 200
+        html = await response.get_data(as_text=True)
+        assert "<main" in html
+        assert "<table" in html
+        assert 'name="type"' in html
+        assert 'name="domain"' in html
+        assert 'name="since"' in html
+        assert 'name="until"' in html
+    invalid_filter = await client.get("/admin/federation/inbox?since=not-a-date")
+    assert invalid_filter.status_code == 400
+    assert "private_key_enc" not in overview_html
+    assert "private_key" not in overview_html
 
 
 def test_jinja_receives_only_presentation_safe_config(app: Quart) -> None:

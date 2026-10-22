@@ -671,6 +671,10 @@ def create_app() -> Quart:
                     get_session_factory(), stop_event=federation_worker_stop_event
                 )
             )
+            app.extensions["arborpress_federation_workers"] = {
+                "inbox": federation_inbox_worker_task,
+                "delivery": federation_delivery_worker_task,
+            }
 
             # Plugin startup/restarts are isolated and bounded. A broken plugin
             # does not prevent the Core or another plugin from serving.

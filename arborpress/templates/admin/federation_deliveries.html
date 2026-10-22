@@ -1,0 +1,17 @@
+{% extends "admin/_base.html" %}
+{% block title %}Federation Deliveries – Admin{% endblock %}
+{% block admin_content %}
+<h2>Federation deliveries</h2>
+<form method="get"><label>Status <select name="status"><option value="">all</option>{% for item in ['pending','sending','retry','delivered','dead','cancelled'] %}<option value="{{ item }}" {{ 'selected' if status == item else '' }}>{{ item }}</option>{% endfor %}</select></label><label>Activity type <select name="type"><option value="">all</option>{% for item in ['Follow','Accept','Reject','Undo','Create','Update','Delete'] %}<option value="{{ item }}" {{ 'selected' if activity_type == item else '' }}>{{ item }}</option>{% endfor %}</select></label><label>Domain <input name="domain" value="{{ domain }}" maxlength="253"></label><label>Since <input type="datetime-local" name="since" value="{{ since }}"></label><label>Until <input type="datetime-local" name="until" value="{{ until }}"></label><button class="btn btn--small">Filter</button></form>
+<p>Showing at most 200 newest delivery rows. Retry reuses the immutable Activity and rechecks domain and destination policy.</p>
+<table><thead><tr><th>Activity</th><th>Target</th><th>Status</th><th>Attempts</th><th>Next attempt</th><th>HTTP</th><th>Last error</th><th>Actions</th></tr></thead><tbody>
+{% for delivery, activity in rows %}<tr>
+  <td>{{ activity.activity_type }} · <code>{{ activity.activity_uri }}</code></td>
+  <td><code>{{ delivery.domain }} · {{ delivery.target_inbox[:96] }}{% if delivery.target_inbox|length > 96 %}…{% endif %}</code></td>
+  <td>{{ delivery.status }}</td><td>{{ delivery.attempts }}/{{ delivery.max_attempts }}</td>
+  <td>{{ delivery.next_attempt_at }}</td><td>{{ delivery.response_status or '–' }}</td><td>{{ delivery.last_error or '–' }}</td>
+  <td>{% if delivery.status in ['dead','retry'] %}<form method="post" action="{{ url_for('admin.federation_delivery_retry', delivery_id=delivery.id) }}">{{ csrf_input() }}<button class="btn btn--small" type="submit">Retry</button></form>{% endif %}{% if delivery.status not in ['delivered','cancelled'] %}<form method="post" action="{{ url_for('admin.federation_delivery_cancel', delivery_id=delivery.id) }}">{{ csrf_input() }}<button class="btn btn--small" type="submit">Cancel</button></form>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="8">No deliveries.</td></tr>{% endfor %}
+</tbody></table>
+<p><a href="{{ url_for('admin.federation_diagnostics') }}">Federation overview</a></p>
+{% endblock %}

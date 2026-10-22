@@ -2231,6 +2231,23 @@ def federation_worker() -> None:
         typer.echo("Federation worker stopped.")
 
 
+@federation_app.command("retention-cleanup")
+def federation_retention_cleanup() -> None:
+    """Redact old inbox payloads and prune expired delivery diagnostics."""
+
+    async def _cleanup() -> None:
+        from arborpress.core.db import get_db_session
+        from arborpress.federation.operations import cleanup_transport_metadata
+
+        async for db in get_db_session():
+            result = await cleanup_transport_metadata(db)
+            await db.commit()
+            for key, value in result.items():
+                typer.echo(f"{key}: {value}")
+
+    asyncio.run(_cleanup())
+
+
 @federation_app.command("status")
 def federation_status() -> None:
     """Shows federation configuration and instance key status from the DB (§5)."""

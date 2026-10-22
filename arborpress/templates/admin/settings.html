@@ -380,11 +380,15 @@
 <!-- ================================================================== -->
 <section class="admin-card" id="sec-federation">
   <h3>Federation <span class="badge">ActivityPub</span></h3>
-  <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
+  <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form" data-stepup-action="toggle_federation" data-stepup-target="instance">
     {{ csrf_input() }}
     <input type="hidden" name="section" value="federation">
     <label><input type="checkbox" name="enabled" value="1" {{ 'checked' if sections.federation.get('enabled', false) else '' }}>
       Enable ActivityPub federation (master switch)</label>
+    <label><input type="checkbox" name="authorized_fetch" value="1" {{ 'checked' if sections.federation.get('authorized_fetch', false) else '' }}>
+      Require a valid HTTP Signature for ActivityPub actor, object, outbox, followers and following reads</label>
+    <p>WebFinger and normal HTML pages remain public. This does not change the signed-inbox requirement.</p>
+    <p>Federation stays off until explicitly enabled. Disabling it stops intake processing and new outbound delivery attempts but does not remove remote copies.</p>
     <label>Remote domain policy
       <select name="domain_policy">
         <option value="open" {{ 'selected' if sections.federation.get('domain_policy', 'open') == 'open' }}>Open, except blocked domains</option>

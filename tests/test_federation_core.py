@@ -25,6 +25,147 @@ def test_federation_master_switch_is_explicit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_domain_policy_supports_explicit_subdomains_and_block_precedence(db_session):
+    from arborpress.federation.policy import domain_allowed
+    from arborpress.models.federation import FederationDomainRule
+
+    db_session.add(
+        FederationDomainRule(
+            domain="example.net", rule="allow", include_subdomains=True, note="partner"
+        )
+    )
+    db_session.add(FederationDomainRule(domain="bad.example.net", rule="block"))
+    await db_session.flush()
+    settings = {"enabled": True, "mode": "full", "domain_policy": "limited"}
+    assert await domain_allowed(db_session, "example.net", settings)
+    assert await domain_allowed(db_session, "sub.example.net", settings)
+    assert not await domain_allowed(db_session, "bad.example.net", settings)
+    assert not await domain_allowed(db_session, "notexample.net", settings)
+
+
+@pytest.mark.asyncio
+async def test_actor_key_rotation_replaces_current_key_and_retains_public_history(
+    db_session, monkeypatch
+):
+    from cryptography.fernet import Fernet
+    from sqlalchemy import select
+
+    from arborpress.federation import actors
+    from arborpress.models.federation import FederationActorKeyHistory, LocalFederationActor
+    from arborpress.models.user import AccountType, ActorKeypair, User, UserRole
+
+    monkeypatch.setattr(actors, "_fernet", lambda: Fernet(Fernet.generate_key()))
+    user = User(
+        id="rotate-user", username="rotate", display_name="Rotate",
+        account_type=AccountType.PUBLIC, role=UserRole.AUTHOR, is_active=True
+    )
+    public, encrypted = actors.generate_rsa_keypair()
+    key = ActorKeypair(
+        id="rotate-key", user_id=user.id, key_id_url="https://local.example/ap/actor/rotate#main-key",
+        public_key_pem=public, private_key_enc=encrypted, algorithm="rsa-sha256"
+    )
+    actor = LocalFederationActor(
+        id="rotate-actor", user_id=user.id, actor_uri="https://local.example/ap/actor/rotate",
+        preferred_username="rotate", enabled=True, current_keypair_id=key.id
+    )
+    db_session.add_all([user, key, actor])
+    await db_session.flush()
+    old_pem = key.public_key_pem
+    await actors.rotate_local_actor_key(db_session, actor.id)
+    history = (await db_session.scalars(select(FederationActorKeyHistory))).all()
+    assert key.public_key_pem != old_pem
+    assert len(history) == 1
+    assert history[0].public_key_pem == old_pem
+    assert history[0].key_id == key.key_id_url
+
+
+@pytest.mark.asyncio
+async def test_federation_retention_redacts_payload_but_preserves_activity_identity(db_session):
+    from datetime import UTC, datetime, timedelta
+
+    from arborpress.federation.operations import cleanup_transport_metadata
+    from arborpress.models.federation import (
+        FederationDelivery,
+        FederationInboxActivity,
+        FederationOutboxActivity,
+    )
+
+    old = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=500)
+    activity = FederationOutboxActivity(
+        activity_uri="https://local.example/ap/activity/retained",
+        actor_uri="https://local.example/ap/actor/alice",
+        activity_type="Create",
+        object_uri="https://local.example/ap/object/post",
+        payload_json='{"type":"Create"}',
+        source_type="post",
+        source_id="post-id",
+        source_revision="1",
+        created_at=old,
+    )
+    db_session.add(activity)
+    await db_session.flush()
+    delivery = FederationDelivery(
+        activity_id=activity.id,
+        target_inbox="https://remote.example/inbox",
+        domain="remote.example",
+        status="delivered",
+        attempts=1,
+        max_attempts=8,
+        next_attempt_at=old,
+        delivered_at=old,
+        created_at=old,
+        updated_at=old,
+    )
+    intake = FederationInboxActivity(
+        activity_uri="https://remote.example/activity/retained",
+        activity_type="Create",
+        actor_uri="https://remote.example/actor/alice",
+        source_domain="remote.example",
+        body_sha256="a" * 64,
+        payload_json='{"type":"Create","private":"content"}',
+        processing_state="processed",
+        received_at=old,
+    )
+    db_session.add_all([delivery, intake])
+    await db_session.flush()
+
+    result = await cleanup_transport_metadata(
+        db_session, now=datetime.now(UTC).replace(tzinfo=None)
+    )
+    await db_session.flush()
+    assert result["delivered_rows_removed"] == 1
+    assert result["inbox_payloads_redacted"] == 1
+    assert await db_session.get(FederationDelivery, delivery.id) is None
+    retained_activity = await db_session.get(FederationOutboxActivity, activity.id)
+    retained_intake = await db_session.get(FederationInboxActivity, intake.id)
+    assert retained_activity is not None
+    assert retained_activity.activity_uri.endswith("retained")
+    assert retained_intake is not None
+    assert retained_intake.activity_uri.endswith("retained")
+    assert retained_intake.body_sha256 == "a" * 64
+    assert retained_intake.payload_json == "{}"
+
+
+@pytest.mark.asyncio
+async def test_signature_failure_aggregation_is_daily_and_does_not_store_domains(db_session):
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from arborpress.federation.operations import record_signature_failure
+    from arborpress.models.federation import FederationSignatureFailureDaily
+
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
+    await record_signature_failure(db_session, "stale_date", now=now)
+    await record_signature_failure(db_session, "stale_date", now=now)
+    await record_signature_failure(db_session, "untrusted-domain.example", now=now)
+    rows = (await db_session.scalars(select(FederationSignatureFailureDaily))).all()
+    counts = {row.category: row.failure_count for row in rows}
+    assert counts == {"stale_date": 2, "other": 1}
+    assert {row.date_bucket.isoformat() for row in rows} == {"2026-10-23"}
+
+
+@pytest.mark.asyncio
 async def test_local_actor_is_explicit_stable_and_gets_encrypted_rsa_key(
     test_engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -67,11 +208,19 @@ async def test_local_actor_is_explicit_stable_and_gets_encrypted_rsa_key(
         first_uri = first.actor_uri
         first.enabled = False
         user.username = "renamed-author"
+        with pytest.raises(
+            RuntimeError, match="preferred_username_change_requires_explicit_migration"
+        ):
+            await enable_local_actor(db, user)
+        assert first.actor_uri == first_uri
+        assert first.preferred_username == "stable-author"
+        assert first.enabled is False
+        user.username = "stable-author"
         second = await enable_local_actor(db, user)
         key = await db.get(ActorKeypair, second.current_keypair_id)
         identity = await db.get(FederationInstanceIdentity, 1)
         assert second.actor_uri == first_uri
-        assert second.preferred_username == "renamed-author"
+        assert second.preferred_username == "stable-author"
         assert second.enabled is True
         assert identity.canonical_origin == "https://blog.example.com"
         assert key.algorithm == "rsa-sha256"
@@ -150,6 +299,49 @@ async def test_fetcher_revalidates_redirect_target(monkeypatch: pytest.MonkeyPat
             "https://remote.example/actor", transport=httpx.MockTransport(handler)
         )
     assert calls == ["https://remote.example/actor", "https://127.0.0.1/private"]
+
+
+@pytest.mark.asyncio
+async def test_signed_fetch_signs_each_guarded_get_hop_without_forwarding_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from arborpress.federation import security
+
+    seen: list[tuple[str, str | None]] = []
+
+    async def allowed(_url: str) -> tuple[str, ...]:
+        return ("93.184.216.34",)
+
+    async def signer(_db, actor_id, *, method, path, host, body=b""):
+        assert actor_id == "local-actor"
+        assert method == "GET"
+        seen.append((path, host))
+        return {"Signature": f'keyId="{host}/actor#main-key"'}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/first":
+            assert request.headers["Signature"].startswith('keyId="remote.example')
+            return httpx.Response(302, headers={"Location": "/second"})
+        assert request.url.path == "/second"
+        assert request.headers["Signature"].startswith('keyId="remote.example')
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/activity+json"},
+            json={"id": "https://remote.example/second"},
+        )
+
+    monkeypatch.setattr(security, "validate_remote_url", allowed)
+    monkeypatch.setattr("arborpress.auth.http_signatures.sign_legacy_request", signer)
+    result = await security.fetch_remote(
+        "https://remote.example/first?x=1",
+        db=object(),  # type: ignore[arg-type]
+        signing_actor_id="local-actor",
+        transport=httpx.MockTransport(handler),
+    )
+    assert result.status_code == 200
+    assert seen == [("/first?x=1", "remote.example"), ("/second", "remote.example")]
 
 
 def _signed_headers(private_key, body: bytes) -> dict[str, str]:

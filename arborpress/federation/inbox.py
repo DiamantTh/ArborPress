@@ -604,6 +604,7 @@ async def _create_remote_comment(
             parent_id=parent_id,
             remote_actor=remote,
             remote_object_uri=uri,
+            federation_inbox_activity_id=intake.id,
         )
     except ValueError as exc:
         raise InboxProcessingError("remote_comment_rejected_by_policy") from exc
