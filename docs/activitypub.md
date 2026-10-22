@@ -1,96 +1,147 @@
-# ActivityPub foundation (Phase 10A)
+# ActivityPub federation
 
-ArborPress already had legacy ActivityPub-facing routes and account keypair/follower tables. Phase 10A hardens and narrows that implementation: federation is now off unless the administrator enables the explicit master switch, and a public account is not advertised merely because it exists. An operator must explicitly enable a local actor. Follow processing, federation delivery, and remote-comment creation remain deferred to Phase 10B.
+ArborPress federation is an optional server-to-server feature. It is disabled by
+default. It does not provide an ActivityPub client-to-server API, OAuth for
+Fediverse clients, a relay, remote likes/votes, or a general media proxy.
+ActivityPub identities and objects are generated only from the configured
+canonical HTTPS origin; request `Host` and forwarded headers never define them.
 
-## Operator controls
+## Operator setup and identity
 
-In Admin → Settings → Federation, enable the master switch and choose the legacy operating mode. Federation IDs require the configured `web.base_url` to be HTTPS; IDs are never formed from `Host` or forwarded request headers. The first explicitly enabled local actor pins the configured origin in `federation_instance_identity`. If `web.base_url` later differs from that pin, local actor discovery is withheld and actor enablement fails with an explicit-migration error. Phase 10C will provide the operator-facing identity migration workflow.
+An administrator enables federation under Admin → Settings → Federation.
+Enabling is guarded by the configured HTTPS origin, schema, route and signing
+key checks. Once the first local actor pins the canonical origin in
+`federation_instance_identity`, changing `web.base_url` is rejected while it
+would rewrite published identity. There is not yet an automatic identity-domain
+migration tool; do not change the public origin of an active federation site.
 
-Create or remove local actors through the CLI:
+Authors opt in separately at `/auth/federation`. An account is never advertised
+merely because it exists or is a content author. The page previews its stable
+Actor URL and Fediverse handle, explains that public posts and approved comments
+may be copied by remote servers, and provides an explicit disable action.
+Disabling prevents new activity but cannot retract remote copies. The stable
+Actor URI is independent of a mutable username; renaming `preferredUsername`
+is not exposed as a UI operation.
 
-```text
-arborpress federation actors enable <username>
-arborpress federation actors disable <username>
-arborpress federation actors list
-arborpress federation actors inspect <username>
-```
+Local signing keys are encrypted using the existing ArborPress actor-key secret
+configuration. The private part is never displayed or downloaded. An
+authenticated actor owner can rotate a key after step-up authentication. The
+Actor URI and key ID stay stable; the new RSA-3072 key becomes current
+atomically, only the current key signs new requests, and retired public-key
+metadata is retained for a bounded period. Rotation does not promise that every
+remote server immediately refreshes its cached public key.
 
-Actor IDs are persisted and do not change if a local username later changes. A local actor uses the existing encrypted `ActorKeypair` storage and requires `auth.actor_key_enc_key`; the first key is RSA-SHA256, 3072 bits. The private key is never exposed in Actor JSON, CLI diagnostics, or audit data.
+The encrypted private key is part of the normal database backup. Restoring it
+requires the matching `auth.actor_key_enc_key` configuration secret; use the
+existing encrypted full-backup flow when that secret is to be backed up. An
+unencrypted backup must not be treated as a recoverable federation identity
+backup if the key-encryption secret was omitted.
 
-Remote domain rules are exact normalized IDNA hostnames. `open` permits domains except blocks; `limited` requires an explicit allow rule. Rules are managed locally:
+## Discovery, identities, and protocol
 
-```text
-arborpress federation domains allow <domain>
-arborpress federation domains block <domain>
-arborpress federation domains remove <domain>
-arborpress federation domains list
-```
+WebFinger resolves only enabled local actors. Actor documents expose a Person,
+public key, inbox, outbox, followers, and following endpoints. Public HTML
+profiles remain ordinary ArborPress pages. ActivityPub routes return the
+ActivityStreams media types and set `Vary: Accept`; optional authorized-fetch
+responses are private/no-store and vary on signature. WebFinger and HTML pages
+remain public when authorized fetch is enabled.
 
-Useful read-only diagnostics include `arborpress federation status`, `arborpress federation fetch-actor <https-url>`, and `arborpress federation inbox inspect <intake-id>`. The fetch command uses the same URL and domain checks as runtime.
+Remote actor and key discovery uses the single
+`arborpress.federation.security.fetch_remote` boundary. An operator can request
+an actor-signed GET for a guarded remote-actor refresh from the Remote Actor
+admin detail; the local actor is selected explicitly and each redirect hop is
+validated and freshly signed rather than forwarding credentials. This is not
+a blanket policy that signs every remote GET. Remote URLs require
+HTTPS, no credentials, allowed domains, public-address resolution, redirect
+revalidation, response type/size bounds, and timeouts. A peer-IP check is used
+when HTTPX exposes it. HTTPX does not offer portable DNS pinning in this
+configuration, so DNS rebinding retains a documented time-of-check/time-of-use
+limitation. No arbitrary JSON-LD context is fetched or executed. Remote HTML is
+untrusted and sanitized; remote media is not automatically fetched.
 
-## Protocol and safety boundary
+Domain rules are normalized IDNA hostnames with explicit exact-domain or
+`include_subdomains` semantics. A block wins over an allow. `open` admits
+otherwise-unblocked domains; `limited` admits only allowlisted domains. The
+policy applies to inbound processing, remote fetch and outbound delivery. A
+block takes effect on future work but does not delete already stored comments
+or history.
 
-WebFinger, actor, NodeInfo, public object/outbox, and inbox endpoints are all behind the federation master switch. WebFinger only resolves explicitly enabled actors. The Inbox accepts bounded ActivityStreams JSON only over HTTPS with a required legacy RSA-SHA256 HTTP Signature. The signature must cover `(request-target)`, `host`, `date`, and `digest`; request dates are limited to five minutes, the body digest is verified, and the verified key owner must match the Activity `actor`. Inbox traffic is persisted as sanitized, deduplicated intake only. No Follow, post, comment, or other domain side effect is performed in 10A.
+Inbound POSTs require a fresh legacy Fediverse HTTP Signature using RSA-SHA256;
+the signed request binds the request target, host, date and SHA-256 body digest,
+and the signer key owner must match the asserted actor. Staleness is limited to
+five minutes. On a key verification failure ArborPress makes at most one guarded
+refresh/reverification. Outbound requests are signed with the current local
+actor key and bind their body digest. RFC 9421 HTTP Message Signatures are not
+implemented in this release and are not advertised as supported.
 
-Remote actor and key fetches go exclusively through `arborpress.federation.security.fetch_remote`. URLs must use HTTPS, contain no credentials, and resolve only to public addresses. Redirect destinations are revalidated, response types and sizes are bounded, and a peer IP is checked when HTTPX exposes it. HTTPX does not provide portable DNS pinning here, so a residual DNS-rebinding time-of-check/time-of-use gap remains; the peer check is defense-in-depth, not a claim of perfect pinning. No remote JSON-LD context is dereferenced. RFC 9421 Message Signatures are explicitly rejected in 10A because this release has no established structured-fields signature verifier dependency; legacy Fediverse signatures remain supported.
+## Follow, content, and comments
 
-The existing SSRF guard in `arborpress.core.validators` remains shared with other Core features. ActivityPub uses the stricter Federation-specific HTTPS-only wrapper because its remote identity and delivery URLs must not fall back to plain HTTP.
+The legacy `Follower` model is the follow relationship store. Incoming Follow,
+Accept, Reject and Undo are ownership-checked and idempotently processed.
+Incoming follows are accepted by default for enabled actors; the instance
+setting `require_approval_to_follow` changes new follows to pending. Follow
+responses are queued rather than synchronously sent from inbox requests.
+Followers and following collections are cursor-paged and expose only actor
+URIs.
 
-## 10B extension points
+Immutable `FederationOutboxActivity` rows represent Create, Update and Delete;
+each destination has a `FederationDelivery` with a lease, bounded retries and
+status. The `arborpress federation worker` handles inbox processing and
+deliveries, and lifecycle-owned embedded tasks use the same services. Shared
+inboxes are deduplicated for public deliveries. Redirects are not followed for
+delivery. Retry reuses the existing activity and rechecks current domain and
+SSRF policy. The admin interface can inspect, retry or cancel eligible
+deliveries and reprocess only authenticated transient inbox failures.
 
-`FederationInboxActivity` is the durable, idempotent intake boundary. Activity IDs are unique; the SHA-256 of the exact signed body detects conflicting reuse. Its allowlisted intake types are `Follow`, `Accept`, `Reject`, `Undo`, `Create`, `Update`, and `Delete`; types outside that list are recorded as ignored. The next phase can claim `received` items and apply domain behavior transactionally, using `activity_uri` as the idempotency anchor.
+Public Articles are attributed only to the enabled federation actor of the
+content's Primary Author. Coauthors do not replace a non-federating primary
+author. Create/Update/Delete rows are created with the content transaction;
+remote HTTP delivery is asynchronous. Existing public object IDs remain
+stable, and deletion sends a minimal tombstone to previously recorded targets.
 
-`LocalFederationActor`, `RemoteActor`, `RemoteActorKey`, `FederationDomainRule`, `federation_is_enabled`, `domain_allowed`, `fetch_remote_actor`, `resolve_remote_key`, `verify_request_signature`, and `sign_legacy_request` are the Core contracts intended for 10B. Keep remote fetching centralized and do not interpret intake JSON as trusted HTML or ORM data.
+Remote Note replies are ordinary ArborPress Comments with a `remote_actor_id`,
+stable `remote_object_uri`, and an optional authenticated inbox-intake
+reference. They never create fake local users or guest emails. Remote comments
+use the ordinary CommentPolicy and moderation/revision/appeal records; the
+default is pending moderation. Remote Update uses the normal pending
+`CommentRevision` flow, keeping the approved version visible. An ownership-
+checked remote Delete leaves a neutral placeholder and keeps replies. Local
+registered users' approved comments may federate under their own enabled actor;
+guest and remote comments are never signed as local authors. Moderators do not
+issue a Delete pretending to be a remote author.
 
-## Phase 10B: follows, delivery, posts, and comments
+## Operations and privacy
 
-Phase 10B extends those 10A contracts in place. The legacy `Follower` model in
-`arborpress.models.user` is the sole follow/follower store. Incoming Follow,
-Accept, Reject and Undo are processed by `arborpress.federation.inbox`; outgoing
-Follow requests and Undo use `follow_remote_actor` and `unfollow_remote_actor`.
-Incoming Follow is automatically accepted by default for an explicitly enabled
-local actor. Set `require_approval_to_follow` in the instance Federation settings
-to retain new requests as pending; the service `respond_inbound_follow` queues
-the corresponding Accept or Reject.
+The federation admin pages show sanitized status, local and remote actors,
+inbox intake metadata, delivery attempts and domain rules. They do not show
+private keys, request signature headers, full transport payloads or secrets.
+Sensitive global/domain/key operations use the existing RBAC, CSRF and step-up
+controls. Signature failures are summarized by UTC day and a bounded reason
+class, without recording remote IP, actor URI or raw headers; the admin overview
+shows the last 30 days. Account federation enablement is an explicit author
+action.
 
-Outbound activities are immutable `FederationOutboxActivity` rows, with one
-`FederationDelivery` row per destination inbox. Delivery uses expiring leases,
-bounded retry/backoff and the existing legacy RSA HTTP-signature signer. Shared
-inboxes are deduplicated when recipients are enqueued. The `federation worker`
-CLI command processes both durable inbox intake and delivery; the same services
-are also run as lifecycle-owned embedded tasks. GET actor outboxes and
-followers/following collections are cursor-paged. ActivityPub client-to-server
-POSTs remain unsupported.
+`authorized_fetch` is an optional inbound secure mode for ActivityPub actor,
+object and collection GETs: it requires the same fresh, actor-bound legacy
+signature policy as the inbox. It does not gate WebFinger or normal HTML
+profiles. Federation admin diagnostics call this “Authorized Fetch” to
+distinguish it from an explicitly signed outbound fetch.
 
-Public Articles are emitted only when their primary author has an enabled local
-Federation actor. A coauthor is never substituted for a non-federating primary
-author. Post publication, public edits and removal enqueue Create/Update/Delete
-inside the Core database transaction; no remote HTTP request runs in the user
-request. A Delete is sent only to inboxes previously recorded for that post's
-public Create/Update deliveries. Existing public object IDs remain stable.
+`arborpress federation retention-cleanup` removes old delivered rows (default
+90 days) and old dead/cancelled delivery rows (default 365 days), redacts
+processed/ignored inbox payloads after 30 days, and expires retired local and
+remote key metadata. It intentionally retains immutable outbox activities and
+inbox IDs/body hashes needed for idempotency and removes daily signature
+aggregates older than 90 days. This cleanup is explicit; no new
+scheduler or legal-hold system is introduced.
 
-Remote Note replies are represented as ordinary ArborPress `Comment` rows with
-`remote_actor_id` and a unique `remote_object_uri`; no remote identity is
-created in the local User table. Remote comments have no guest email or
-confirmation token, bypass no trust/reputation rule, and enter the configured
-CommentPolicy (pending moderation by default). HTML is reduced to plain text
-before storage. Remote Update creates a normal pending `CommentRevision`; the
-approved body remains visible until the existing moderator approves it. Remote
-Delete is ownership-checked and leaves a neutral deleted-comment placeholder.
-These decisions and appeals remain local; internal reasons are not federated.
+The transport is bounded by request/response size limits, timeouts, collection
+and recipient limits, signature freshness, and queue retry limits. Logs and
+audit records omit private keys, signature headers and complete activities.
+Federation is not a hostile-code sandbox and has no external federation service
+dependency.
 
-Locally authored registered-user comments are federated only after approval,
-only under an already federated public post, and only when their author has an
-enabled LocalFederationActor. Guest and remote comments are never re-signed as
-local authors. Moderative removal of a local federated comment can emit a
-Tombstone as that local author; local moderators never emit a Delete pretending
-to be the remote author of a remote comment.
-
-Delivery targets are checked against the shared domain policy and the central
-SSRF-safe fetch validation before each POST. Redirects are not followed. A 404
-or 410 permits exactly one forced refresh of a known remote actor/inbox; failed
-or unchanged refresh becomes dead-lettered. There is intentionally no delivery
-fallback between signature formats in this release: Phase 10A provides legacy
-Fediverse RSA signatures only and explicitly rejects RFC 9421 verification.
-The existing DNS rebinding TOCTOU limitation documented above also applies to
-outbound delivery.
+The implementation intentionally does not claim full ActivityPub conformance.
+There is no C2S/OAuth API, arbitrary context resolution, Linked Data
+Signatures, Like/Announce/Boost product, remote vote mapping, relay, full-text
+remote crawler, or untrusted remote-media proxy.
