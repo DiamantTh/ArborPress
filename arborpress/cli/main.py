@@ -10,6 +10,7 @@ Usage:  arborpress --help
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import sys
 import venv
@@ -54,6 +55,9 @@ key_app = typer.Typer(help="Key management (§13 OpenPGP, §14)", no_args_is_hel
 search_app = typer.Typer(help="Search index (§12 FTS)", no_args_is_help=True)
 cache_app = typer.Typer(help="Cache management", no_args_is_help=True)
 federation_app = typer.Typer(help="Federation / ActivityPub (§5, §14)", no_args_is_help=True)
+federation_actor_app = typer.Typer(help="Explicit local federation actors", no_args_is_help=True)
+federation_inbox_app = typer.Typer(help="Persisted federation inbox intake", no_args_is_help=True)
+federation_domain_app = typer.Typer(help="Federation domain policy", no_args_is_help=True)
 mail_app = typer.Typer(help="Mail queue (§13)", no_args_is_help=True)
 mail_profiles_app = typer.Typer(help="Named SMTP profiles", no_args_is_help=True)
 mail_queue_app = typer.Typer(help="Durable mail outbox diagnostics", no_args_is_help=True)
@@ -73,6 +77,9 @@ app.add_typer(key_app, name="key")
 app.add_typer(search_app, name="search")
 app.add_typer(cache_app, name="cache")
 app.add_typer(federation_app, name="federation")
+federation_app.add_typer(federation_actor_app, name="actors")
+federation_app.add_typer(federation_inbox_app, name="inbox")
+federation_app.add_typer(federation_domain_app, name="domains")
 app.add_typer(mail_app, name="mail")
 app.add_typer(notifications_app, name="notifications")
 mail_app.add_typer(mail_profiles_app, name="profiles")
@@ -2184,19 +2191,40 @@ def cache_warm() -> None:
 def federation_inbox_process(
     batch: int = typer.Option(50, "--batch", "-n", help="Number of items per run"),
 ) -> None:
-    """Processes ActivityPub inbox items (§5, §14 federation inbox processing)."""
+    """Report intake status; Phase 10A does not apply federation side effects."""
 
     async def _process() -> None:
+        from sqlalchemy import func, select
+
         from arborpress.core.db import get_db_session
         from arborpress.core.site_settings import get_section
+        from arborpress.federation.policy import federation_is_enabled
+        from arborpress.models.federation import FederationInboxActivity
 
         async for db in get_db_session():
             fed = await get_section("federation", db)
-        if fed.get("mode", "disabled") in ("disabled", "outgoing_only"):
-            mode = fed.get("mode", "disabled")
-            typer.echo(f"Federation mode is {mode!r} – no inbox.", err=True)
+        if not federation_is_enabled(fed):
+            typer.echo("Federation is disabled; no intake processing is allowed.", err=True)
             raise typer.Exit(1)
-        typer.echo(f"Processing {batch} inbox items (TODO).")
+        async for db in get_db_session():
+            total = (
+                await db.execute(select(func.count()).select_from(FederationInboxActivity))
+            ).scalar_one()
+            recent = (
+                (
+                    await db.execute(
+                        select(FederationInboxActivity.id)
+                        .order_by(FederationInboxActivity.received_at.desc())
+                        .limit(max(1, min(batch, 500)))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        typer.echo(f"Persisted intake items: {total}; recent IDs shown: {len(recent)}")
+        typer.echo(
+            "Phase 10A records intake only; Follow, Post and Comment effects are deferred to 10B."
+        )
 
     asyncio.run(_process())
 
@@ -2210,13 +2238,23 @@ def federation_status() -> None:
 
         from arborpress.core.db import get_db_session
         from arborpress.core.site_settings import get_section
+        from arborpress.models.federation import FederationInstanceIdentity
         from arborpress.models.user import InstanceKeypair
 
         async for db in get_db_session():
             fed = await get_section("federation", db)
             ikp_result = await db.execute(select(InstanceKeypair).where(InstanceKeypair.id == 1))
             ikp = ikp_result.scalar_one_or_none()
+            identity = await db.get(FederationInstanceIdentity, 1)
+        from arborpress.federation.policy import federation_is_enabled
+
+        typer.echo(f"Enabled:                    {federation_is_enabled(fed)}")
         typer.echo(f"Mode:                       {fed.get('mode', 'disabled')}")
+        typer.echo(f"Configured origin:          {get_settings().web.base_url}")
+        typer.echo(
+            "Pinned actor origin:         "
+            f"{identity.canonical_origin if identity else 'not pinned'}"
+        )
         typer.echo(f"Instance:                   {fed.get('instance_name', '')}")
         typer.echo(f"Description:                {fed.get('instance_description', '') or '—'}")
         typer.echo(f"Contact e-mail:             {fed.get('contact_email', '') or '—'}")
@@ -2431,6 +2469,283 @@ def federation_follower_list(
                     f" {(fol.remote_display_name or ''):<30}"
                     f" {fol.remote_actor_uri}"
                 )
+
+
+@federation_actor_app.command("list")
+def federation_actor_list() -> None:
+    """List explicit local ActivityPub actors without exposing key material."""
+
+    async def _run() -> None:
+        from sqlalchemy import select
+
+        from arborpress.core.db import get_db_session
+        from arborpress.models.federation import LocalFederationActor
+
+        async for db in get_db_session():
+            rows = (
+                (
+                    await db.execute(
+                        select(LocalFederationActor).order_by(
+                            LocalFederationActor.preferred_username
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for row in rows:
+                typer.echo(
+                    f"{row.preferred_username}\t"
+                    f"{'enabled' if row.enabled else 'disabled'}\t{row.actor_uri}"
+                )
+
+    asyncio.run(_run())
+
+
+@federation_actor_app.command("inspect")
+def federation_actor_inspect(username: str) -> None:
+    async def _run() -> None:
+        from sqlalchemy import select
+
+        from arborpress.core.db import get_db_session
+        from arborpress.models.federation import LocalFederationActor
+
+        async for db in get_db_session():
+            row = (
+                await db.execute(
+                    select(LocalFederationActor).where(
+                        LocalFederationActor.preferred_username == username
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                typer.echo("Actor not found", err=True)
+                raise typer.Exit(1)
+            typer.echo(
+                f"id: {row.id}\nenabled: {row.enabled}\nactor_uri: {row.actor_uri}\n"
+                f"key_configured: {bool(row.current_keypair_id)}"
+            )
+
+    asyncio.run(_run())
+
+
+@federation_actor_app.command("enable")
+def federation_actor_enable(username: str) -> None:
+    """Explicitly publish an eligible public account as an ActivityPub actor."""
+
+    async def _run() -> None:
+        from sqlalchemy import func, select
+
+        from arborpress.core.audit import write_audit_event
+        from arborpress.core.db import get_db_session
+        from arborpress.core.site_settings import get_section
+        from arborpress.federation.actors import enable_local_actor
+        from arborpress.federation.policy import federation_is_enabled
+        from arborpress.models.user import ActorKeypair, User
+
+        async for db in get_db_session():
+            settings = await get_section("federation", db)
+            if not federation_is_enabled(settings):
+                typer.echo("Federation master switch and mode must be enabled first", err=True)
+                raise typer.Exit(1)
+            user = (
+                await db.execute(select(User).where(func.lower(User.username) == username.lower()))
+            ).scalar_one_or_none()
+            if user is None:
+                typer.echo("User not found", err=True)
+                raise typer.Exit(1)
+            previous_key = (
+                await db.execute(select(ActorKeypair).where(ActorKeypair.user_id == str(user.id)))
+            ).scalar_one_or_none()
+            key_created = previous_key is None or previous_key.algorithm != "rsa-sha256"
+            actor = await enable_local_actor(db, user)
+            if key_created:
+                await write_audit_event(
+                    event_type="federation.actor_key.created",
+                    outcome="success",
+                    actor_id="cli",
+                    target_id=actor.id,
+                    detail="RSA-SHA256 actor signing key provisioned",
+                    db=db,
+                )
+            await write_audit_event(
+                event_type="federation.actor.enabled",
+                outcome="success",
+                actor_id="cli",
+                target_id=actor.id,
+                detail="explicit local actor opt-in",
+                db=db,
+            )
+            await db.commit()
+            typer.echo(f"Enabled {actor.preferred_username}: {actor.actor_uri}")
+
+    asyncio.run(_run())
+
+
+@federation_actor_app.command("disable")
+def federation_actor_disable(username: str) -> None:
+    async def _run() -> None:
+        from sqlalchemy import select
+
+        from arborpress.core.audit import write_audit_event
+        from arborpress.core.db import get_db_session
+        from arborpress.models.federation import LocalFederationActor
+
+        async for db in get_db_session():
+            actor = (
+                await db.execute(
+                    select(LocalFederationActor).where(
+                        LocalFederationActor.preferred_username == username
+                    )
+                )
+            ).scalar_one_or_none()
+            if actor is None:
+                typer.echo("Actor not found", err=True)
+                raise typer.Exit(1)
+            actor.enabled = False
+            await write_audit_event(
+                event_type="federation.actor.disabled",
+                outcome="success",
+                actor_id="cli",
+                target_id=actor.id,
+                detail="explicit local actor opt-out",
+                db=db,
+            )
+            await db.commit()
+            typer.echo(f"Disabled {username}")
+
+    asyncio.run(_run())
+
+
+@federation_app.command("fetch-actor")
+def federation_fetch_actor(actor_uri: str) -> None:
+    """Fetch and cache one actor using the same SSRF and domain checks as runtime."""
+
+    async def _run() -> None:
+        from arborpress.core.db import get_db_session
+        from arborpress.core.site_settings import get_section
+        from arborpress.federation.policy import federation_is_enabled
+        from arborpress.federation.remote import fetch_remote_actor
+
+        async for db in get_db_session():
+            settings = await get_section("federation", db)
+            if not federation_is_enabled(settings):
+                typer.echo("Federation is disabled", err=True)
+                raise typer.Exit(1)
+            actor = await fetch_remote_actor(db, actor_uri, settings, force=True)
+            await db.commit()
+            typer.echo(
+                f"Fetched {actor.actor_uri} ({actor.actor_type}) from {actor.domain}; "
+                f"expiry {actor.expires_at}"
+            )
+
+    try:
+        asyncio.run(_run())
+    except (ValueError, OSError) as exc:
+        typer.echo(f"Fetch failed: {type(exc).__name__}", err=True)
+        raise typer.Exit(1) from None
+
+
+@federation_inbox_app.command("inspect")
+def federation_inbox_inspect(activity_id: str) -> None:
+    async def _run() -> None:
+        from arborpress.core.db import get_db_session
+        from arborpress.models.federation import FederationInboxActivity
+
+        async for db in get_db_session():
+            row = await db.get(FederationInboxActivity, activity_id)
+            if row is None:
+                typer.echo("Inbox item not found", err=True)
+                raise typer.Exit(1)
+            typer.echo(
+                f"id: {row.id}\nactivity_id: {row.activity_uri}\n"
+                f"type: {row.activity_type}\nactor: {row.actor_uri}\n"
+                f"state: {row.processing_state}\nattempts: {row.attempt_count}\n"
+                f"sha256: {row.body_sha256}\nerror: {row.last_error or '—'}"
+            )
+
+    asyncio.run(_run())
+
+
+@federation_domain_app.command("list")
+def federation_domains_list() -> None:
+    async def _run() -> None:
+        from sqlalchemy import select
+
+        from arborpress.core.db import get_db_session
+        from arborpress.models.federation import FederationDomainRule
+
+        async for db in get_db_session():
+            rows = (
+                (
+                    await db.execute(
+                        select(FederationDomainRule).order_by(FederationDomainRule.domain)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for row in rows:
+                typer.echo(f"{row.domain}\t{row.rule}")
+
+    asyncio.run(_run())
+
+
+@federation_domain_app.command("allow")
+def federation_domain_allow(domain: str) -> None:
+    _change_federation_domain_rule(domain, "allow")
+
+
+@federation_domain_app.command("block")
+def federation_domain_block(domain: str) -> None:
+    _change_federation_domain_rule(domain, "block")
+
+
+@federation_domain_app.command("remove")
+def federation_domain_remove(domain: str) -> None:
+    _change_federation_domain_rule(domain, None)
+
+
+def _change_federation_domain_rule(domain: str, rule: str | None) -> None:
+    """Create, replace or remove a normalized operator domain rule."""
+
+    async def _run() -> None:
+        from sqlalchemy import select
+
+        from arborpress.core.audit import write_audit_event
+        from arborpress.core.db import get_db_session
+        from arborpress.federation.security import normalize_domain
+        from arborpress.models.federation import FederationDomainRule
+
+        try:
+            normalized = normalize_domain(domain)
+        except ValueError as exc:
+            typer.echo("Invalid domain", err=True)
+            raise typer.Exit(1) from exc
+        async for db in get_db_session():
+            result = await db.execute(
+                select(FederationDomainRule).where(FederationDomainRule.domain == normalized)
+            )
+            existing = result.scalar_one_or_none()
+            if rule is None:
+                if existing is not None:
+                    await db.delete(existing)
+            elif existing is None:
+                db.add(FederationDomainRule(domain=normalized, rule=rule))
+            else:
+                existing.rule = rule
+            await write_audit_event(
+                event_type="federation.domain_rule.changed",
+                outcome="success",
+                actor_id="cli",
+                target_id=hashlib.sha256(normalized.encode()).hexdigest()[:36],
+                detail=f"rule={rule or 'removed'}",
+                db=db,
+            )
+            await db.commit()
+            typer.echo(f"{normalized}: {rule or 'removed'}")
+
+    asyncio.run(_run())
 
 
 # ---------------------------------------------------------------------------

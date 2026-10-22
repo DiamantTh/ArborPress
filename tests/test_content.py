@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # §6 Slug-Kanonisierung
 # ---------------------------------------------------------------------------
@@ -18,6 +17,7 @@ class TestSlugCanonicalization:
     def _canonicalize(self, slug: str) -> str:
         """Repliziert _canonical_slug aus public.py."""
         from slugify import slugify
+
         return slugify(slug, lowercase=True, separator="-")
 
     def test_lowercase(self):
@@ -55,6 +55,7 @@ class TestMediaURLs:
 
     def test_media_path_format(self):
         import re
+
         path = "2024/03/my-image.webp"
         assert re.match(r"^\d{4}/\d{2}/.+$", path)
 
@@ -63,6 +64,7 @@ class TestMediaURLs:
         filename = "../../etc/passwd"
         # Simulation: Dateinamen-Sanitisierung
         import os
+
         safe = os.path.basename(filename)
         assert ".." not in safe
         assert "/" not in safe
@@ -78,6 +80,7 @@ class TestShortIds:
 
     def test_short_id_url_safe(self):
         import re
+
         # Simulates UUID4 hex prefix or nanoid-style
         short_id = "a1b2c3d4"
         assert re.match(r"^[a-zA-Z0-9_-]+$", short_id)
@@ -142,7 +145,7 @@ class TestFederationHelpers:
         _cache["federation"] = {"mode": "full", "instance_name": "ArborPress"}
         monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
         monkeypatch.setattr(
-            "arborpress.web.routes.federation.get_settings",
+            "arborpress.federation.policy.get_settings",
             lambda: SimpleNamespace(web=SimpleNamespace(base_url="https://blog.example.com")),
         )
 
@@ -151,13 +154,12 @@ class TestFederationHelpers:
 
     @pytest.mark.asyncio
     async def test_outbox_lists_published_posts(self, test_engine, client, monkeypatch):
-        import arborpress.models  # noqa: F401
         from sqlalchemy.ext.asyncio import async_sessionmaker
 
+        import arborpress.models  # noqa: F401
         from arborpress.core.db import Base
         from arborpress.models.content import Post, PostStatus, PostVisibility
         from arborpress.models.user import AccountType, User, UserRole
-        from arborpress.web.routes.federation import ap_outbox
 
         async with test_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -190,10 +192,10 @@ class TestFederationHelpers:
             monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
             monkeypatch.setattr(
                 "arborpress.web.routes.federation._fed",
-                lambda: {"mode": "full", "instance_name": "ArborPress"},
+                lambda: {"enabled": True, "mode": "full", "instance_name": "ArborPress"},
             )
             monkeypatch.setattr(
-                "arborpress.web.routes.federation.get_settings",
+                "arborpress.federation.policy.get_settings",
                 lambda: SimpleNamespace(web=SimpleNamespace(base_url="https://blog.example.com")),
             )
 
@@ -204,6 +206,18 @@ class TestFederationHelpers:
                 "arborpress.web.routes.federation.get_db_session",
                 _fake_db_session,
             )
+
+            from arborpress.models.federation import LocalFederationActor
+
+            db_session.add(
+                LocalFederationActor(
+                    user_id=str(user.id),
+                    actor_uri="https://blog.example.com/ap/actor/alice",
+                    preferred_username="alice",
+                    enabled=True,
+                )
+            )
+            await db_session.commit()
 
             resp = await client.get("/ap/outbox/alice")
             payload = await resp.get_json()
@@ -222,6 +236,7 @@ class TestSSRFGuard:
 
     def _check(self, url: str) -> bool:
         from arborpress.core.validators import is_safe_external_url
+
         return is_safe_external_url(url)
 
     def test_blocks_loopback(self):
@@ -270,6 +285,7 @@ class TestMathCaptchaHMAC:
 
     def _sign(self, a: int, b: int) -> str:
         from arborpress.core.captcha import _math_sign
+
         return _math_sign(a, b)
 
     def test_signature_is_hex(self):
@@ -283,6 +299,7 @@ class TestMathCaptchaHMAC:
 
     def test_verify_accepts_correct_answer(self):
         from arborpress.core.captcha import _verify_math
+
         form = {
             "captcha_a": "3",
             "captcha_b": "4",
@@ -295,6 +312,7 @@ class TestMathCaptchaHMAC:
 
     def test_verify_rejects_wrong_answer(self):
         from arborpress.core.captcha import _verify_math
+
         form = {
             "captcha_a": "3",
             "captcha_b": "4",
@@ -307,6 +325,7 @@ class TestMathCaptchaHMAC:
     def test_verify_rejects_tampered_values(self):
         """Bot submits different a/b but keeps old signature → must fail."""
         from arborpress.core.captcha import _verify_math
+
         real_sig = self._sign(3, 4)
         # Bot changes a=3 → a=1, b=4 → b=0 then sets answer=1
         form = {
@@ -320,6 +339,7 @@ class TestMathCaptchaHMAC:
 
     def test_verify_rejects_missing_signature(self):
         from arborpress.core.captcha import _verify_math
+
         form = {
             "captcha_a": "2",
             "captcha_b": "3",
@@ -331,6 +351,7 @@ class TestMathCaptchaHMAC:
 
     def test_get_challenge_includes_sig(self):
         from arborpress.core.captcha import CaptchaType, get_captcha_challenge
+
         ctx = get_captcha_challenge(CaptchaType.MATH, {})
         assert "math_sig" in ctx
         assert len(ctx["math_sig"]) == 64
@@ -341,12 +362,15 @@ class TestImageFetchMimeFilter:
 
     def test_svg_not_in_allowed_mime(self):
         from arborpress.core.image_fetch import _ALLOWED_MIME
+
         assert "image/svg+xml" not in _ALLOWED_MIME
 
     def test_jpeg_still_allowed(self):
         from arborpress.core.image_fetch import _ALLOWED_MIME
+
         assert "image/jpeg" in _ALLOWED_MIME
 
     def test_webp_still_allowed(self):
         from arborpress.core.image_fetch import _ALLOWED_MIME
+
         assert "image/webp" in _ALLOWED_MIME

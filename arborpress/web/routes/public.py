@@ -230,6 +230,8 @@ async def post_detail(slug: str):
     )
     from arborpress.models.user import User
 
+    post_activitypub_actor_uri = None
+
     async for db in get_db_session():
         # Load post (status=published is sufficient; visibility is checked separately)
         stmt = (
@@ -257,6 +259,32 @@ async def post_detail(slug: str):
         if not post_authors and post.author is not None:
             # Compatibility for pre-migration fixtures and legacy null-edge data.
             post_authors = [(post.author, "primary", 0)]
+        from arborpress.federation.policy import canonical_origin, federation_is_enabled
+        from arborpress.federation.security import FederationFetchError
+        from arborpress.models.federation import FederationInstanceIdentity, LocalFederationActor
+
+        federation_settings = await get_section("federation", db)
+        if post_authors and federation_is_enabled(federation_settings):
+            try:
+                configured_origin = canonical_origin()
+            except FederationFetchError:
+                configured_origin = ""
+            identity = await db.get(FederationInstanceIdentity, 1)
+            if not identity or identity.canonical_origin == configured_origin:
+                primary_relation = post_authors[0]
+                primary_user = (
+                    primary_relation.user
+                    if hasattr(primary_relation, "user")
+                    else primary_relation[0]
+                )
+                post_activitypub_actor_uri = (
+                    await db.execute(
+                        select(LocalFederationActor.actor_uri).where(
+                            LocalFederationActor.user_id == str(primary_user.id),
+                            LocalFederationActor.enabled.is_(True),
+                        )
+                    )
+                ).scalar_one_or_none()
         comment_author_ids = {
             str(item.user_id) for item in post_authors if hasattr(item, "user_id")
         }
@@ -494,6 +522,7 @@ async def post_detail(slug: str):
         comment_quote_target=quote_target,
         comment_edit_target=edit_target,
         comment_reason_catalog=REASON_CATALOG,
+        post_activitypub_actor_uri=post_activitypub_actor_uri,
     )
 
 

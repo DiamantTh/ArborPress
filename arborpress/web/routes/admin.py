@@ -223,6 +223,72 @@ async def dashboard():
     return await render_template("admin/dashboard.html", stats=stats, noindex=True)
 
 
+@admin_bp.get("/federation")
+async def federation_diagnostics():
+    """Read-only SSR federation inventory; never exposes key material or payloads."""
+    _require_session()
+    require_role("admin")
+    from arborpress.core.site_settings import get_section
+    from arborpress.federation.policy import federation_is_enabled
+    from arborpress.models.federation import (
+        FederationDomainRule,
+        FederationInboxActivity,
+        FederationInstanceIdentity,
+        LocalFederationActor,
+        RemoteActor,
+    )
+
+    async for db in get_db_session():
+        settings = await get_section("federation", db)
+        actors = (
+            (
+                await db.execute(
+                    select(LocalFederationActor).order_by(LocalFederationActor.preferred_username)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        remotes = (
+            (await db.execute(select(RemoteActor).order_by(RemoteActor.domain).limit(100)))
+            .scalars()
+            .all()
+        )
+        domain_rules = (
+            (await db.execute(select(FederationDomainRule).order_by(FederationDomainRule.domain)))
+            .scalars()
+            .all()
+        )
+        inbox_states = dict(
+            (
+                await db.execute(
+                    select(FederationInboxActivity.processing_state, func.count()).group_by(
+                        FederationInboxActivity.processing_state
+                    )
+                )
+            ).all()
+        )
+        identity = await db.get(FederationInstanceIdentity, 1)
+    from arborpress.core.config import get_settings as _get_settings
+
+    try:
+        origin = _get_settings().web.base_url
+    except Exception:
+        origin = "unavailable"
+    return await render_template(
+        "admin/federation.html",
+        enabled=federation_is_enabled(settings),
+        settings=settings,
+        origin=origin,
+        pinned_origin=identity.canonical_origin if identity else None,
+        actors=actors,
+        remotes=remotes,
+        domain_rules=domain_rules,
+        inbox_states=inbox_states,
+        noindex=True,
+    )
+
+
 async def _get_stats() -> dict:
     """Sammelt Dashboard-Statistiken."""
     stats: dict = {}
@@ -2892,9 +2958,34 @@ async def site_settings_save():
             )
 
         elif section == "federation":
+            previous_enabled = bool(current.get("enabled", False))
+            next_enabled = form.get("enabled") == "1"
+            if next_enabled:
+                from arborpress.federation.policy import canonical_origin
+                from arborpress.models.federation import FederationInstanceIdentity
+
+                try:
+                    configured_origin = canonical_origin()
+                except ValueError:
+                    abort(400, description="Federation requires a configured HTTPS base URL.")
+                identity = await db.get(FederationInstanceIdentity, 1)
+                if identity is not None and identity.canonical_origin != configured_origin:
+                    abort(
+                        400,
+                        description=(
+                            "Federation origin changed; an explicit identity migration is required."
+                        ),
+                    )
+            mode = (form.get("mode") or "disabled").strip()
+            if mode not in {"disabled", "full", "inbox_only", "outgoing_only"}:
+                abort(400, description="Invalid federation mode.")
             current.update(
                 {
-                    "mode": (form.get("mode") or "disabled").strip(),
+                    "enabled": next_enabled,
+                    "domain_policy": "limited"
+                    if form.get("domain_policy") == "limited"
+                    else "open",
+                    "mode": mode,
                     "instance_name": (form.get("instance_name") or "").strip(),
                     "instance_description": (form.get("instance_description") or "").strip(),
                     "contact_email": (form.get("contact_email") or "").strip(),
@@ -2915,6 +3006,15 @@ async def site_settings_save():
                     ],
                 }
             )
+            if previous_enabled != next_enabled:
+                await write_audit_event(
+                    event_type="federation.enabled" if next_enabled else "federation.disabled",
+                    outcome="success",
+                    actor_id=str(user_id),
+                    target_id="instance:federation",
+                    detail="global ActivityPub master switch changed",
+                    db=db,
+                )
 
         elif section == "search":
             current.update(

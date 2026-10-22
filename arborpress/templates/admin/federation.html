@@ -1,0 +1,25 @@
+{% extends "admin/_base.html" %}
+{% block title %}Federation – ArborPress Admin{% endblock %}
+{% block admin_content %}
+<h2>ActivityPub Federation</h2>
+<p>Status: <strong>{{ 'enabled' if enabled else 'disabled' }}</strong></p>
+<p>Configured canonical origin: <code>{{ origin }}</code></p>
+<p>Pinned federation origin: <code>{{ pinned_origin or 'not pinned (no actor enabled yet)' }}</code></p>
+<p>Legacy mode: {{ settings.get('mode', 'disabled') }} · Domain policy: {{ settings.get('domain_policy', 'open') }}</p>
+
+<h3>Local actors</h3>
+{% if actors %}<ul>{% for actor in actors %}
+  <li>{{ actor.preferred_username }} — {{ 'enabled' if actor.enabled else 'disabled' }} — <code>{{ actor.actor_uri }}</code></li>
+{% endfor %}</ul>{% else %}<p>No explicit local actors are enabled.</p>{% endif %}
+
+<h3>Remote actor cache</h3>
+{% if remotes %}<ul>{% for actor in remotes %}
+  <li>{{ actor.display_name or actor.preferred_username or actor.actor_type }} — {{ actor.domain }} — expires {{ actor.expires_at }}</li>
+{% endfor %}</ul>{% else %}<p>No remote actors cached.</p>{% endif %}
+
+<h3>Inbox intake</h3>
+{% if inbox_states %}<ul>{% for state, count in inbox_states.items() %}<li>{{ state }}: {{ count }}</li>{% endfor %}</ul>{% else %}<p>No activities received.</p>{% endif %}
+
+<h3>Domain rules</h3>
+{% if domain_rules %}<ul>{% for item in domain_rules %}<li>{{ item.domain }} — {{ item.rule }}</li>{% endfor %}</ul>{% else %}<p>No explicit domain rules.</p>{% endif %}
+{% endblock %}

@@ -383,6 +383,14 @@
   <form method="POST" action="{{ url_for('admin.site_settings_save') }}" class="admin-form">
     {{ csrf_input() }}
     <input type="hidden" name="section" value="federation">
+    <label><input type="checkbox" name="enabled" value="1" {{ 'checked' if sections.federation.get('enabled', false) else '' }}>
+      Enable ActivityPub federation (master switch)</label>
+    <label>Remote domain policy
+      <select name="domain_policy">
+        <option value="open" {{ 'selected' if sections.federation.get('domain_policy', 'open') == 'open' }}>Open, except blocked domains</option>
+        <option value="limited" {{ 'selected' if sections.federation.get('domain_policy') == 'limited' }}>Allowlist only</option>
+      </select>
+    </label>
 
     <label>
       Modus

@@ -7,7 +7,7 @@
 {# §6 kanonische URL #}
 <link rel="canonical" href="{{ config.web.base_url }}/p/{{ post.slug }}">
 {# §5 ActivityPub-Link wenn Federation aktiv #}
-{% if federation_settings.get('mode', 'disabled') != 'disabled' and post.ap_object_id %}
+{% if federation_active and post_activitypub_actor_uri and post.ap_object_id %}
 <link rel="alternate" type="application/activity+json" href="{{ post.ap_object_id }}">
 {% endif %}
 {{ vite_styles('public') }}

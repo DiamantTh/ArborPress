@@ -8,7 +8,7 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any, cast
 
-from quart import Quart, Response
+from quart import Quart, Response, session
 from quart.templating import Environment as QuartEnvironment
 from quart.typing import ResponseReturnValue
 
@@ -261,9 +261,31 @@ def create_app() -> Quart:
     @app.context_processor
     async def _federation_context() -> dict[str, Any]:
         from arborpress.core.site_settings import get_cached, get_defaults
+        from arborpress.federation.policy import federation_is_enabled
 
         fed = get_cached("federation") or get_defaults("federation")
-        return {"federation_settings": fed}
+        actor_uri = None
+        user_id = session.get("user_id")
+        if user_id and federation_is_enabled(fed):
+            from sqlalchemy import select
+
+            from arborpress.core.db import get_db_session
+            from arborpress.models.federation import LocalFederationActor
+
+            async for db in get_db_session():
+                actor_uri = (
+                    await db.execute(
+                        select(LocalFederationActor.actor_uri).where(
+                            LocalFederationActor.user_id == str(user_id),
+                            LocalFederationActor.enabled.is_(True),
+                        )
+                    )
+                ).scalar_one_or_none()
+        return {
+            "federation_settings": fed,
+            "federation_active": federation_is_enabled(fed),
+            "current_federation_actor_uri": actor_uri,
+        }
 
     # Demo mode – per-request context processor reads cache dynamically
     # (takes effect immediately after admin change without restart)
