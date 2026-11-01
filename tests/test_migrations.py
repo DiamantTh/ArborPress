@@ -24,7 +24,7 @@ from arborpress.core.migrations import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pre_alembic_phase1_schema.sql"
-CURRENT_HEAD = "0012_federation_signature_summaries"
+CURRENT_HEAD = "0013_oidc_external_identities"
 
 
 def _sqlite_engine(path: Path) -> AsyncEngine:
@@ -149,7 +149,7 @@ async def test_empty_database_upgrade_noop_and_repeated_install(tmp_path: Path) 
         assert status.is_current
         assert status.current_revisions == (CURRENT_HEAD,)
         before = await _schema_snapshot(engine)
-        assert len(before) == 52
+        assert len(before) == 53
         assert "webauthn_credentials" in before
 
         async with engine.connect() as connection:
@@ -181,6 +181,27 @@ async def test_empty_database_upgrade_noop_and_repeated_install(tmp_path: Path) 
 
         assert (await upgrade_database(engine)).is_current
         assert await _schema_snapshot(engine) == before
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_upgrade_from_phase10_head_adds_empty_external_identity_table(
+    tmp_path: Path,
+) -> None:
+    engine = _sqlite_engine(tmp_path / "phase10-upgrade.db")
+    try:
+        await upgrade_database(engine)
+        await downgrade_database("0012_federation_signature_summaries", engine)
+        async with engine.connect() as connection:
+            assert not await connection.run_sync(
+                lambda sync: sa.inspect(sync).has_table("external_identities")
+            )
+        await upgrade_database(engine)
+        async with engine.connect() as connection:
+            assert await connection.run_sync(
+                lambda sync: sa.inspect(sync).has_table("external_identities")
+            )
     finally:
         await engine.dispose()
 

@@ -32,6 +32,7 @@ dependencies = [
     "pyotp>=2.9,<3",              # TOTP/HOTP §3
     "zxcvbn>=4.5,<5",             # Passwortqualitaet fuer Break-Glass §2
     "cryptography>=46.0,<47",     # OpenPGP key ops §13
+    "PyJWT[crypto]>=2.10,<3",     # verified OIDC ID tokens §11
     # Content & Sanitization
     "bleach>=6.3,<7",              # §10 federated/user-content sanitization
     "python-slugify>=8.0,<9",      # §6 slug canonicalization

@@ -332,6 +332,7 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
         "federation_instance_identity",
         "federation_actor_key_history",
         "federation_signature_failure_daily",
+        "external_identities",
     }:
         return False
     allowed_columns = {
@@ -403,6 +404,7 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "missing table federation_instance_identity",
             "missing table federation_actor_key_history",
             "missing table federation_signature_failure_daily",
+            "missing table external_identities",
         }:
             continue
         if error == "unexpected column comments.confirmation_token":

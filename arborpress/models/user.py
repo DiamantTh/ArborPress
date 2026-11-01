@@ -124,6 +124,9 @@ class User(Base):
     sessions: Mapped[list[UserSession]] = relationship(
         "UserSession", back_populates="user", cascade="all, delete-orphan"
     )
+    external_identities: Mapped[list[ExternalIdentity]] = relationship(
+        "ExternalIdentity", back_populates="user", cascade="all, delete-orphan"
+    )
 
     @property
     def is_operational(self) -> bool:
@@ -236,6 +239,28 @@ class AuthPending(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
+class ExternalIdentity(Base):
+    """Stable OIDC identity; email and profile claims are never identity keys."""
+
+    __tablename__ = "external_identities"
+    __table_args__ = (
+        UniqueConstraint("issuer", "subject", name="uq_external_identity_issuer_subject"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    issuer: Mapped[str] = mapped_column(String(512), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    last_login_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    profile: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    user: Mapped[User] = relationship(back_populates="external_identities")
 
 
 class StepUpGrant(Base):

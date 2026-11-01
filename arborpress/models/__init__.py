@@ -58,6 +58,7 @@ from arborpress.models.user import (  # noqa: F401
     ActorKeypair,
     AuthPending,
     BackupCode,
+    ExternalIdentity,
     Follower,
     FollowerDirection,
     FollowerState,

@@ -17,6 +17,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from arborpress.core.network import response_peer_address
 from arborpress.core.validators import _ip_is_blocked
 
 MAX_REMOTE_BYTES = 2 * 1024 * 1024
@@ -160,7 +161,7 @@ async def fetch_remote(
                     )
                 try:
                     async with client.stream("GET", current, headers=headers) as response:
-                        peer = _peer_address(response)
+                        peer = response_peer_address(response)
                         if peer is not None:
                             ip = ipaddress.ip_address(peer)
                             if _ip_is_blocked(str(ip)) or not ip.is_global:
@@ -238,7 +239,7 @@ async def post_remote(
                 headers={"User-Agent": "ArborPress-Federation/1"},
             ) as client:
                 async with client.stream("POST", url, content=body, headers=headers) as response:
-                    peer = _peer_address(response)
+                    peer = response_peer_address(response)
                     if peer is not None:
                         address = ipaddress.ip_address(peer)
                         if _ip_is_blocked(str(address)) or not address.is_global:
@@ -251,14 +252,3 @@ async def post_remote(
                     return response.status_code
         except httpx.HTTPError as exc:
             raise FederationFetchError("delivery_transport_failed") from exc
-
-
-def _peer_address(response: httpx.Response) -> str | None:
-    stream = response.extensions.get("network_stream")
-    if stream is None:
-        return None
-    try:
-        address = stream.get_extra_info("server_addr")
-        return address[0] if isinstance(address, tuple) else None
-    except AttributeError, OSError:
-        return None
