@@ -224,6 +224,165 @@ async def dashboard():
     return await render_template("admin/dashboard.html", stats=stats, noindex=True)
 
 
+async def _oidc_admin_stepup(operation: str = "manage_oidc_provider") -> str:
+    _require_session()
+    require_role("admin")
+    actor_id = str(session.get("user_id") or "")
+    try:
+        await assert_stepup(cast(dict[str, Any], session), actor_id, operation, target="instance")
+    except PermissionError:
+        abort(403, "Step-up required")
+    return actor_id
+
+
+@admin_bp.get("/oidc/providers")
+async def oidc_providers() -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    from arborpress.auth.oidc_providers import (
+        diagnostics,
+        list_providers,
+        prune_diagnostics,
+        safe_provider,
+    )
+
+    async for db in get_db_session():
+        entries = await list_providers(db)
+        providers = [safe_provider(row, count) for row, count in entries]
+        failures = await diagnostics(db, days=30)
+        await prune_diagnostics(db, days=30)
+        await db.commit()
+    return await render_template(
+        "admin/oidc_providers.html", providers=providers, failures=failures, noindex=True
+    )
+
+
+@admin_bp.post("/oidc/providers")
+async def oidc_provider_save() -> ResponseReturnValue:
+    actor_id = await _oidc_admin_stepup()
+    form = await request.form
+    from arborpress.auth.oidc_providers import OIDCProviderError, save_provider
+
+    data: dict[str, Any] = {
+        "id": form.get("id", ""),
+        "name": form.get("name", ""),
+        "issuer": form.get("issuer", ""),
+        "discovery_url": form.get("discovery_url", ""),
+        "client_id": form.get("client_id", ""),
+        "scopes": form.get("scopes", "openid profile email"),
+        "enabled": form.get("enabled") == "on",
+        "auto_create": form.get("auto_create") == "on",
+    }
+    async for db in get_db_session():
+        try:
+            row = await save_provider(db, data)
+        except OIDCProviderError as exc:
+            await db.rollback()
+            abort(409, str(exc))
+        await write_audit_event(
+            event_type="oidc_provider_saved", outcome="success", actor_id=actor_id,
+            detail=f"provider_id={row.id}; secret excluded", db=db,
+        )
+        await db.commit()
+        return redirect(url_for("admin.oidc_providers"))
+    abort(500)
+
+
+@admin_bp.post("/oidc/providers/<provider_id>/enabled")
+async def oidc_provider_enabled(provider_id: str) -> ResponseReturnValue:
+    actor_id = await _oidc_admin_stepup()
+    form = await request.form
+    enabled = form.get("enabled") == "true"
+    from arborpress.auth.oidc_providers import OIDCProviderError, set_provider_enabled
+
+    async for db in get_db_session():
+        try:
+            await set_provider_enabled(db, provider_id, enabled)
+        except OIDCProviderError:
+            abort(404)
+        await write_audit_event(
+            event_type="oidc_provider_enabled" if enabled else "oidc_provider_disabled",
+            outcome="success", actor_id=actor_id,
+            detail=f"provider_id={provider_id}; enabled={enabled}", db=db,
+        )
+        await db.commit()
+        return redirect(url_for("admin.oidc_providers"))
+    abort(500)
+
+
+@admin_bp.post("/oidc/providers/<provider_id>/secret")
+async def oidc_provider_secret_rotate(provider_id: str) -> ResponseReturnValue:
+    actor_id = await _oidc_admin_stepup("rotate_oidc_client_secret")
+    form = await request.form
+    secret = str(form.get("client_secret", ""))
+    from arborpress.auth.oidc_providers import OIDCProviderError, rotate_provider_secret
+
+    async for db in get_db_session():
+        try:
+            await rotate_provider_secret(db, provider_id, secret)
+        except OIDCProviderError as exc:
+            await db.rollback()
+            abort(400, str(exc))
+        await write_audit_event(
+            event_type="oidc_provider_secret_rotated", outcome="success",
+            actor_id=actor_id,
+            detail=f"provider_id={provider_id}; client secret rotated; value omitted", db=db,
+        )
+        await db.commit()
+        return redirect(url_for("admin.oidc_providers"))
+    abort(500)
+
+
+@admin_bp.post("/oidc/providers/<provider_id>/check")
+async def oidc_provider_check(provider_id: str) -> ResponseReturnValue:
+    actor_id = await _oidc_admin_stepup()
+    from arborpress.auth.oidc import OIDCError, discover, endpoint_url, request_json
+    from arborpress.auth.oidc_providers import get_provider, provider_config, record_failure
+
+    async for db in get_db_session():
+        row = await get_provider(db, provider_id)
+        if row is None:
+            abort(404)
+        row.discovery_status = "failed"
+        row.jwks_status = "unknown"
+        row.last_error_class = None
+        try:
+            metadata = await discover(provider_config(row))
+            row.discovery_status = "ok"
+            jwks = await request_json(endpoint_url(metadata, "jwks_uri"))
+            keys = jwks.get("keys")
+            if not isinstance(keys, list) or len(keys) > 100:
+                raise OIDCError("jwks_invalid")
+            row.jwks_status = "ok" if keys else "failed"
+            if not keys:
+                raise OIDCError("jwks_empty")
+            row.last_success_at = datetime.now(UTC).replace(tzinfo=None)
+        except OIDCError as exc:
+            category = "jwks" if "jwks" in str(exc) else "discovery"
+            row.last_error_class = category
+            await record_failure(db, provider_id, category)
+        row.last_check_at = datetime.now(UTC).replace(tzinfo=None)
+        await write_audit_event(
+            event_type="oidc_provider_health_checked",
+            outcome="success" if row.discovery_status == row.jwks_status == "ok" else "failure",
+            actor_id=actor_id,
+            detail=(
+                f"provider_id={provider_id}; discovery={row.discovery_status};"
+                f"jwks={row.jwks_status}"
+            ), db=db,
+        )
+        await db.commit()
+        return redirect(url_for("admin.oidc_providers"))
+    abort(500)
+
+
+@admin_bp.post("/oidc/providers/<provider_id>/delete")
+async def oidc_provider_delete(provider_id: str) -> ResponseReturnValue:
+    """Provider records are disabled, never physically removed in 11B."""
+    await _oidc_admin_stepup()
+    abort(409, "OIDC providers are retained; disable the provider instead")
+
+
 def _federation_filter_time(value: str) -> datetime | None:
     if not value:
         return None

@@ -252,10 +252,13 @@ async def _get_webauthn_async() -> WebAuthnService:
 
 @auth_bp.get("/login")
 async def login_page():
-    from arborpress.web.routes.sso import get_configured_providers
+    from arborpress.web.routes.sso import get_enabled_provider_choices
+    async for db in get_db_session():
+        sso_providers = await get_enabled_provider_choices(db)
+        await db.commit()
     return await render_template(
         "auth/login.html",
-        sso_providers=get_configured_providers(),
+        sso_providers=sso_providers,
         install_enrollment_available=bool(session.get("install_enrollment")),
     )
 
@@ -1808,9 +1811,10 @@ async def account_security_page():
     if not user_id:
         return redirect(url_for("auth.login_page"))
     async for db in get_db_session():
-        from arborpress.auth.policy import recovery_has_new_auth_path
+        from arborpress.auth.oidc_providers import list_providers
+        from arborpress.auth.policy import recovery_has_new_auth_path, usable_login_methods
         from arborpress.auth.sessions import get_active_recovery_state
-        from arborpress.models.user import MFADevice, User, WebAuthnCredential
+        from arborpress.models.user import ExternalIdentity, MFADevice, User, WebAuthnCredential
         user = await db.get(User, user_id)
         if user is None or not user.is_active:
             abort(401)
@@ -1826,6 +1830,34 @@ async def account_security_page():
         devices = (await db.execute(select(MFADevice).where(
             MFADevice.user_id == user_id
         ))).scalars().all()
+        provider_rows = await list_providers(db)
+        provider_map = {row.id: row for row, _count in provider_rows}
+        identities = (await db.execute(select(ExternalIdentity).where(
+            ExternalIdentity.user_id == user_id
+        ).order_by(ExternalIdentity.created_at))).scalars().all()
+        identity_views = []
+        for identity in identities:
+            provider = provider_map.get(identity.provider_id)
+            methods = await usable_login_methods(
+                db, user, exclude_external_identity_id=str(identity.id)
+            )
+            identity_views.append({
+                "id": str(identity.id),
+                "provider_id": identity.provider_id,
+                "provider_name": provider.name if provider else identity.provider_id,
+                "provider_enabled": bool(provider and provider.enabled),
+                "created_at": identity.created_at,
+                "last_login_at": identity.last_login_at,
+                "can_unlink": bool(methods),
+            })
+        linkable_providers = [
+            {"id": row.id, "name": row.name}
+            for row, _count in provider_rows
+            if row.enabled and row.id not in {item.provider_id for item in identities}
+        ]
+        # Provider catalog access performs the one-time legacy config import.
+        # Persist that bootstrap even when this is the first page visited.
+        await db.commit()
         recovery_state = (
             await get_active_recovery_state(db, session)
             if session.get("recovery_only") else None
@@ -1854,6 +1886,9 @@ async def account_security_page():
             recovery_has_new_auth_path=has_recovery_path,
             recovery_baseline_webauthn_ids=recovery_baseline_webauthn_ids,
             recovery_baseline_totp_ids=recovery_baseline_totp_ids,
+            external_identities=identity_views,
+            linkable_providers=linkable_providers,
+            is_admin=user.role.value == "admin",
         )
 
 

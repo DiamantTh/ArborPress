@@ -41,7 +41,7 @@
     {% for provider in sso_providers %}
       <p>
         <a class="btn" href="{{ url_for('sso.sso_begin', provider=provider.id) }}">
-          {{ _('Mit %(provider)s anmelden', provider=provider.name) }}
+          {{ _('Mit %(provider)s anmelden')|format(provider=provider.name) }}
         </a>
       </p>
     {% endfor %}

@@ -9,10 +9,11 @@ import json
 import logging
 import re
 import secrets
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, cast
 from urllib.parse import urlencode
 
-from quart import Blueprint, Response, abort, redirect, request, session, url_for
+from quart import Blueprint, Response, abort, redirect, render_template, request, session, url_for
 from sqlalchemy import func, select
 
 from arborpress.auth.oidc import (
@@ -25,8 +26,9 @@ from arborpress.auth.oidc import (
     verify_id_token_from_provider,
 )
 from arborpress.auth.pending import consume_pending, create_pending
+from arborpress.auth.stepup import assert_stepup
 from arborpress.core.audit import write_audit_event
-from arborpress.core.config import _load_toml_file, get_settings
+from arborpress.core.config import get_settings
 from arborpress.core.db import get_db_session
 from arborpress.core.validators import is_valid_username
 from arborpress.logging.config import get_audit_logger
@@ -46,66 +48,14 @@ async def _clear_oidc_flow_cookie(response: Response) -> Response:
     return response
 
 
-def _load_sso_config() -> dict[str, Any]:
-    """Load SSO configuration through ArborPress' include-aware config loader."""
-    config_file = get_settings()._config_file
-    if config_file is None or not config_file.exists():
-        return {}
-    try:
-        data = _load_toml_file(config_file)
-    except (OSError, ValueError) as exc:
-        # Avoid logging exception text that may quote malformed secret-bearing TOML.
-        log.warning("OIDC configuration could not be loaded (%s)", type(exc).__name__)
-        return {}
-    value = data.get("sso", {})
-    return value if isinstance(value, dict) else {}
+async def get_enabled_provider_choices(db: Any) -> list[dict[str, str]]:
+    from arborpress.auth.oidc_providers import list_providers
 
-
-def _get_provider_config(provider: str) -> dict[str, Any] | None:
-    if not _PROVIDER_ID.fullmatch(provider):
-        return None
-    providers = _load_sso_config().get("providers", {})
-    if not isinstance(providers, dict):
-        return None
-    item = providers.get(provider)
-    if not isinstance(item, dict) or item.get("enabled", True) is not True:
-        return None
-    issuer = item.get("issuer")
-    client_id = item.get("client_id")
-    if not isinstance(issuer, str) or not issuer or not isinstance(client_id, str) or not client_id:
-        return None
-    configured_scopes = item.get("scopes", ["profile", "email"])
-    if not isinstance(configured_scopes, list):
-        configured_scopes = ["profile", "email"]
-    return {
-        **{
-            key: value for key, value in item.items()
-            if key not in {"auto_link_by_email", "role_mapping"}
-        },
-        "id": provider,
-        "name": str(item.get("name") or provider.replace("_", " ").title())[:128],
-        "scopes": list(dict.fromkeys([
-            "openid",
-            *(
-                scope for scope in configured_scopes
-                if isinstance(scope, str) and scope and len(scope) <= 128
-            ),
-        ]))[:32],
-        # Identity provisioning is opt-in; legacy auto_link_by_email is ignored.
-        "auto_create": item.get("auto_create") is True,
-    }
-
-
-def get_configured_providers() -> list[dict[str, str]]:
-    providers = _load_sso_config().get("providers", {})
-    if not isinstance(providers, dict):
-        return []
-    configured = []
-    for provider in providers:
-        item = _get_provider_config(str(provider))
-        if item is not None:
-            configured.append({"id": str(provider), "name": item["name"]})
-    return configured
+    return [
+        {"id": row.id, "name": row.name}
+        for row, _count in await list_providers(db)
+        if row.enabled
+    ]
 
 
 async def _resolve_provider_endpoints(provider_cfg: dict[str, Any]) -> dict[str, Any]:
@@ -130,32 +80,81 @@ def _callback_url(provider: str) -> str:
     return f"{base_url}/auth/sso/{provider}/callback"
 
 
+def _link_callback_url(provider: str) -> str:
+    base_url = get_settings().web.base_url.rstrip("/")
+    return f"{base_url}/auth/sso/{provider}/link/callback"
+
+
+async def _provider_config(db: Any, provider: str) -> dict[str, Any] | None:
+    if not _PROVIDER_ID.fullmatch(provider):
+        return None
+    from arborpress.auth.oidc_providers import get_provider, provider_config
+
+    row = await get_provider(db, provider, enabled_only=True)
+    return provider_config(row) if row is not None else None
+
+
 @sso_bp.get("/<provider>")
 async def sso_begin(provider: str) -> Any:
-    provider_cfg = _get_provider_config(provider)
-    if provider_cfg is None:
-        abort(404)
-    try:
-        resolved = await _resolve_provider_endpoints(provider_cfg)
-    except OIDCError:
-        log.warning("OIDC discovery failed for configured provider %s", provider)
-        abort(502, "SSO provider discovery failed")
+    return await _begin_flow(provider, operation="login")
 
-    state = secrets.token_urlsafe(32)
-    nonce = secrets.token_urlsafe(32)
-    verifier = secrets.token_urlsafe(48)
-    browser_binding = secrets.token_urlsafe(32)
-    callback_url = _callback_url(provider)
+
+@sso_bp.get("/<provider>/link")
+async def sso_link_begin(provider: str) -> Any:
+    return await _begin_flow(provider, operation="link")
+
+
+async def _begin_flow(provider: str, *, operation: str) -> Any:
+    if not _PROVIDER_ID.fullmatch(provider):
+        abort(404)
+    user_id = str(session.get("user_id") or "") if operation == "link" else ""
+    if operation == "link" and (not user_id or session.get("recovery_only")):
+        abort(401)
     async for db in get_db_session():
+        provider_cfg = await _provider_config(db, provider)
+        if provider_cfg is None:
+            abort(404)
+        if operation == "link":
+            from arborpress.auth.sessions import refresh_session_identity
+
+            active_user = await refresh_session_identity(db, session)
+            if active_user is None or str(active_user.id) != user_id:
+                abort(401)
+            try:
+                await assert_stepup(
+                    cast(dict[str, Any], session), user_id,
+                    "link_external_identity", target=provider,
+                    consume=False, db=db,
+                )
+            except PermissionError:
+                abort(403, "Step-up required")
+        try:
+            resolved = await _resolve_provider_endpoints(provider_cfg)
+        except OIDCError:
+            await _record_failure(db, provider, "discovery")
+            await db.commit()
+            log.warning("OIDC discovery failed for configured provider %s", provider)
+            abort(502, "SSO provider discovery failed")
+
+        state = secrets.token_urlsafe(32)
+        nonce = secrets.token_urlsafe(32)
+        verifier = secrets.token_urlsafe(48)
+        browser_binding = secrets.token_urlsafe(32)
+        callback_url = (
+            _link_callback_url(provider) if operation == "link" else _callback_url(provider)
+        )
+        purpose = "oidc_link" if operation == "link" else "oidc_login"
         await create_pending(
             db,
-            purpose="oidc_login",
-            user_id=None,
+            purpose=purpose,
+            user_id=user_id or None,
             ttl_seconds=_FLOW_TTL_SECONDS,
             challenge=hashlib.sha256(state.encode()).digest(),
             context={
+                "operation": operation,
+                "session_id": str(session.get("session_id") or "") if operation == "link" else None,
                 "provider": provider,
-                "issuer": provider_cfg.get("issuer", resolved.get("issuer", "")),
+                "issuer": provider_cfg["issuer"],
                 "nonce": nonce,
                 "verifier": verifier,
                 "browser_binding_hash": hashlib.sha256(browser_binding.encode()).hexdigest(),
@@ -176,49 +175,109 @@ async def sso_begin(provider: str) -> Any:
         }
         response = redirect(str(resolved["authorization_endpoint"]) + "?" + urlencode(params))
         response.set_cookie(
-            _FLOW_COOKIE,
-            browser_binding,
-            max_age=_FLOW_TTL_SECONDS,
-            path="/auth/sso/",
-            secure=get_settings().web.base_url.startswith("https://"),
-            httponly=True,
-            samesite="Lax",
+            _FLOW_COOKIE, browser_binding, max_age=_FLOW_TTL_SECONDS,
+            path="/auth/sso/", secure=get_settings().web.base_url.startswith("https://"),
+            httponly=True, samesite="Lax",
         )
         return response
     abort(500, "SSO flow could not be created")
 
 
+async def _record_failure(db: Any, provider: str | None, failure_class: str) -> None:
+    from arborpress.auth.oidc_providers import record_failure
+
+    await record_failure(db, provider, failure_class)
+
+
+async def _record_state_failure(provider: str) -> None:
+    async for db in get_db_session():
+        await _record_failure(db, provider, "state")
+        await db.commit()
+        return
+
+
+async def _validate_sso_mutation() -> None:
+    if request.is_json:
+        from arborpress.auth.webauthn import resolve_origin
+        from arborpress.web.routes.auth import _validate_json_origin
+
+        _validate_json_origin(resolve_origin(get_settings().web.base_url))
+        return
+    from arborpress.web.security import validate_csrf
+
+    await validate_csrf()
+
+
+def _failure_class(error_code: str) -> str:
+    code = error_code.lower()
+    if "issuer" in code:
+        return "issuer_mismatch"
+    if "nonce" in code:
+        return "nonce"
+    if "pkce" in code:
+        return "pkce"
+    if any(token in code for token in ("audience", "authorized_party", "aud")):
+        return "audience"
+    if any(token in code for token in ("expired", "not_yet_valid", "time")):
+        return "expired"
+    if any(token in code for token in ("signature", "signing_key", "algorithm", "id_token")):
+        return "token_signature"
+    if "jwks" in code or "key" in code:
+        return "jwks"
+    if "userinfo_subject" in code:
+        return "userinfo_subject"
+    if any(token in code for token in ("redirect", "discovery", "provider_")):
+        return "discovery"
+    return "token_exchange"
+
+
 @sso_bp.get("/<provider>/callback")
+@sso_bp.get("/<provider>/link/callback")
 async def sso_callback(provider: str) -> Any:
-    provider_cfg = _get_provider_config(provider)
-    if provider_cfg is None:
-        abort(404)
+    is_link = request.path.endswith("/link/callback")
+    purpose = "oidc_link" if is_link else "oidc_login"
+    operation = "link" if is_link else "login"
     state = request.args.get("state", "")
     code = request.args.get("code", "")
     if not state or len(state) > 256 or not code or len(code) > 4096:
+        await _record_state_failure(provider)
         abort(400, "invalid OIDC response")
     browser_binding = request.cookies.get(_FLOW_COOKIE, "")
     if not browser_binding:
+        await _record_state_failure(provider)
         abort(400, "OIDC browser flow binding missing")
 
     async for db in get_db_session():
         from arborpress.models.user import AuthPending
 
+        provider_cfg = await _provider_config(db, provider)
+        if provider_cfg is None:
+            await _record_failure(db, provider, "provider_disabled")
+            await db.commit()
+            abort(404)
+
         state_hash = hashlib.sha256(state.encode()).digest()
         pending = (await db.execute(select(AuthPending).where(
-            AuthPending.purpose == "oidc_login",
+            AuthPending.purpose == purpose,
             AuthPending.challenge == state_hash,
         ))).scalar_one_or_none()
         if pending is None or pending.challenge is None:
+            await _record_failure(db, provider, "state")
+            await db.commit()
             abort(400, "OIDC flow expired")
         try:
             flow = json.loads(pending.context or "{}")
         except (TypeError, ValueError):
+            await _record_failure(db, provider, "state")
+            await db.commit()
             abort(400, "invalid OIDC flow")
         if (
-            flow.get("provider") != provider
+            flow.get("operation") != operation
+            or flow.get("provider") != provider
             or flow.get("issuer") != provider_cfg["issuer"]
-            or flow.get("redirect_uri") != _callback_url(provider)
+            or flow.get("redirect_uri") != (
+                _link_callback_url(provider) if is_link else _callback_url(provider)
+            )
             or not hmac.compare_digest(
                 str(flow.get("browser_binding_hash", "")),
                 hashlib.sha256(browser_binding.encode()).hexdigest(),
@@ -227,12 +286,28 @@ async def sso_callback(provider: str) -> Any:
             or not isinstance(flow.get("verifier"), str)
             or not isinstance(flow.get("metadata"), dict)
         ):
+            await _record_failure(db, provider, "state")
+            await db.commit()
             abort(400, "OIDC provider mismatch")
-        consumed = await consume_pending(
-            db, pending_id=pending.id, purpose="oidc_login"
-        )
+        consumed = await consume_pending(db, pending_id=pending.id, purpose=purpose)
         if consumed is None:
+            await _record_failure(db, provider, "state")
+            await db.commit()
             abort(400, "OIDC flow already used")
+        if is_link:
+            from arborpress.models.user import User, UserSession
+            link_user = await db.get(User, str(pending.user_id))
+            original_session_id = str(flow.get("session_id") or "")
+            original_session = (await db.execute(select(UserSession).where(
+                UserSession.id == original_session_id,
+                UserSession.user_id == str(pending.user_id),
+                UserSession.is_valid.is_(True),
+                UserSession.expires_at > datetime.now(UTC).replace(tzinfo=None),
+            ))).scalar_one_or_none()
+            if link_user is None or not link_user.is_active or original_session is None:
+                await _record_failure(db, provider, "local_account_disabled")
+                await db.commit()
+                abort(403, "Linking is unavailable")
         await db.commit()
 
         # The state is consumed before any network exchange: callbacks cannot replay.
@@ -281,6 +356,8 @@ async def sso_callback(provider: str) -> Any:
                 )
                 claims = merge_userinfo(claims, userinfo)
         except OIDCError as exc:
+            await _record_failure(db, provider, _failure_class(str(exc)))
+            await db.commit()
             log.warning("OIDC authentication rejected for provider %s (%s)", provider, str(exc))
             abort(401, "SSO authentication failed")
         except Exception as exc:
@@ -288,6 +365,8 @@ async def sso_callback(provider: str) -> Any:
             log.warning(
                 "OIDC authentication failed for provider %s (%s)", provider, type(exc).__name__
             )
+            await _record_failure(db, provider, "token_exchange")
+            await db.commit()
             abort(502, "SSO provider request failed")
 
         from arborpress.models.user import (
@@ -302,6 +381,44 @@ async def sso_callback(provider: str) -> Any:
 
         issuer = str(claims["iss"])
         subject = str(claims["sub"])
+        if is_link:
+            from arborpress.models.user import AuthPending, ExternalIdentity, User
+
+            link_user = await db.get(User, str(pending.user_id))
+            if link_user is None or not link_user.is_active or link_user.sso_disabled:
+                await _record_failure(db, provider, "local_account_disabled")
+                await db.commit()
+                abort(403, "Linking is unavailable")
+            conflict = (await db.execute(select(ExternalIdentity.id).where(
+                ExternalIdentity.issuer == issuer,
+                ExternalIdentity.subject == subject,
+            ).limit(1))).scalar_one_or_none()
+            if conflict is not None:
+                await _record_failure(db, provider, "identity_conflict")
+                await write_audit_event(
+                    event_type="oidc_identity_link_conflict", outcome="blocked",
+                    actor_id=str(link_user.id),
+                    detail=f"provider_id={provider}; external identity already linked",
+                    db=db,
+                )
+                await db.commit()
+                abort(409, "This external identity cannot be linked")
+            confirm = await create_pending(
+                db,
+                purpose="oidc_link_confirm",
+                user_id=str(link_user.id),
+                ttl_seconds=_FLOW_TTL_SECONDS,
+                context={
+                    "provider": provider, "issuer": issuer, "subject": subject,
+                    "session_id": str(flow.get("session_id") or ""),
+                },
+            )
+            await db.commit()
+            return await render_template(
+                "auth/oidc_link_confirm.html", provider_name=provider_cfg["name"],
+                pending_id=confirm.id, noindex=True,
+            )
+
         identity = (await db.execute(
             select(ExternalIdentity).where(
                 ExternalIdentity.issuer == issuer, ExternalIdentity.subject == subject
@@ -363,7 +480,9 @@ async def sso_callback(provider: str) -> Any:
             )
             db.add(identity)
         elif not user.is_active or user.sso_disabled:
+            await _record_failure(db, provider, "local_account_disabled")
             audit.warning("OIDC login denied | provider=%s", provider)
+            await db.commit()
             abort(403, "SSO disabled for this account")
 
         if not user.is_active or user.sso_disabled:
@@ -441,3 +560,128 @@ async def sso_callback(provider: str) -> Any:
         )
         return redirect(target)
     abort(500, "OIDC login failed")
+
+
+@sso_bp.post("/link/confirm/<pending_id>")
+async def sso_link_confirm(pending_id: str) -> Any:
+    user_id = str(session.get("user_id") or "")
+    if not user_id or session.get("recovery_only"):
+        abort(401)
+    await _validate_sso_mutation()
+    async for db in get_db_session():
+        from arborpress.models.oidc import OIDCProvider
+        from arborpress.models.user import AuthPending, ExternalIdentity, User
+
+        pending = await db.get(AuthPending, pending_id)
+        if (
+            pending is None or pending.purpose != "oidc_link_confirm"
+            or str(pending.user_id) != user_id
+        ):
+            abort(404)
+        try:
+            context = json.loads(pending.context or "{}")
+        except (TypeError, ValueError):
+            abort(400)
+        provider_id = str(context.get("provider", ""))
+        issuer = str(context.get("issuer", ""))
+        subject = str(context.get("subject", ""))
+        provider = (await db.execute(select(OIDCProvider).where(
+            OIDCProvider.id == provider_id,
+            OIDCProvider.enabled.is_(True),
+            OIDCProvider.issuer == issuer,
+        ))).scalar_one_or_none()
+        user = await db.get(User, user_id)
+        if provider is None or user is None or not user.is_active or user.sso_disabled:
+            abort(403, "Linking is unavailable")
+        if str(context.get("session_id") or "") != str(session.get("session_id") or ""):
+            abort(403, "Linking session changed")
+        from arborpress.auth.sessions import refresh_session_identity
+
+        refreshed = await refresh_session_identity(db, session)
+        if refreshed is None or str(refreshed.id) != user_id:
+            abort(401)
+        try:
+            await assert_stepup(
+                cast(dict[str, Any], session), user_id,
+                "link_external_identity", target=provider_id, db=db
+            )
+        except PermissionError:
+            abort(403, "Step-up required")
+        consumed = await consume_pending(db, pending_id=pending.id, purpose="oidc_link_confirm")
+        if consumed is None:
+            abort(400, "Link confirmation expired or already used")
+        conflict = (await db.execute(select(ExternalIdentity.id).where(
+            ExternalIdentity.issuer == issuer,
+            ExternalIdentity.subject == subject,
+        ).limit(1))).scalar_one_or_none()
+        if conflict is not None:
+            await _record_failure(db, provider_id, "identity_conflict")
+            await db.commit()
+            abort(409, "This external identity cannot be linked")
+        db.add(ExternalIdentity(
+            user_id=user_id, provider_id=provider_id, issuer=issuer, subject=subject,
+        ))
+        await write_audit_event(
+            event_type="oidc_identity_linked", outcome="success",
+            actor_id=user_id, actor_name=user.username,
+            detail=(
+                f"provider_id={provider_id}; linked after verified flow and explicit confirmation"
+            ),
+            db=db,
+        )
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            abort(409, "This external identity cannot be linked")
+        return redirect(url_for("auth.account_security_page"))
+    abort(500)
+
+
+@sso_bp.post("/identities/<identity_id>/unlink")
+async def sso_identity_unlink(identity_id: str) -> Any:
+    user_id = str(session.get("user_id") or "")
+    if not user_id or session.get("recovery_only"):
+        abort(401)
+    await _validate_sso_mutation()
+    async for db in get_db_session():
+        from arborpress.auth.policy import lock_user_for_credential_change, usable_login_methods
+        from arborpress.models.user import ExternalIdentity
+
+        identity = (await db.execute(select(ExternalIdentity).where(
+            ExternalIdentity.id == identity_id,
+            ExternalIdentity.user_id == user_id,
+        ))).scalar_one_or_none()
+        if identity is None:
+            abort(404)
+        try:
+            await assert_stepup(
+                cast(dict[str, Any], session), user_id,
+                "unlink_external_identity", target=identity_id, db=db
+            )
+        except PermissionError:
+            abort(403, "Step-up required")
+        user = await lock_user_for_credential_change(db, user_id)
+        if user is None or not user.is_active:
+            abort(403)
+        methods = await usable_login_methods(
+            db, user, exclude_external_identity_id=identity_id
+        )
+        if not methods:
+            await db.rollback()
+            abort(409, "This is the last usable login or recovery method")
+        provider_id = identity.provider_id
+        await db.delete(identity)
+        await write_audit_event(
+            event_type="oidc_identity_unlinked", outcome="success",
+            actor_id=user_id, actor_name=user.username,
+            detail=f"provider_id={provider_id}; external identity removed by its owner",
+            db=db,
+        )
+        await db.commit()
+        if request.is_json:
+            from quart import jsonify
+
+            return jsonify({"status": "unlinked"}), 200
+        return redirect(url_for("auth.account_security_page"))
+    abort(500)

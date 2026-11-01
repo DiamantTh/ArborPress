@@ -47,6 +47,10 @@ STEPUP_POLICIES: dict[str, str] = {
     "disable_password": "target",
     "set_breakglass_password": "target",
     "admin_credential_reset": "target",
+    "link_external_identity": "target",
+    "unlink_external_identity": "target",
+    "manage_oidc_provider": "instance",
+    "rotate_oidc_client_secret": "instance",
 }
 STEPUP_REQUIRED_OPERATIONS = frozenset(STEPUP_POLICIES)
 

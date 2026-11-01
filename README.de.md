@@ -167,8 +167,16 @@ Standard-Policy für neue Break-Glass-Passwörter: mindestens 16 Zeichen, konfig
 
 OIDC-Kontoerstellung ist standardmäßig deaktiviert. Übereinstimmende E-Mail-
 Adressen oder Benutzernamen verknüpfen niemals ein vorhandenes Konto;
-Providerclaims vergeben keine ArborPress-Rollen. Explizites Kontoverknüpfen
-folgt in Phase 11B.
+Providerclaims vergeben keine ArborPress-Rollen. Bestehende Konten können
+externe Identitäten in der Kontosicherheit nach einer WebAuthn-Step-up-Prüfung
+bewusst verbinden oder trennen. Die letzte tatsächlich nutzbare Login- oder
+Recovery-Methode kann nicht entfernt werden. Administratoren verwalten Provider
+über die SSR-OIDC-Verwaltungsseite; Provider und verschlüsselte Client-Secrets
+liegen instanzbezogen in der Datenbank. Ein Issuer lässt sich nicht ändern,
+solange Identitäten damit verknüpft sind. OIDC-Diagnosen speichern nur tägliche
+UTC-Zähler begrenzter Fehlerklassen und werden nach 30 Tagen gelöscht.
+Weitere Hinweise zu Wiederherstellung und Secret-Verwaltung stehen in
+[OIDC-Betriebsabläufe](docs/oidc-operations.md).
 
 CLI-Helfer:
 

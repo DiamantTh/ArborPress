@@ -284,7 +284,6 @@ async def test_lockout_policy_counts_only_usable_paths(db_session, monkeypatch):
     from arborpress.core.config import Settings
     from arborpress.models.user import MFADevice, MFADeviceType, User, WebAuthnCredential
 
-    monkeypatch.setattr("arborpress.web.routes.sso.get_configured_providers", lambda: [])
     settings = Settings()
     settings.auth.legacy_password_enabled = True
     monkeypatch.setattr("arborpress.core.config.get_settings", lambda: settings)

@@ -51,6 +51,7 @@ from arborpress.models.notification import (  # noqa: F401
     WebPushDelivery,
     WebPushSubscription,
 )
+from arborpress.models.oidc import OIDCFailureDaily, OIDCProvider  # noqa: F401
 from arborpress.models.plugin import PluginJob, PluginStorageEntry  # noqa: F401
 from arborpress.models.settings import SiteSetting  # noqa: F401
 from arborpress.models.user import (  # noqa: F401

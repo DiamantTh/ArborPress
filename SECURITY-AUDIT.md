@@ -445,9 +445,11 @@ aktiv genutzt wird oder ein Sicherheitsgrund vorliegt.
   - Effort: 4h, **Impact**: MEDIUM
 
 - [x] **OIDC Relying Party** – issuer/subject identity, nonce/PKCE, signed ID tokens and
-  bounded HTTPS discovery are implemented in Phase 11A. Provider configuration remains
-  operator-managed; authorization codes in the callback query must be redacted by any
-  separately managed reverse-proxy access log.
+  bounded HTTPS discovery, explicit step-up-protected identity linking/unlinking,
+  last-usable-login protection, provider lifecycle, encrypted client-secret rotation,
+  and privacy-minimal 30-day diagnostics are implemented in Phases 11A/11B. Authorization
+  codes in the callback query must be redacted by any separately managed reverse-proxy
+  access log. Provider client-secret decryption depends on preserving `web.secret_key`.
 
 - [ ] **OAuth2/OIDC-Server** (ArborPress as provider and API authorization server; Phase 11C)
   - Effort: 12h, **Impact**: LOW

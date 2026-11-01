@@ -17,6 +17,30 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from arborpress.auth import oidc
 
 
+async def _seed_provider(test_engine, provider_id="example", **overrides):
+    from arborpress.models.oidc import OIDCProvider
+
+    factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    defaults = {
+        "name": provider_id.title(),
+        "issuer": "https://issuer.example",
+        "client_id": "arborpress",
+        "scopes": '["openid","profile"]',
+        "enabled": True,
+        "auto_create": False,
+    }
+    defaults.update(overrides)
+    async with factory() as db:
+        row = await db.get(OIDCProvider, provider_id)
+        if row is None:
+            row = OIDCProvider(id=provider_id, **defaults)
+            db.add(row)
+        else:
+            for key, value in defaults.items():
+                setattr(row, key, value)
+        await db.commit()
+
+
 def _fixture_key():
     private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     public_jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private.public_key()))
@@ -55,8 +79,8 @@ def test_verify_id_token_accepts_valid_rsa_identity():
 @pytest.mark.parametrize(
     ("claims", "expected"),
     [
-        ({"iss": "https://other.example"}, "id_token_verification_failed"),
-        ({"aud": "other-client"}, "id_token_verification_failed"),
+        ({"iss": "https://other.example"}, "issuer_mismatch"),
+        ({"aud": "other-client"}, "audience_mismatch"),
         ({"nonce": "wrong"}, "nonce_mismatch"),
         ({"sub": ""}, "subject_invalid"),
         ({"aud": ["arborpress", "other"]}, "authorized_party_mismatch"),
@@ -196,6 +220,22 @@ async def test_discovery_checks_issuer_and_redirects(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_invalid_grant_is_aggregated_as_pkce_failure(monkeypatch):
+    async def public_target(_url):
+        return ("93.184.216.34",)
+
+    monkeypatch.setattr(oidc, "validate_provider_url", public_target)
+    transport = httpx.MockTransport(lambda _request: httpx.Response(
+        400, json={"error": "invalid_grant"}, headers={"content-type": "application/json"}
+    ))
+    with pytest.raises(oidc.OIDCError, match="pkce"):
+        await oidc.request_json(
+            "https://issuer.example/token", method="POST",
+            data={"grant_type": "authorization_code"}, transport=transport,
+        )
+
+
+@pytest.mark.asyncio
 async def test_unknown_kid_causes_only_one_jwks_refresh(monkeypatch):
     private, jwks = _fixture_key()
     token = jwt.encode(
@@ -248,14 +288,11 @@ async def test_external_identity_unique_issuer_subject(db_session):
 
 
 @pytest.mark.asyncio
-async def test_sso_begin_uses_server_side_provider_bound_flow(client, monkeypatch):
+async def test_sso_begin_uses_server_side_provider_bound_flow(client, test_engine, monkeypatch):
     from arborpress.web.routes import sso
 
     monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
-    monkeypatch.setattr(sso, "_get_provider_config", lambda provider: {
-        "id": provider, "issuer": "https://issuer.example", "client_id": "arborpress",
-        "name": "Example", "scopes": ["openid", "profile"],
-    })
+    await _seed_provider(test_engine, "example")
     async def resolved(provider_cfg):
         metadata = {
             "issuer": "https://issuer.example",
@@ -280,19 +317,15 @@ async def test_sso_begin_uses_server_side_provider_bound_flow(client, monkeypatc
 @pytest.mark.asyncio
 @pytest.mark.parametrize("callback_provider,alter_state", [("example", True), ("other", False)])
 async def test_callback_rejects_state_mismatch_and_provider_swap(
-    client, monkeypatch, callback_provider, alter_state
+    client, test_engine, monkeypatch, callback_provider, alter_state
 ):
     from arborpress.web.routes import sso
 
     monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
-    providers = {
-        name: {
-            "id": name, "issuer": f"https://{name}.example", "client_id": "client",
-            "name": name, "scopes": ["openid"],
-        }
-        for name in ("example", "other")
-    }
-    monkeypatch.setattr(sso, "_get_provider_config", lambda name: providers.get(name))
+    for name in ("example", "other"):
+        await _seed_provider(
+            test_engine, name, issuer=f"https://{name}.example", client_id="client"
+        )
 
     async def resolved(provider):
         metadata = {
@@ -326,7 +359,7 @@ async def test_callback_rejects_inactive_or_sso_disabled_identity(
         "id": "corp", "issuer": "https://issuer.example", "client_id": "arborpress",
         "name": "Corp", "scopes": ["openid"], "auto_create": False,
     }
-    monkeypatch.setattr(sso, "_get_provider_config", lambda _name: provider)
+    await _seed_provider(test_engine, "corp", name="Corp")
     metadata = {
         "issuer": provider["issuer"],
         "authorization_endpoint": "https://issuer.example/authorize",
@@ -371,23 +404,6 @@ async def test_callback_rejects_inactive_or_sso_disabled_identity(
 
 
 @pytest.mark.asyncio
-async def test_provider_config_ignores_legacy_autolink_and_disables_autocreate(monkeypatch):
-    from arborpress.web.routes import sso
-
-    monkeypatch.setattr(sso, "_load_sso_config", lambda: {
-        "providers": {"corp": {
-            "issuer": "https://issuer.example", "client_id": "client",
-            "auto_link_by_email": True, "role_mapping": {"default": "admin"},
-        }}
-    })
-    provider = sso._get_provider_config("corp")
-    assert provider is not None
-    assert provider["auto_create"] is False
-    assert "auto_link_by_email" not in provider
-    assert "role_mapping" not in provider
-
-
-@pytest.mark.asyncio
 async def test_callback_does_not_link_by_email_or_username(client, test_engine, monkeypatch):
     from arborpress.models.user import ExternalIdentity, User, UserRole
     from arborpress.web.routes import sso
@@ -395,11 +411,14 @@ async def test_callback_does_not_link_by_email_or_username(client, test_engine, 
     monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
     provider = {
         "id": "corp", "issuer": "https://issuer.example", "client_id": "arborpress",
-        "client_secret": "private-test-secret", "name": "Corp", "scopes": ["openid", "email"],
-        "auto_create": True, "auto_link_by_email": True,
-        "role_mapping": {"default": "admin"},
+        "name": "Corp", "scopes": ["openid", "email"], "auto_create": True,
     }
-    monkeypatch.setattr(sso, "_get_provider_config", lambda _provider: provider)
+    await _seed_provider(test_engine, "corp", name="Corp", auto_create=True)
+    from arborpress.auth.oidc_providers import rotate_provider_secret
+    factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    async with factory() as db:
+        await rotate_provider_secret(db, "corp", "private-test-secret")
+        await db.commit()
     metadata = {
         "issuer": provider["issuer"],
         "authorization_endpoint": "https://issuer.example/authorize",

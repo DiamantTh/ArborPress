@@ -12,6 +12,45 @@
   {% endif %}
 
   <section>
+    <h2>{{ _('Externe Anmeldungen (OIDC)') }}</h2>
+    <p>{{ _('Externe Identitäten werden bewusst verknüpft. E-Mail-Adresse und Benutzername verbinden niemals automatisch Konten. Die letzte tatsächlich nutzbare Anmeldung oder Recovery-Methode kann nicht entfernt werden.') }}</p>
+    {% for identity in external_identities %}
+    <article class="security-item">
+      <strong>{{ identity.provider_name }}</strong>
+      <small>{{ _('Verknüpft') }}: {{ identity.created_at }} · {{ _('Letzter erfolgreicher Login') }}: {{ identity.last_login_at or _('Noch keiner') }}</small>
+      <small>{{ _('Provider aktiv') if identity.provider_enabled else _('Provider deaktiviert') }}</small>
+      {% if not recovery_only %}
+      {% if identity.can_unlink %}
+      <button class="btn btn--small stepup-remove" type="button"
+              data-action="unlink_external_identity" data-target="{{ identity.id }}"
+              data-url="{{ url_for('sso.sso_identity_unlink', identity_id=identity.id) }}">
+        {{ _('Verknüpfung entfernen') }}
+      </button>
+      {% else %}<button class="btn btn--small" type="button" disabled title="{{ _('Dies ist die letzte nutzbare Loginmethode') }}">{{ _('Verknüpfung entfernen') }}</button>{% endif %}
+      {% elif identity.can_unlink %}<small>{{ _('In einer normalen Sitzung entfernbar') }}</small>{% endif %}
+    </article>
+    {% else %}<p>{{ _('Keine externen Identitäten verknüpft.') }}</p>{% endfor %}
+    {% if not recovery_only %}
+    <h3>{{ _('Weitere Provider verbinden') }}</h3>
+    {% for provider in linkable_providers %}
+    <button class="btn btn--small stepup-redirect" type="button" disabled
+            data-action="link_external_identity" data-target="{{ provider.id }}"
+            data-next="{{ url_for('sso.sso_link_begin', provider=provider.id) }}">
+      {{ _('Mit %(provider)s verbinden', provider=provider.name) }}
+    </button>
+    {% else %}<p>{{ _('Es sind keine weiteren aktiven OIDC-Provider verfügbar.') }}</p>{% endfor %}
+    {% endif %}
+    {% if is_admin and not recovery_only %}
+    <h3>{{ _('OIDC-Providerverwaltung') }}</h3>
+    <p>{{ _('Providerverwaltung erfordert eine erneute Sicherheitsbestätigung. Client-Secrets werden verschlüsselt gespeichert und niemals erneut angezeigt.') }}</p>
+    <button class="btn stepup-redirect" type="button" disabled data-action="manage_oidc_provider"
+            data-target="instance" data-next="{{ url_for('admin.oidc_providers') }}">{{ _('Provider verwalten') }}</button>
+    <button class="btn stepup-redirect" type="button" disabled data-action="rotate_oidc_client_secret"
+            data-target="instance" data-next="{{ url_for('admin.oidc_providers') }}">{{ _('Client-Secret rotieren') }}</button>
+    {% endif %}
+  </section>
+
+  <section>
     <h2>{{ _('Fediverse / ActivityPub') }}</h2>
     <p>{{ _('Die Föderation ist eine getrennte öffentliche Identität und kann in Ihrem Konto verwaltet werden.') }}</p>
     <a class="btn" href="{{ url_for('auth.federation_account_page') }}">{{ _('Fediverse-Einstellungen') }}</a>

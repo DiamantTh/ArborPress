@@ -109,10 +109,14 @@ auth_rate_limit         = "10/minute"
 # actor_key_enc_key = "<base64url-32-byte-wert>"
 
 # ---------------------------------------------------------------------------
-# SSO / OIDC (optional – ideal for kleine Teams hinter Reverse Proxy)
+# SSO / OIDC (optional)
 # ---------------------------------------------------------------------------
-# Example using OpenID Connect Discovery. Keep client_secret in an included
-# secrets.toml file. The issuer must be a public HTTPS OIDC issuer.
+# Optional one-time bootstrap for the instance database's OIDC provider catalog.
+# The first provider-catalog access imports these entries; afterwards the DB is
+# authoritative and provider changes are made in Admin > OIDC Providers.
+# Keep client_secret in an included secrets.toml file. Secrets are encrypted in
+# the DB using web.secret_key-derived encryption, so back up that key securely.
+# Issuers and discovery endpoints must be public HTTPS OIDC endpoints.
 # [sso.providers.company_sso]
 # enabled        = true
 # name           = "Firmen-Login"
@@ -122,8 +126,8 @@ auth_rate_limit         = "10/minute"
 # discovery_url  = "https://sso.example.com/.well-known/openid-configuration"
 # scopes         = ["openid", "profile", "email"]
 # auto_create    = false            # opt in; new accounts receive viewer only
-# Legacy auto_link_by_email and role_mapping settings are ignored. Existing
-# ArborPress accounts require explicit linking (planned for Phase 11B).
+# auto_link_by_email and remote role mappings are ignored. Existing ArborPress
+# accounts require explicit linking from Account Security after local step-up.
 
 # ---------------------------------------------------------------------------
 # Logging

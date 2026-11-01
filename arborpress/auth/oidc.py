@@ -107,7 +107,6 @@ async def request_json(
             ) as response:
                 if 300 <= response.status_code < 400:
                     raise OIDCError("provider_redirect_rejected")
-                response.raise_for_status()
                 peer = response_peer_address(response)
                 if peer:
                     address = ipaddress.ip_address(peer)
@@ -119,6 +118,26 @@ async def request_json(
                 if length and int(length) > MAX_RESPONSE_BYTES:
                     raise OIDCError("provider_response_too_large")
                 body = bytearray()
+                is_code_exchange = (
+                    method == "POST" and data is not None
+                    and data.get("grant_type") == "authorization_code"
+                )
+                if response.status_code >= 400 and is_code_exchange:
+                    async for chunk in response.aiter_bytes():
+                        body.extend(chunk)
+                        if len(body) > MAX_RESPONSE_BYTES:
+                            raise OIDCError("provider_response_too_large")
+                    try:
+                        error_document = json.loads(body)
+                    except (ValueError, json.JSONDecodeError):
+                        error_document = {}
+                    if (
+                        isinstance(error_document, dict)
+                        and error_document.get("error") == "invalid_grant"
+                    ):
+                        raise OIDCError("pkce")
+                    response.raise_for_status()
+                response.raise_for_status()
                 async for chunk in response.aiter_bytes():
                     body.extend(chunk)
                     if len(body) > MAX_RESPONSE_BYTES:
@@ -218,6 +237,18 @@ def verify_id_token(
             leeway=60,
             options={"require": ["iss", "sub", "aud", "exp", "iat"]},
         )
+    except jwt.ExpiredSignatureError as exc:
+        raise OIDCError("token_expired") from exc
+    except jwt.ImmatureSignatureError as exc:
+        raise OIDCError("token_not_yet_valid") from exc
+    except jwt.InvalidAudienceError as exc:
+        raise OIDCError("audience_mismatch") from exc
+    except jwt.InvalidIssuerError as exc:
+        raise OIDCError("issuer_mismatch") from exc
+    except jwt.MissingRequiredClaimError as exc:
+        if getattr(exc, "claim", None) == "sub":
+            raise OIDCError("subject_invalid") from exc
+        raise OIDCError("id_token_missing_claim") from exc
     except jwt.PyJWTError as exc:
         raise OIDCError("id_token_verification_failed") from exc
     audiences = claims.get("aud")

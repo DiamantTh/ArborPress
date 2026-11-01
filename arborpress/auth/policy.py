@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from sqlalchemy import func, select, update
 
@@ -33,9 +33,10 @@ async def lock_user_for_credential_change(db: Any, user_id: str) -> User | None:
         .where(User.id == user_id)
         .values(id=User.id, updated_at=User.updated_at)
     )
-    return (await db.execute(
+    result = await db.execute(
         select(User).where(User.id == user_id).with_for_update()
-    )).scalar_one_or_none()
+    )
+    return cast(User | None, result.scalar_one_or_none())
 
 
 async def usable_webauthn_credential_ids(db: Any, user_id: str) -> set[str]:
@@ -231,27 +232,77 @@ async def usable_auth_paths(
         and not exclude_password
     ):
         paths.add("password+second_factor" if has_second_factor else "password_recovery")
-    # Existing SSO can be a login path if an operator has configured one and
-    # the account itself has not opted out. Import lazily to avoid config IO.
-    if not user.sso_disabled:
-        try:
-            from arborpress.web.routes.sso import get_configured_providers
-            if get_configured_providers():
-                from arborpress.core.site_settings import get_webauthn_settings
-
-                wa_policy = await get_webauthn_settings(db)
-                sso_requires_mfa = requires_second_factor(
-                    user,
-                    "sso",
-                    available_factors,
-                    auth_settings=auth_settings,
-                    webauthn_settings=wa_policy,
-                )
-                if not sso_requires_mfa or available_factors:
-                    paths.add("sso")
-        except Exception:  # pragma: no cover - SSO is optional
-            log.debug("Could not evaluate the optional SSO authentication path", exc_info=True)
+    login_methods = await usable_login_methods(
+        db,
+        user,
+        exclude_external_identity_id=None,
+        exclude_webauthn_id=exclude_webauthn_id,
+        exclude_mfa_id=exclude_mfa_id,
+        exclude_password=exclude_password,
+    )
+    if any(method.startswith("oidc:") for method in login_methods):
+        paths.add("sso")
     return paths
+
+
+async def usable_login_methods(
+    db: Any,
+    user: User,
+    *,
+    exclude_external_identity_id: str | None = None,
+    exclude_webauthn_id: str | None = None,
+    exclude_mfa_id: str | None = None,
+    exclude_password: bool = False,
+) -> set[str]:
+    """Resolve real current login/recovery methods; TOTP is a factor, not a login alone."""
+    if not user.is_active:
+        return set()
+    from arborpress.models.oidc import OIDCProvider
+    from arborpress.models.user import ExternalIdentity
+
+    webauthn_ids = await usable_webauthn_credential_ids(db, str(user.id))
+    if exclude_webauthn_id:
+        webauthn_ids.discard(str(exclude_webauthn_id))
+    totp_ids = await usable_totp_device_ids(db, str(user.id))
+    if exclude_mfa_id:
+        totp_ids.discard(str(exclude_mfa_id))
+    factors = set()
+    methods: set[str] = set()
+    if webauthn_ids:
+        factors.add("webauthn")
+        methods.add("webauthn")
+    if totp_ids:
+        factors.add("totp")
+
+    from arborpress.core.config import get_settings
+    from arborpress.core.site_settings import get_webauthn_settings
+
+    auth_settings = get_settings().auth
+    webauthn_settings = await get_webauthn_settings(db)
+    if (
+        auth_settings.legacy_password_enabled
+        and user.legacy_password_enabled
+        and bool(user.legacy_password_hash)
+        and not exclude_password
+    ):
+        methods.add("password+second_factor" if factors else "password_recovery")
+
+    if not user.sso_disabled:
+        stmt = select(ExternalIdentity, OIDCProvider).join(
+            OIDCProvider, OIDCProvider.id == ExternalIdentity.provider_id
+        ).where(
+            ExternalIdentity.user_id == str(user.id),
+            OIDCProvider.enabled.is_(True),
+        )
+        if exclude_external_identity_id:
+            stmt = stmt.where(ExternalIdentity.id != exclude_external_identity_id)
+        for _identity, provider in (await db.execute(stmt)).all():
+            if not requires_second_factor(
+                user, "sso", factors, auth_settings=auth_settings,
+                webauthn_settings=webauthn_settings,
+            ) or factors:
+                methods.add(f"oidc:{provider.id}")
+    return methods
 
 
 async def assert_auth_path_remains(

@@ -241,16 +241,22 @@ class TestBackupCodeService:
 
 class TestSSO:
     @pytest.mark.asyncio
-    async def test_sso_begin_redirects_to_provider(self, client, monkeypatch):
+    async def test_sso_begin_redirects_to_provider(self, client, test_engine, monkeypatch):
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from arborpress.models.oidc import OIDCProvider
+
         monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
-        monkeypatch.setattr(
-            "arborpress.web.routes.sso._get_provider_config",
-            lambda provider: {
-                "client_id": "arborpress",
-            "issuer": "https://sso.example.com",
-                "scopes": ["openid", "profile", "email"],
-            },
-        )
+        factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+        async with factory() as db:
+            row = await db.get(OIDCProvider, "test")
+            if row is None:
+                db.add(OIDCProvider(
+                    id="test", name="Test", issuer="https://sso.example.com",
+                    client_id="arborpress", scopes='["openid","profile","email"]',
+                    enabled=True, auto_create=False,
+                ))
+            await db.commit()
 
         async def _resolve(provider_cfg: dict) -> dict:
             metadata = {

@@ -143,7 +143,6 @@ async def test_webauthn_only_one_remaining_is_a_valid_account_path(db_session, m
     from arborpress.auth.policy import usable_auth_paths
     from arborpress.core.config import Settings
 
-    monkeypatch.setattr("arborpress.web.routes.sso.get_configured_providers", lambda: [])
     settings = Settings()
     monkeypatch.setattr("arborpress.core.config.get_settings", lambda: settings)
     user_id = await _user(db_session, "passkey-only")

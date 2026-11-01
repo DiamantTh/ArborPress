@@ -1,0 +1,61 @@
+{% extends "admin/_base.html" %}
+{% block title %}OIDC Provider{% endblock %}
+{% block admin_content %}
+<h1>OIDC Provider</h1>
+<p>Provideränderungen und Secretrotation benötigen Step-up. Öffnen Sie dafür zuerst die <a href="{{ url_for('auth.account_security_page') }}">Kontosicherheit</a> und wählen Sie die passende Bestätigungsaktion. Secrets werden verschlüsselt gespeichert und niemals wieder angezeigt. Provider werden deaktiviert, nicht physisch gelöscht.</p>
+
+<h2>Diagnose · letzte 30 Tage</h2>
+{% if failures %}
+<table><thead><tr><th>Provider</th><th>Fehlerklasse</th><th>Anzahl</th></tr></thead><tbody>
+{% for item in failures %}<tr><td>{{ item.provider_id }}</td><td>{{ item.failure_class }}</td><td>{{ item.count }}</td></tr>{% endfor %}
+</tbody></table>
+{% else %}<p>Keine aggregierten OIDC-Fehler in diesem Zeitraum.</p>{% endif %}
+
+<h2>Provider</h2>
+{% for provider in providers %}
+<section class="admin-card">
+  <h3>{{ provider.name }} <small>({{ provider.id }})</small></h3>
+  <p><code>{{ provider.issuer }}</code> · {{ provider.identity_count }} verknüpfte Identitäten · Secret: {{ 'gesetzt' if provider.has_secret else 'nicht gesetzt' }}</p>
+  <p>Status: {{ 'aktiv' if provider.enabled else 'deaktiviert' }} · Discovery: {{ provider.discovery_status }} · JWKS: {{ provider.jwks_status }} · letzter erfolgreicher Check: {{ provider.last_success_at or 'noch keiner' }} · letzter Check: {{ provider.last_check_at or 'noch keiner' }}{% if provider.last_error_class %} · Fehlerklasse: {{ provider.last_error_class }}{% endif %}</p>
+  <form method="post" action="{{ url_for('admin.oidc_provider_save') }}">
+    {{ csrf_input() }}
+    <input type="hidden" name="id" value="{{ provider.id }}">
+    <label>Name <input name="name" maxlength="128" value="{{ provider.name }}" required></label>
+    <label>Issuer <input name="issuer" type="url" value="{{ provider.issuer }}" required {% if provider.identity_count %}readonly{% endif %}></label>
+    <label>Discovery URL <input name="discovery_url" type="url" value="{{ provider.discovery_url or '' }}"></label>
+    <label>Client ID <input name="client_id" maxlength="512" value="{{ provider.client_id }}" required></label>
+    <label>Scopes <input name="scopes" value="{{ provider.scopes|join(' ') }}"></label>
+    <label><input type="checkbox" name="enabled" {% if provider.enabled %}checked{% endif %}> Aktiv</label>
+    <label><input type="checkbox" name="auto_create" {% if provider.auto_create %}checked{% endif %}> Neue Viewer-Accounts bei erster Anmeldung erlauben</label>
+    <button class="btn" type="submit">Speichern</button>
+  </form>
+  <form method="post" action="{{ url_for('admin.oidc_provider_enabled', provider_id=provider.id) }}">
+    {{ csrf_input() }}<input type="hidden" name="enabled" value="{{ 'false' if provider.enabled else 'true' }}">
+    <button class="btn" type="submit">{{ 'Deaktivieren' if provider.enabled else 'Aktivieren' }}</button>
+  </form>
+  <form method="post" action="{{ url_for('admin.oidc_provider_check', provider_id=provider.id) }}">
+    {{ csrf_input() }}<button class="btn" type="submit">Discovery und JWKS prüfen</button>
+  </form>
+  <form method="post" action="{{ url_for('admin.oidc_provider_secret_rotate', provider_id=provider.id) }}">
+    {{ csrf_input() }}
+    <label>Neues Client-Secret <input type="password" name="client_secret" autocomplete="new-password" maxlength="4096" required></label>
+    <button class="btn" type="submit">Secret rotieren</button>
+  </form>
+</section>
+{% else %}<p>Es sind noch keine Provider registriert.</p>{% endfor %}
+
+<h2>Provider anlegen</h2>
+<form method="post" action="{{ url_for('admin.oidc_provider_save') }}" class="admin-card">
+  {{ csrf_input() }}
+  <label>Stabile Provider-ID <input name="id" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}" required></label>
+  <label>Name <input name="name" maxlength="128" required></label>
+  <label>Issuer <input name="issuer" type="url" placeholder="https://identity.example" required></label>
+  <label>Discovery URL, optional <input name="discovery_url" type="url"></label>
+  <label>Client ID <input name="client_id" maxlength="512" required></label>
+  <label>Scopes <input name="scopes" value="openid profile email"></label>
+  <label><input type="checkbox" name="enabled" checked> Aktiv</label>
+  <label><input type="checkbox" name="auto_create"> Neue Viewer-Accounts bei erster Anmeldung erlauben</label>
+  <button class="btn btn--primary" type="submit">Provider speichern</button>
+  <p>Das Client-Secret wird anschließend über die separate Secretrotation gesetzt. Eine bestehende Issuer-URL kann bei verknüpften Accounts nicht geändert werden.</p>
+</form>
+{% endblock %}

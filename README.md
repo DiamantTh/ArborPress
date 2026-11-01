@@ -182,7 +182,13 @@ Default policy for new break-glass passwords: at least 16 characters, configurab
 
 OIDC account creation is off by default. Matching email addresses or usernames
 never link an existing account; provider claims cannot grant ArborPress roles.
-Explicit account linking is planned for Phase 11B.
+Existing accounts can explicitly link or unlink identities from Account Security
+after WebAuthn step-up. ArborPress prevents removal of the last currently usable
+login or recovery method. Administrators manage providers from the SSR OIDC
+provider page; provider records and encrypted client secrets are stored in the
+instance database. Issuers cannot be changed while identities remain linked.
+OIDC diagnostics are daily UTC counts by bounded failure class, retained for 30 days.
+See [OIDC operations](docs/oidc-operations.md) for provider recovery and secret handling.
 
 CLI helpers:
 

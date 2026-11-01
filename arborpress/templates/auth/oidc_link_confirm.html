@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ _('Externen Login verbinden') }}{% endblock %}
+{% set noindex = true %}
+{% block body_class %}auth-page{% endblock %}
+{% block content %}
+<div class="auth-box auth-box--wide">
+  <h1>{{ _('Externen Login verbinden') }}</h1>
+  <p>{{ _('Der Anbieter hat eine gültige OIDC-Identität bestätigt:') }} <strong>{{ provider_name }}</strong></p>
+  <p>{{ _('Verbinden Sie diese Identität nur, wenn Sie gerade bewusst den Login für Ihr ArborPress-Konto eingerichtet haben. Eine E-Mail-Adresse wird nicht zum Abgleich verwendet.') }}</p>
+  <form method="post" action="{{ url_for('sso.sso_link_confirm', pending_id=pending_id) }}">
+    {{ csrf_input() }}
+    <button class="btn btn--primary" type="submit">{{ _('Mit meinem Konto verbinden') }}</button>
+    <a class="btn" href="{{ url_for('auth.account_security_page') }}">{{ _('Abbrechen') }}</a>
+  </form>
+</div>
+{% endblock %}

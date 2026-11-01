@@ -471,7 +471,26 @@ External IdP/SSO is optional and must remain hidden unless configured.
 - operational accounts may be restricted from SSO
 - local WebAuthn step-up may still be required for sensitive actions
 - `auto_link_by_email` and `role_mapping` are ignored legacy options
-- `auto_create` defaults to false; explicit linking is a Phase 11B feature
+- `auto_create` defaults to false; newly created accounts receive only the local `viewer` role
+- provider records are instance-scoped in the database; a one-time import reads legacy
+  `[sso.providers.*]` configuration, after which the database is authoritative
+- client secrets are encrypted at rest using a purpose-derived key from `web.secret_key`;
+  protect and back up that key because rotating it without decrypt/re-encrypt makes saved
+  OIDC client secrets unavailable
+- linking/unlinking is an explicit Account Security operation requiring a fresh OIDC
+  authorization, issuer/subject verification, explicit confirmation, CSRF, and local
+  step-up. Email and username are never linking evidence
+- the login-method resolver counts only currently usable password/recovery, UV-capable
+  WebAuthn, and enabled OIDC paths allowed by account and MFA policy. TOTP is a factor,
+  not a standalone login method. The last usable path cannot be removed
+- provider administration supports create/edit, enable/disable, bounded discovery/JWKS
+  health checks, and client-secret rotation. Providers with linked identities cannot be
+  physically deleted, and their issuer cannot be changed
+- OIDC diagnostics aggregate only bounded failure classes by provider and UTC day. They
+  contain no IP, subject, email, username, session, token, code, or authorization header
+  and are retained for 30 days
+- if an IdP is unavailable, linked identities remain intact; use another usable login
+  method or restore the provider. There is no key-trust or signature-validation bypass
 - Provider discovery and server-side endpoint requests require bounded HTTPS responses,
   reject redirects, resolve only globally routable addresses, and verify the connected peer
   when the HTTP transport exposes it. DNS validation and socket connection are separate
