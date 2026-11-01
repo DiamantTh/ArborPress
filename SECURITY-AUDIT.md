@@ -444,7 +444,12 @@ aktiv genutzt wird oder ein Sicherheitsgrund vorliegt.
 - [ ] **API-Rate-Limiting** per Endpoint (nicht global)
   - Effort: 4h, **Impact**: MEDIUM
 
-- [ ] **OAuth2/OIDC-Server** (für Plugins)
+- [x] **OIDC Relying Party** – issuer/subject identity, nonce/PKCE, signed ID tokens and
+  bounded HTTPS discovery are implemented in Phase 11A. Provider configuration remains
+  operator-managed; authorization codes in the callback query must be redacted by any
+  separately managed reverse-proxy access log.
+
+- [ ] **OAuth2/OIDC-Server** (ArborPress as provider and API authorization server; Phase 11C)
   - Effort: 12h, **Impact**: LOW
 
 - [ ] **Penetration Test** (Extern, 1–2 Tage)

@@ -1239,6 +1239,12 @@ async def login_mfa_webauthn_complete():
         ):
             abort(401)
         parent_context = json.loads(parent.context or "{}")
+        if parent_purpose == "sso_mfa" and parent_context.get("external_identity_id"):
+            from arborpress.auth.oidc import mark_identity_login
+
+            await mark_identity_login(
+                db, str(parent_context["external_identity_id"]), user_id
+            )
         auth_method = (
             "password+webauthn" if parent_purpose == "password_mfa"
             else f"{parent_context.get('auth_method', 'sso')}+webauthn"
@@ -1325,6 +1331,12 @@ async def login_mfa_totp_complete():
             abort(401)
         matched.last_used_at = datetime.now(UTC).replace(tzinfo=None)
         parent_context = json.loads(pending.context or "{}")
+        if parent_purpose == "sso_mfa" and parent_context.get("external_identity_id"):
+            from arborpress.auth.oidc import mark_identity_login
+
+            await mark_identity_login(
+                db, str(parent_context["external_identity_id"]), user_id
+            )
         auth_method = (
             "password+totp" if parent_purpose == "password_mfa"
             else f"{parent_context.get('auth_method', 'sso')}+totp"

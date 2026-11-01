@@ -247,14 +247,19 @@ class TestSSO:
             "arborpress.web.routes.sso._get_provider_config",
             lambda provider: {
                 "client_id": "arborpress",
-                "authorize_url": "https://sso.example.com/auth",
+            "issuer": "https://sso.example.com",
                 "scopes": ["openid", "profile", "email"],
-                "use_pkce": True,
             },
         )
 
         async def _resolve(provider_cfg: dict) -> dict:
-            return provider_cfg
+            metadata = {
+                "issuer": "https://sso.example.com",
+                "authorization_endpoint": "https://sso.example.com/auth",
+                "token_endpoint": "https://sso.example.com/token",
+                "jwks_uri": "https://sso.example.com/jwks",
+            }
+            return {**provider_cfg, **metadata, "_oidc_metadata": metadata}
 
         monkeypatch.setattr("arborpress.web.routes.sso._resolve_provider_endpoints", _resolve)
 

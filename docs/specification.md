@@ -464,10 +464,21 @@ External IdP/SSO is optional and must remain hidden unless configured.
   - `/auth/sso/{provider}/callback`
 
 ### Constraints
-- claims mapped to internal roles
-- no automatic privilege escalation via SSO
+- verified ID-token `iss` + `sub` is the stable external identity
+- email, username and display name are profile attributes, never link keys
+- provider claims cannot change local ArborPress roles
+- newly auto-created users receive only the local `viewer` role
 - operational accounts may be restricted from SSO
 - local WebAuthn step-up may still be required for sensitive actions
+- `auto_link_by_email` and `role_mapping` are ignored legacy options
+- `auto_create` defaults to false; explicit linking is a Phase 11B feature
+- Provider discovery and server-side endpoint requests require bounded HTTPS responses,
+  reject redirects, resolve only globally routable addresses, and verify the connected peer
+  when the HTTP transport exposes it. DNS validation and socket connection are separate
+  operations, so a narrow DNS-rebinding race remains; use an operator-controlled issuer.
+- ArborPress' default Hypercorn access format logs the callback path without its query.
+  Separately managed reverse proxies should also redact callback query strings because the
+  authorization code and state arrive as standard OIDC query parameters.
 
 ---
 

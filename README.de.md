@@ -161,9 +161,14 @@ arborpress plugin list
 | Backup-Codes         | Einmalige Notfall-Codes (§3)          |
 | Break-Glass Passwort | Argon2id, explizit aktiviert, lange Passphrase statt Zeichenzwang (§2) |
 | Step-up / Sudo-Mode  | Für Admin-Aktionen re-auth (§2)       |
-| SSO/OIDC             | Optional, konfigurierbar (§11)        |
+| SSO/OIDC             | OIDC-Login; Identität durch Issuer + Subject verifiziert (§11) |
 
 Standard-Policy für neue Break-Glass-Passwörter: mindestens 16 Zeichen, konfigurierbar ab 8 Zeichen, plus zxcvbn-Mindestscore 3/4. Es gibt bewusst keine Pflicht zu Sonderzeichenklassen; sowohl Diceware-Passphrasen aus der EFF Large Wordlist als auch klassische Zufallspasswörter werden gleichrangig unterstuetzt.
+
+OIDC-Kontoerstellung ist standardmäßig deaktiviert. Übereinstimmende E-Mail-
+Adressen oder Benutzernamen verknüpfen niemals ein vorhandenes Konto;
+Providerclaims vergeben keine ArborPress-Rollen. Explizites Kontoverknüpfen
+folgt in Phase 11B.
 
 CLI-Helfer:
 

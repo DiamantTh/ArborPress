@@ -1,128 +1,117 @@
-"""OAuth2/OIDC client (§11 – external login, optional only).
-
-§11 constraints:
-- Only visible when configured
-- No automatic privilege escalation via SSO
-- Operational accounts may have SSO disabled
-- Separate button (not part of the WebAuthn flow)
-
-Routes:
-  /auth/sso/{provider}           – Redirect to IdP
-  /auth/sso/{provider}/callback  – Callback processing
-"""
+"""OIDC relying-party routes, extending ArborPress' existing SSO entry points."""
 
 from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
+import json
 import logging
 import re
 import secrets
-import tomllib
-from pathlib import Path
-from urllib.parse import urlencode, urlparse
+from typing import Any
+from urllib.parse import urlencode
 
-import httpx
-from quart import Blueprint, abort, redirect, request, session, url_for
+from quart import Blueprint, Response, abort, redirect, request, session, url_for
 from sqlalchemy import func, select
 
-from arborpress.core.config import get_settings
+from arborpress.auth.oidc import (
+    OIDCError,
+    discover,
+    endpoint_url,
+    mark_identity_login,
+    merge_userinfo,
+    request_json,
+    verify_id_token_from_provider,
+)
+from arborpress.auth.pending import consume_pending, create_pending
 from arborpress.core.audit import write_audit_event
+from arborpress.core.config import _load_toml_file, get_settings
 from arborpress.core.db import get_db_session
 from arborpress.core.validators import is_valid_username
 from arborpress.logging.config import get_audit_logger
 
 log = logging.getLogger("arborpress.auth.sso")
 audit = get_audit_logger()
-
 sso_bp = Blueprint("sso", __name__)
-
-# ---------------------------------------------------------------------------
-# SSO-Provider-Registry (aus config geladen)
-# ---------------------------------------------------------------------------
-# Beispiel-Provider-Konfiguration in config.toml:
-#
-# [sso.providers.github]
-# client_id     = "..."
-# client_secret = "..."
-# authorize_url = "https://github.com/login/oauth/authorize"
-# token_url     = "https://github.com/login/oauth/access_token"
-# userinfo_url  = "https://api.github.com/user"
-# scopes        = ["read:user", "user:email"]
-# role_mapping  = { default = "viewer" }   # §11 – claims → internal roles
+_PROVIDER_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
+_FLOW_TTL_SECONDS = 300
+_FLOW_COOKIE = "arborpress_oidc_flow"
 
 
-def _load_sso_config() -> dict:
-    """Read SSO configuration from config.toml if available."""
-    cfg = get_settings()
-    config_file = getattr(cfg, "_config_file", None)
-    candidates = [Path(config_file)] if config_file else []
-
-    for candidate in candidates:
-        try:
-            if candidate.exists():
-                with open(candidate, "rb") as fh:
-                    data = tomllib.load(fh)
-                return data.get("sso", {}) if isinstance(data, dict) else {}
-        except Exception as exc:  # noqa: BLE001
-            log.warning("SSO config could not be read from %s: %s", candidate, exc)
-    return {}
+@sso_bp.after_request
+async def _clear_oidc_flow_cookie(response: Response) -> Response:
+    if request.path.startswith("/auth/sso/") and request.path.endswith("/callback"):
+        response.delete_cookie(_FLOW_COOKIE, path="/auth/sso/")
+    return response
 
 
-def _get_provider_config(provider: str) -> dict | None:
-    """Loads provider configuration – returns None if not configured."""
-    sso_cfg = _load_sso_config()
-    providers = sso_cfg.get("providers", {})
+def _load_sso_config() -> dict[str, Any]:
+    """Load SSO configuration through ArborPress' include-aware config loader."""
+    config_file = get_settings()._config_file
+    if config_file is None or not config_file.exists():
+        return {}
+    try:
+        data = _load_toml_file(config_file)
+    except (OSError, ValueError) as exc:
+        # Avoid logging exception text that may quote malformed secret-bearing TOML.
+        log.warning("OIDC configuration could not be loaded (%s)", type(exc).__name__)
+        return {}
+    value = data.get("sso", {})
+    return value if isinstance(value, dict) else {}
+
+
+def _get_provider_config(provider: str) -> dict[str, Any] | None:
+    if not _PROVIDER_ID.fullmatch(provider):
+        return None
+    providers = _load_sso_config().get("providers", {})
     if not isinstance(providers, dict):
         return None
-    provider_cfg = providers.get(provider)
-    if not isinstance(provider_cfg, dict):
+    item = providers.get(provider)
+    if not isinstance(item, dict) or item.get("enabled", True) is not True:
         return None
-
-    normalized = dict(provider_cfg)
-    normalized.setdefault("name", provider.replace("_", " ").title())
-    normalized.setdefault("scopes", ["openid", "profile", "email"])
-    normalized.setdefault("username_claim", "preferred_username")
-    normalized.setdefault("email_claim", "email")
-    normalized.setdefault("display_name_claim", "name")
-    normalized.setdefault("role_mapping", {"default": "viewer"})
-    normalized.setdefault("auto_create", True)
-    normalized.setdefault("auto_link_by_email", True)
-    normalized.setdefault("account_type", "operational")
-    normalized.setdefault("use_pkce", True)
-    return normalized
+    issuer = item.get("issuer")
+    client_id = item.get("client_id")
+    if not isinstance(issuer, str) or not issuer or not isinstance(client_id, str) or not client_id:
+        return None
+    configured_scopes = item.get("scopes", ["profile", "email"])
+    if not isinstance(configured_scopes, list):
+        configured_scopes = ["profile", "email"]
+    return {
+        **{
+            key: value for key, value in item.items()
+            if key not in {"auto_link_by_email", "role_mapping"}
+        },
+        "id": provider,
+        "name": str(item.get("name") or provider.replace("_", " ").title())[:128],
+        "scopes": list(dict.fromkeys([
+            "openid",
+            *(
+                scope for scope in configured_scopes
+                if isinstance(scope, str) and scope and len(scope) <= 128
+            ),
+        ]))[:32],
+        # Identity provisioning is opt-in; legacy auto_link_by_email is ignored.
+        "auto_create": item.get("auto_create") is True,
+    }
 
 
 def get_configured_providers() -> list[dict[str, str]]:
-    """Return visible configured SSO providers for the login page."""
-    sso_cfg = _load_sso_config()
-    providers = sso_cfg.get("providers", {})
+    providers = _load_sso_config().get("providers", {})
     if not isinstance(providers, dict):
         return []
-    return [
-        {"id": key, "name": str(val.get("name") or key.replace("_", " ").title())}
-        for key, val in providers.items()
-        if isinstance(val, dict) and val.get("client_id")
-    ]
+    configured = []
+    for provider in providers:
+        item = _get_provider_config(str(provider))
+        if item is not None:
+            configured.append({"id": str(provider), "name": item["name"]})
+    return configured
 
 
-async def _resolve_provider_endpoints(provider_cfg: dict) -> dict:
-    """Resolve OIDC discovery metadata if configured."""
-    resolved = dict(provider_cfg)
-    discovery_url = resolved.get("discovery_url")
-    if discovery_url and (
-        not resolved.get("authorize_url")
-        or not resolved.get("token_url")
-        or not resolved.get("userinfo_url")
-    ):
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(discovery_url, headers={"Accept": "application/json"})
-            resp.raise_for_status()
-            meta = resp.json()
-        resolved.setdefault("authorize_url", meta.get("authorization_endpoint", ""))
-        resolved.setdefault("token_url", meta.get("token_endpoint", ""))
-        resolved.setdefault("userinfo_url", meta.get("userinfo_endpoint", ""))
-    return resolved
+async def _resolve_provider_endpoints(provider_cfg: dict[str, Any]) -> dict[str, Any]:
+    """Resolve and validate endpoints exclusively from the configured issuer."""
+    metadata = await discover(provider_cfg)
+    return {**provider_cfg, **metadata, "_oidc_metadata": metadata}
 
 
 def _pkce_challenge(verifier: str) -> str:
@@ -133,179 +122,259 @@ def _pkce_challenge(verifier: str) -> str:
 def _normalize_username(candidate: str) -> str:
     candidate = re.sub(r"[^a-zA-Z0-9._-]+", "-", candidate.strip().lower()).strip("-._")
     candidate = candidate[:32] or "user"
-    if not is_valid_username(candidate):
-        return "user"
-    return candidate
+    return candidate if is_valid_username(candidate) else "user"
 
 
-# ---------------------------------------------------------------------------
-# §11 /auth/sso/{provider} – Redirect zu IdP
-# ---------------------------------------------------------------------------
+def _callback_url(provider: str) -> str:
+    base_url = get_settings().web.base_url.rstrip("/")
+    return f"{base_url}/auth/sso/{provider}/callback"
 
 
 @sso_bp.get("/<provider>")
-async def sso_begin(provider: str) -> tuple:
+async def sso_begin(provider: str) -> Any:
     provider_cfg = _get_provider_config(provider)
-    if not provider_cfg:
+    if provider_cfg is None:
         abort(404)
-
-    provider_cfg = await _resolve_provider_endpoints(provider_cfg)
-    if not provider_cfg.get("authorize_url"):
-        abort(500, "SSO provider is missing authorize_url")
+    try:
+        resolved = await _resolve_provider_endpoints(provider_cfg)
+    except OIDCError:
+        log.warning("OIDC discovery failed for configured provider %s", provider)
+        abort(502, "SSO provider discovery failed")
 
     state = secrets.token_urlsafe(32)
-    session["sso_state"] = state
-    session["sso_provider"] = provider
-
-    cfg = get_settings()
-    callback_url = f"{cfg.web.base_url.rstrip('/')}/auth/sso/{provider}/callback"
-
-    params = {
-        "client_id": provider_cfg["client_id"],
-        "redirect_uri": callback_url,
-        "scope": " ".join(provider_cfg.get("scopes", [])),
-        "state": state,
-        "response_type": "code",
-    }
-    if provider_cfg.get("use_pkce", True):
-        verifier = secrets.token_urlsafe(48)
-        session["sso_code_verifier"] = verifier
-        params["code_challenge"] = _pkce_challenge(verifier)
-        params["code_challenge_method"] = "S256"
-
-    url = provider_cfg["authorize_url"] + "?" + urlencode(params)
-    return redirect(url), 302
-
-
-# ---------------------------------------------------------------------------
-# §11 /auth/sso/{provider}/callback
-# ---------------------------------------------------------------------------
+    nonce = secrets.token_urlsafe(32)
+    verifier = secrets.token_urlsafe(48)
+    browser_binding = secrets.token_urlsafe(32)
+    callback_url = _callback_url(provider)
+    async for db in get_db_session():
+        await create_pending(
+            db,
+            purpose="oidc_login",
+            user_id=None,
+            ttl_seconds=_FLOW_TTL_SECONDS,
+            challenge=hashlib.sha256(state.encode()).digest(),
+            context={
+                "provider": provider,
+                "issuer": provider_cfg.get("issuer", resolved.get("issuer", "")),
+                "nonce": nonce,
+                "verifier": verifier,
+                "browser_binding_hash": hashlib.sha256(browser_binding.encode()).hexdigest(),
+                "redirect_uri": callback_url,
+                "metadata": resolved["_oidc_metadata"],
+            },
+        )
+        await db.commit()
+        params = {
+            "client_id": provider_cfg["client_id"],
+            "redirect_uri": callback_url,
+            "scope": " ".join(provider_cfg["scopes"]),
+            "state": state,
+            "nonce": nonce,
+            "response_type": "code",
+            "code_challenge": _pkce_challenge(verifier),
+            "code_challenge_method": "S256",
+        }
+        response = redirect(str(resolved["authorization_endpoint"]) + "?" + urlencode(params))
+        response.set_cookie(
+            _FLOW_COOKIE,
+            browser_binding,
+            max_age=_FLOW_TTL_SECONDS,
+            path="/auth/sso/",
+            secure=get_settings().web.base_url.startswith("https://"),
+            httponly=True,
+            samesite="Lax",
+        )
+        return response
+    abort(500, "SSO flow could not be created")
 
 
 @sso_bp.get("/<provider>/callback")
-async def sso_callback(provider: str) -> tuple:
+async def sso_callback(provider: str) -> Any:
     provider_cfg = _get_provider_config(provider)
-    if not provider_cfg:
+    if provider_cfg is None:
         abort(404)
-    provider_cfg = await _resolve_provider_endpoints(provider_cfg)
-
     state = request.args.get("state", "")
-    if state != session.pop("sso_state", None):
-        abort(400, "invalid state")
-
     code = request.args.get("code", "")
-    if not code:
-        abort(400, "no code")
-
-    cfg = get_settings()
-    callback_url = f"{cfg.web.base_url.rstrip('/')}/auth/sso/{provider}/callback"
-
-    token_payload = {
-        "client_id": provider_cfg["client_id"],
-        "client_secret": provider_cfg.get("client_secret", ""),
-        "code": code,
-        "redirect_uri": callback_url,
-        "grant_type": "authorization_code",
-    }
-    code_verifier = session.pop("sso_code_verifier", None)
-    if code_verifier:
-        token_payload["code_verifier"] = code_verifier
-
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        token_resp = await client.post(
-            provider_cfg["token_url"],
-            data=token_payload,
-            headers={"Accept": "application/json"},
-        )
-        token_resp.raise_for_status()
-        token_data = token_resp.json()
-        access_token = token_data.get("access_token")
-        if not access_token:
-            abort(502, "SSO provider returned no access_token")
-
-        userinfo_url = provider_cfg.get("userinfo_url")
-        if not userinfo_url:
-            abort(500, "SSO provider is missing userinfo_url")
-
-        userinfo_resp = await client.get(
-            userinfo_url,
-            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
-        )
-        userinfo_resp.raise_for_status()
-        claims: dict = userinfo_resp.json()
-
-    role_mapping: dict = provider_cfg.get("role_mapping", {})
-    default_role = str(role_mapping.get("default", "viewer")).lower()
-    allowed_roles = {"viewer", "author", "editor", "moderator", "admin"}
-    internal_role = default_role if default_role in allowed_roles else "viewer"
-
-    username_claim = str(provider_cfg.get("username_claim", "preferred_username"))
-    email_claim = str(provider_cfg.get("email_claim", "email"))
-    display_name_claim = str(provider_cfg.get("display_name_claim", "name"))
-
-    email = str(claims.get(email_claim) or "").strip().lower() or None
-    raw_username = str(
-        claims.get(username_claim)
-        or claims.get("preferred_username")
-        or claims.get("nickname")
-        or (email.split("@")[0] if email else "")
-        or claims.get("sub")
-        or "user"
-    )
-    desired_username = _normalize_username(raw_username)
-    display_name = str(claims.get(display_name_claim) or raw_username or desired_username).strip()[:128]
+    if not state or len(state) > 256 or not code or len(code) > 4096:
+        abort(400, "invalid OIDC response")
+    browser_binding = request.cookies.get(_FLOW_COOKIE, "")
+    if not browser_binding:
+        abort(400, "OIDC browser flow binding missing")
 
     async for db in get_db_session():
-        from arborpress.models.user import AccountType, MFADevice, MFADeviceType, User, UserRole, WebAuthnCredential
+        from arborpress.models.user import AuthPending
 
-        user = None
-        if email and provider_cfg.get("auto_link_by_email", True):
-            result = await db.execute(select(User).where(func.lower(User.email) == email))
-            user = result.scalar_one_or_none()
+        state_hash = hashlib.sha256(state.encode()).digest()
+        pending = (await db.execute(select(AuthPending).where(
+            AuthPending.purpose == "oidc_login",
+            AuthPending.challenge == state_hash,
+        ))).scalar_one_or_none()
+        if pending is None or pending.challenge is None:
+            abort(400, "OIDC flow expired")
+        try:
+            flow = json.loads(pending.context or "{}")
+        except (TypeError, ValueError):
+            abort(400, "invalid OIDC flow")
+        if (
+            flow.get("provider") != provider
+            or flow.get("issuer") != provider_cfg["issuer"]
+            or flow.get("redirect_uri") != _callback_url(provider)
+            or not hmac.compare_digest(
+                str(flow.get("browser_binding_hash", "")),
+                hashlib.sha256(browser_binding.encode()).hexdigest(),
+            )
+            or not isinstance(flow.get("nonce"), str)
+            or not isinstance(flow.get("verifier"), str)
+            or not isinstance(flow.get("metadata"), dict)
+        ):
+            abort(400, "OIDC provider mismatch")
+        consumed = await consume_pending(
+            db, pending_id=pending.id, purpose="oidc_login"
+        )
+        if consumed is None:
+            abort(400, "OIDC flow already used")
+        await db.commit()
+
+        # The state is consumed before any network exchange: callbacks cannot replay.
+        metadata = flow["metadata"]
+        try:
+            token_form = {
+                "client_id": provider_cfg["client_id"],
+                "code": code,
+                "redirect_uri": flow["redirect_uri"],
+                "grant_type": "authorization_code",
+                "code_verifier": flow["verifier"],
+            }
+            token_auth: tuple[str, str] | None = None
+            client_secret = provider_cfg.get("client_secret")
+            if isinstance(client_secret, str) and client_secret:
+                supported_auth = metadata.get("token_endpoint_auth_methods_supported") or [
+                    "client_secret_basic"
+                ]
+                if "client_secret_basic" in supported_auth:
+                    token_auth = (provider_cfg["client_id"], client_secret)
+                elif "client_secret_post" in supported_auth:
+                    token_form["client_secret"] = client_secret
+                else:
+                    raise OIDCError("client_auth_method_unsupported")
+            token_data = await request_json(
+                endpoint_url(metadata, "token_endpoint"),
+                method="POST",
+                data=token_form,
+                auth=token_auth,
+            )
+            id_token = token_data.get("id_token")
+            access_token = token_data.get("access_token")
+            if not isinstance(id_token, str) or not isinstance(access_token, str):
+                raise OIDCError("id_token_required")
+            claims = await verify_id_token_from_provider(
+                id_token,
+                metadata=metadata,
+                issuer=provider_cfg["issuer"],
+                client_id=provider_cfg["client_id"],
+                nonce=flow["nonce"],
+            )
+            if metadata.get("userinfo_endpoint"):
+                userinfo = await request_json(
+                    endpoint_url(metadata, "userinfo_endpoint"),
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+                claims = merge_userinfo(claims, userinfo)
+        except OIDCError as exc:
+            log.warning("OIDC authentication rejected for provider %s (%s)", provider, str(exc))
+            abort(401, "SSO authentication failed")
+        except Exception as exc:
+            # Do not include exception messages: HTTP libraries may embed endpoint details.
+            log.warning(
+                "OIDC authentication failed for provider %s (%s)", provider, type(exc).__name__
+            )
+            abort(502, "SSO provider request failed")
+
+        from arborpress.models.user import (
+            AccountType,
+            ExternalIdentity,
+            MFADevice,
+            MFADeviceType,
+            User,
+            UserRole,
+            WebAuthnCredential,
+        )
+
+        issuer = str(claims["iss"])
+        subject = str(claims["sub"])
+        identity = (await db.execute(
+            select(ExternalIdentity).where(
+                ExternalIdentity.issuer == issuer, ExternalIdentity.subject == subject
+            )
+        )).scalar_one_or_none()
+        user = await db.get(User, identity.user_id) if identity else None
+        raw_username = str(
+            claims.get("preferred_username") or claims.get("nickname") or subject
+        )[:255]
+        username_base = _normalize_username(raw_username)
+        email_value = claims.get("email")
+        email = (
+            str(email_value).strip().lower()
+            if isinstance(email_value, str) and claims.get("email_verified") is True
+            else None
+        )
+        if email:
+            email = email[:254]
+        display_value = claims.get("name")
+        display_name = str(display_value).strip()[:128] if isinstance(display_value, str) else ""
 
         if user is None:
-            result = await db.execute(select(User).where(func.lower(User.username) == desired_username.lower()))
-            user = result.scalar_one_or_none()
-
-        if user is None:
-            if not provider_cfg.get("auto_create", True):
-                abort(403, "SSO account not linked")
-
-            username = desired_username
-            idx = 1
-            while True:
-                result = await db.execute(select(User).where(func.lower(User.username) == username.lower()))
-                if result.scalar_one_or_none() is None:
-                    break
-                suffix = f"-{idx}"
-                username = f"{desired_username[: max(1, 32 - len(suffix))]}{suffix}"
-                idx += 1
-
-            account_type_raw = str(provider_cfg.get("account_type", "operational")).lower()
-            account_type = AccountType.OPERATIONAL if account_type_raw == "operational" else AccountType.PUBLIC
+            if not provider_cfg.get("auto_create", False):
+                abort(403, "SSO identity is not linked to an ArborPress account")
+            if email:
+                # A duplicate email is not a link signal; omit it from the new account.
+                email_exists = (await db.execute(
+                    select(User.id).where(func.lower(User.email) == email)
+                )).scalar_one_or_none()
+                if email_exists:
+                    email = None
+            username = username_base
+            suffix = 0
+            while (await db.execute(
+                select(User.id).where(func.lower(User.username) == username.lower())
+            )).scalar_one_or_none() is not None:
+                suffix += 1
+                ending = f"-{suffix}"
+                username = f"{username_base[:32-len(ending)]}{ending}"
             user = User(
                 username=username,
                 display_name=display_name or username,
                 email=email,
-                account_type=account_type,
-                role=UserRole(internal_role),
+                account_type=AccountType.OPERATIONAL,
+                role=UserRole.VIEWER,
                 is_active=True,
             )
             db.add(user)
             await db.flush()
-        else:
-            if not user.is_active or user.sso_disabled:
-                audit.warning("SSO denied | provider=%s user=%s", provider, getattr(user, "username", "?"))
-                abort(403, "SSO disabled for this account")
+            identity = ExternalIdentity(
+                user_id=str(user.id),
+                provider_id=provider,
+                issuer=issuer,
+                subject=subject,
+                profile=json.dumps(
+                    {"name": display_name[:128], "preferred_username": raw_username[:128]},
+                    separators=(",", ":"),
+                ),
+            )
+            db.add(identity)
+        elif not user.is_active or user.sso_disabled:
+            audit.warning("OIDC login denied | provider=%s", provider)
+            abort(403, "SSO disabled for this account")
 
-            if email and not user.email:
-                user.email = email
-            if display_name and not user.display_name:
-                user.display_name = display_name
+        if not user.is_active or user.sso_disabled:
+            abort(403, "SSO disabled for this account")
+        if identity is None:
+            abort(500, "OIDC identity could not be persisted")
 
-        from arborpress.auth.sessions import create_user_session
+        cfg = get_settings()
         from arborpress.auth.policy import requires_second_factor
         from arborpress.core.site_settings import get_webauthn_settings
+
         wa_settings = await get_webauthn_settings(db)
         webauthn_count = (await db.execute(select(func.count()).select_from(
             WebAuthnCredential
@@ -314,63 +383,61 @@ async def sso_callback(provider: str) -> tuple:
             WebAuthnCredential.uv_capable.is_not(False),
             WebAuthnCredential.verification_status != "recovery_pending",
         ))).scalar_one() or 0
-        totp_count = (await db.execute(select(func.count()).select_from(
-            MFADevice
-        ).where(
+        totp_count = (await db.execute(select(func.count()).select_from(MFADevice).where(
             MFADevice.user_id == str(user.id),
             MFADevice.device_type == MFADeviceType.TOTP,
             MFADevice.is_active.is_(True),
             MFADevice.verification_status.in_(("verified", "unknown")),
         ))).scalar_one() or 0
-        available_factors = set()
-        if webauthn_count:
-            available_factors.add("webauthn")
-        if totp_count:
-            available_factors.add("totp")
-        require_second_factor = requires_second_factor(
-            user, "sso", available_factors,
-            auth_settings=cfg.auth, webauthn_settings=wa_settings,
-        )
-        if require_second_factor:
-            if not available_factors:
+        factors = ({"webauthn"} if webauthn_count else set()) | ({"totp"} if totp_count else set())
+        if requires_second_factor(
+            user, "sso", factors, auth_settings=cfg.auth, webauthn_settings=wa_settings
+        ):
+            if not factors:
                 abort(403, "This account requires an enrolled MFA factor before SSO login")
-            from arborpress.auth.pending import create_pending
-            pending = await create_pending(
-                db, purpose="sso_mfa", user_id=str(user.id),
+            from arborpress.auth.pending import create_pending as create_mfa_pending
+
+            pending_mfa = await create_mfa_pending(
+                db,
+                purpose="sso_mfa",
+                user_id=str(user.id),
                 ttl_seconds=int(wa_settings.get("challenge_ttl_seconds", 300)),
                 context={
                     "methods": [
-                        *(["webauthn"] if webauthn_count else []),
-                        *(["totp"] if totp_count else []),
+                        *( ["webauthn"] if webauthn_count else []),
+                        *( ["totp"] if totp_count else []),
                     ],
                     "auth_method": f"sso:{provider}",
                     "provider": provider,
+                    "external_identity_id": identity.id,
                 },
             )
             session.clear()
-            session["sso_mfa_pending_id"] = pending.id
+            session["sso_mfa_pending_id"] = pending_mfa.id
             await db.commit()
             return redirect(url_for("auth.mfa_page"))
 
-        await create_user_session(
-            db, user, auth_method=f"sso:{provider}", assurance_level="sso"
-        )
+        from arborpress.auth.sessions import create_user_session
+
+        await mark_identity_login(db, str(identity.id), str(user.id))
+        await create_user_session(db, user, auth_method=f"sso:{provider}", assurance_level="sso")
         await write_audit_event(
-            event_type="login_success", outcome="success",
-            actor_id=str(user.id), actor_name=user.username, target_id=str(user.id),
-            detail=f"method=sso:{provider} assurance=sso", ip=request.remote_addr,
-            user_agent=request.headers.get("User-Agent"), db=db,
+            event_type="login_success",
+            outcome="success",
+            actor_id=str(user.id),
+            actor_name=user.username,
+            target_id=str(user.id),
+            detail=f"method=sso:{provider} assurance=sso",
+            ip=request.remote_addr,
+            user_agent=request.headers.get("User-Agent"),
+            db=db,
         )
         await db.commit()
-
-        audit.info(
-            "SSO login successful | provider=%s user=%s role=%s",
-            provider,
-            user.username,
-            user.role.value,
+        audit.info("OIDC login successful | provider=%s user_id=%s", provider, user.id)
+        target = (
+            url_for("admin.dashboard")
+            if user.role.value in {"author", "editor", "moderator", "admin"}
+            else url_for("public.index")
         )
-
-        target = url_for("admin.dashboard") if user.role.value in {"author", "editor", "moderator", "admin"} else url_for("public.index")
         return redirect(target)
-
-    abort(500, "SSO login failed")
+    abort(500, "OIDC login failed")

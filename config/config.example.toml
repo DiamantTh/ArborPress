@@ -111,18 +111,19 @@ auth_rate_limit         = "10/minute"
 # ---------------------------------------------------------------------------
 # SSO / OIDC (optional – ideal for kleine Teams hinter Reverse Proxy)
 # ---------------------------------------------------------------------------
-# Beispiel mit OpenID Connect Discovery:
+# Example using OpenID Connect Discovery. Keep client_secret in an included
+# secrets.toml file. The issuer must be a public HTTPS OIDC issuer.
 # [sso.providers.company_sso]
+# enabled        = true
 # name           = "Firmen-Login"
+# issuer         = "https://sso.example.com"
 # client_id      = "arborpress"
 # client_secret  = "BITTE_AUS_SECRET_DATEI"
 # discovery_url  = "https://sso.example.com/.well-known/openid-configuration"
 # scopes         = ["openid", "profile", "email"]
-# account_type   = "operational"   # neue Team-Konten standardmäßig intern
-# auto_create    = true
-# auto_link_by_email = true
-# [sso.providers.company_sso.role_mapping]
-# default        = "viewer"        # Rechte später gezielt in ArborPress erhöhen
+# auto_create    = false            # opt in; new accounts receive viewer only
+# Legacy auto_link_by_email and role_mapping settings are ignored. Existing
+# ArborPress accounts require explicit linking (planned for Phase 11B).
 
 # ---------------------------------------------------------------------------
 # Logging
