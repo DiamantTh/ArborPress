@@ -189,6 +189,9 @@ provider page; provider records and encrypted client secrets are stored in the
 instance database. Issuers cannot be changed while identities remain linked.
 OIDC diagnostics are daily UTC counts by bounded failure class, retained for 30 days.
 See [OIDC operations](docs/oidc-operations.md) for provider recovery and secret handling.
+ArborPress can also act as an OAuth 2.0 / OpenID Connect provider; it is disabled
+by default and managed at Admin → OAuth Server. See
+[OAuth/OIDC provider operations](docs/oauth-authorization-server.md).
 
 CLI helpers:
 

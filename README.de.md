@@ -177,6 +177,9 @@ solange Identitäten damit verknüpft sind. OIDC-Diagnosen speichern nur täglic
 UTC-Zähler begrenzter Fehlerklassen und werden nach 30 Tagen gelöscht.
 Weitere Hinweise zu Wiederherstellung und Secret-Verwaltung stehen in
 [OIDC-Betriebsabläufe](docs/oidc-operations.md).
+ArborPress kann außerdem als OAuth-2.0-/OpenID-Connect-Provider dienen; diese
+Funktion ist standardmäßig deaktiviert und wird unter Admin → OAuth Server
+verwaltet. Siehe [OAuth-/OIDC-Provider](docs/oauth-authorization-server.md).
 
 CLI-Helfer:
 

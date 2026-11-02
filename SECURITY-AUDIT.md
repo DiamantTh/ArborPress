@@ -451,7 +451,10 @@ aktiv genutzt wird oder ein Sicherheitsgrund vorliegt.
   codes in the callback query must be redacted by any separately managed reverse-proxy
   access log. Provider client-secret decryption depends on preserving `web.secret_key`.
 
-- [ ] **OAuth2/OIDC-Server** (ArborPress as provider and API authorization server; Phase 11C)
+- [x] **OAuth2/OIDC-Server** – opt-in Authorization Code + PKCE provider, exact redirect
+  matching, consent, hashed opaque tokens, rotating refresh families, stable subjects,
+  separate encrypted OIDC signing keys, and scoped public API reads; see
+  `docs/oauth-authorization-server.md`. The resource API remains intentionally minimal.
   - Effort: 12h, **Impact**: LOW
 
 - [ ] **Penetration Test** (Extern, 1–2 Tage)
