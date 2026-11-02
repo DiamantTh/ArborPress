@@ -25,12 +25,12 @@ function installMfa(root: HTMLElement): void {
           'Die zweite Authentifizierung konnte nicht gestartet werden.',
         )
         const credential = await startAuthentication(parseAuthenticationOptions(options))
-        await postAuthJson(
+        const result = await postAuthJson(
           '/auth/mfa/webauthn/complete',
           credential,
           'Die zweite Authentifizierung ist fehlgeschlagen.',
         )
-        window.location.assign(successUrl)
+        window.location.assign(typeof result.next === 'string' ? result.next : successUrl)
       } catch (caught: unknown) {
         if (error) showError(error, caught, 'Die zweite Authentifizierung ist fehlgeschlagen.')
       } finally {
@@ -51,12 +51,12 @@ function installMfa(root: HTMLElement): void {
         submit.disabled = true
         if (error) error.hidden = true
         try {
-          await postAuthJson(
+          const result = await postAuthJson(
             '/auth/mfa/totp/complete',
             { code: codeInput.value.trim() },
             'Der Authenticator-Code wurde nicht akzeptiert.',
           )
-          window.location.assign(successUrl)
+          window.location.assign(typeof result.next === 'string' ? result.next : successUrl)
         } catch (caught: unknown) {
           if (error) showError(error, caught, 'Der Authenticator-Code wurde nicht akzeptiert.')
           codeInput.focus()

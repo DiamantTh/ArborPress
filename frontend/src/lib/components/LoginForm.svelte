@@ -50,8 +50,9 @@
           throw await getResponseError(completeResponse, 'Anmeldung fehlgeschlagen.')
         }
 
+        const result = await completeResponse.json() as { next?: string }
         status = 'Erfolgreich angemeldet. Weiterleitung …'
-        window.location.assign(loginRoot.dataset.successUrl || '/admin')
+        window.location.assign(result.next || loginRoot.dataset.successUrl || '/admin')
       } catch (caught: unknown) {
         error = caught instanceof Error ? caught.message : 'Anmeldung fehlgeschlagen.'
         status = ''

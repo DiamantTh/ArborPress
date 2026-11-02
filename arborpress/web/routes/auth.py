@@ -1093,7 +1093,9 @@ async def login_complete():
     from arborpress.core.events import emit
     await emit("auth.login_success", user_id=str(user.id))
 
-    return jsonify({"status": "ok", "user": user.username}), 200
+    return jsonify(
+        {"status": "ok", "user": user.username, "next": session.get("oauth_resume")}
+    ), 200
 
 
 async def emit_fail(user_id: object) -> None:
@@ -1268,7 +1270,9 @@ async def login_mfa_webauthn_complete():
             detail=f"method={auth_method} assurance=multi_factor_uv", db=db,
         )
         await db.commit()
-        return jsonify({"status": "ok", "user": user.username}), 200
+        return jsonify(
+            {"status": "ok", "user": user.username, "next": session.get("oauth_resume")}
+        ), 200
 
 
 @auth_bp.post("/mfa/totp/complete")
@@ -1355,7 +1359,9 @@ async def login_mfa_totp_complete():
             detail=f"method={auth_method} assurance=multi_factor_totp", db=db,
         )
         await db.commit()
-        return jsonify({"status": "ok", "user": user.username}), 200
+        return jsonify(
+            {"status": "ok", "user": user.username, "next": session.get("oauth_resume")}
+        ), 200
 
 
 @auth_bp.post("/totp/begin")

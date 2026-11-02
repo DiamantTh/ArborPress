@@ -12,6 +12,12 @@
   {% endif %}
 
   <section>
+    <h2>{{ _('Autorisierte Apps') }}</h2>
+    <p>{{ _('OAuth-Anwendungen, denen Sie Zugriff erteilt haben. Widerruf beendet auch zugehörige Tokenfamilien.') }}</p>
+    <a class="btn" href="{{ url_for('oauth_provider.authorized_apps') }}">{{ _('Autorisierte Apps verwalten') }}</a>
+  </section>
+
+  <section>
     <h2>{{ _('Externe Anmeldungen (OIDC)') }}</h2>
     <p>{{ _('Externe Identitäten werden bewusst verknüpft. E-Mail-Adresse und Benutzername verbinden niemals automatisch Konten. Die letzte tatsächlich nutzbare Anmeldung oder Recovery-Methode kann nicht entfernt werden.') }}</p>
     {% for identity in external_identities %}

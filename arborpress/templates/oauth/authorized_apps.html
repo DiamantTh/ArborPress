@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ _('Autorisierte Apps') }}{% endblock %}
+{% set noindex = true %}
+{% block content %}
+<main class="auth-box auth-box--wide">
+  <h1>{{ _('Autorisierte Apps') }}</h1>
+  {% for grant, client in entries %}
+  <section class="security-item">
+    <h2>{{ client.name }}</h2>
+    <p>{{ _('Rechte') }}: {{ grant.scopes }}</p>
+    <form method="post" action="{{ url_for('oauth_provider.revoke_grant', grant_id=grant.id) }}">
+      {{ csrf_input() }}
+      <button class="btn" type="submit">{{ _('Zugriff widerrufen') }}</button>
+    </form>
+  </section>
+  {% else %}<p>{{ _('Sie haben keine Apps autorisiert.') }}</p>{% endfor %}
+</main>
+{% endblock %}

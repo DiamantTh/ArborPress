@@ -34,7 +34,7 @@ from quart import (
     url_for,
 )
 from quart.typing import ResponseReturnValue
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -233,6 +233,357 @@ async def _oidc_admin_stepup(operation: str = "manage_oidc_provider") -> str:
     except PermissionError:
         abort(403, "Step-up required")
     return actor_id
+
+
+@admin_bp.get("/oauth")
+async def oauth_server_admin() -> ResponseReturnValue:
+    _require_session()
+    require_role("admin")
+    from arborpress.core.config import get_settings
+    from arborpress.models.oidc import OAuthClient, OIDCServerSettings, OIDCSigningKey
+
+    async for db in get_db_session():
+        state = await db.get(OIDCServerSettings, 1)
+        clients = (await db.execute(select(OAuthClient).order_by(OAuthClient.name))).scalars().all()
+        keys = (
+            (await db.execute(select(OIDCSigningKey).order_by(OIDCSigningKey.created_at.desc())))
+            .scalars()
+            .all()
+        )
+        issuer_error = None
+        try:
+            from arborpress.auth.oauth_server import configured_issuer
+
+            issuer = configured_issuer()
+        except ValueError:
+            issuer = get_settings().web.base_url
+            issuer_error = "Issuer must be configured as an HTTPS canonical origin."
+        await db.commit()
+        return await render_template(
+            "admin/oauth_server.html",
+            state=state,
+            issuer=issuer,
+            issuer_error=issuer_error,
+            clients=clients,
+            keys=keys,
+            scopes=sorted(
+                __import__(
+                    "arborpress.auth.oauth_server", fromlist=["SUPPORTED_SCOPES"]
+                ).SUPPORTED_SCOPES
+            ),
+            noindex=True,
+        )
+    abort(500)
+
+
+@admin_bp.post("/oauth/server")
+async def oauth_server_toggle() -> ResponseReturnValue:
+    actor_id = await _oidc_admin_stepup("manage_oauth_client")
+    from arborpress.auth.oauth_server import OAuthError, configured_issuer, create_signing_key
+    from arborpress.models.oidc import OIDCServerSettings
+
+    async for db in get_db_session():
+        enable = (await request.form).get("enabled") == "on"
+        try:
+            issuer = configured_issuer()
+        except OAuthError:
+            if enable:
+                abort(
+                    400, "A canonical HTTPS base_url is required before enabling the OIDC provider."
+                )
+            issuer = ""
+        row = await db.get(OIDCServerSettings, 1, with_for_update=True)
+        if row is None:
+            if not issuer:
+                abort(409)
+            row = OIDCServerSettings(id=1, issuer=issuer, enabled=False)
+            db.add(row)
+        elif issuer and row.issuer != issuer:
+            abort(
+                409,
+                "OIDC issuer is immutable after initialization; restore canonical config.",
+            )
+        if enable:
+            await create_signing_key(db)
+        row.enabled = enable
+        await write_audit_event(
+            event_type="oidc_server_enabled" if enable else "oidc_server_disabled",
+            outcome="success",
+            actor_id=actor_id,
+            detail=f"issuer={issuer}; enabled={enable}",
+            db=db,
+        )
+        await db.commit()
+        return redirect(url_for("admin.oauth_server_admin"))
+    abort(500)
+
+
+@admin_bp.post("/oauth/clients")
+async def oauth_client_create() -> ResponseReturnValue:
+    actor_id = await _oidc_admin_stepup("manage_oauth_client")
+    import hashlib
+    import json
+    import secrets
+
+    from arborpress.auth.oauth_server import SUPPORTED_SCOPES, validate_redirects
+    from arborpress.models.oidc import OAuthClient
+
+    form = await request.form
+    name = str(form.get("name") or "").strip()
+    kind = str(form.get("client_type") or "public")
+    redirects = [
+        line.strip() for line in str(form.get("redirect_uris") or "").splitlines() if line.strip()
+    ]
+    scopes = sorted(set(str(form.get("scopes") or "").split()))
+    if (
+        not name
+        or len(name) > 128
+        or kind not in {"public", "confidential"}
+        or not scopes
+        or not set(scopes) <= SUPPORTED_SCOPES
+    ):
+        abort(400)
+    try:
+        redirects = validate_redirects(redirects)
+    except ValueError:
+        abort(400)
+    client_id = "ap_" + secrets.token_urlsafe(24)
+    raw_secret = secrets.token_urlsafe(40) if kind == "confidential" else None
+    digest = hashlib.sha256(raw_secret.encode()).hexdigest() if raw_secret else None
+    async for db in get_db_session():
+        client = OAuthClient(
+            client_id=client_id,
+            name=name,
+            client_type=kind,
+            secret_hash=digest,
+            redirect_uris=json.dumps(redirects),
+            allowed_scopes=json.dumps(scopes),
+            enabled=True,
+        )
+        db.add(client)
+        await write_audit_event(
+            event_type="oauth_client_created",
+            outcome="success",
+            actor_id=actor_id,
+            target_id=client_id,
+            detail=f"client_id={client_id}; type={kind}; scopes={','.join(scopes)}",
+            db=db,
+        )
+        await db.commit()
+        return await render_template(
+            "admin/oauth_client_created.html", client=client, client_secret=raw_secret, noindex=True
+        )
+    abort(500)
+
+
+@admin_bp.post("/oauth/clients/<client_id>/toggle")
+async def oauth_client_toggle(client_id: str) -> ResponseReturnValue:
+    actor_id = await _oidc_admin_stepup("manage_oauth_client")
+    from datetime import UTC, datetime
+
+    from arborpress.models.oidc import (
+        OAuthAuthorizationCode,
+        OAuthClient,
+        OAuthToken,
+        OAuthTokenFamily,
+    )
+
+    async for db in get_db_session():
+        client = await db.get(OAuthClient, client_id, with_for_update=True)
+        if client is None:
+            abort(404)
+        client.enabled = not client.enabled
+        if not client.enabled:
+            now = datetime.now(UTC).replace(tzinfo=None)
+            families = (
+                (
+                    await db.execute(
+                        select(OAuthTokenFamily).where(OAuthTokenFamily.client_id == client_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for family in families:
+                family.revoked_at = now
+                await db.execute(
+                    update(OAuthToken)
+                    .where(OAuthToken.family_id == family.id)
+                    .values(revoked_at=now)
+                )
+            await db.execute(
+                update(OAuthAuthorizationCode)
+                .where(OAuthAuthorizationCode.client_id == client_id)
+                .values(consumed_at=now)
+            )
+        await write_audit_event(
+            event_type="oauth_client_changed",
+            outcome="success",
+            actor_id=actor_id,
+            target_id=client_id,
+            detail=f"client_id={client_id}; enabled={client.enabled}",
+            db=db,
+        )
+        await db.commit()
+        return redirect(url_for("admin.oauth_server_admin"))
+    abort(500)
+
+
+@admin_bp.post("/oauth/clients/<client_id>")
+async def oauth_client_edit(client_id: str) -> ResponseReturnValue:
+    actor_id = await _oidc_admin_stepup("manage_oauth_client")
+    import json
+
+    from arborpress.auth.oauth_server import SUPPORTED_SCOPES, validate_redirects
+    from arborpress.models.oidc import (
+        OAuthAuthorizationCode,
+        OAuthClient,
+        OAuthGrant,
+        OAuthToken,
+        OAuthTokenFamily,
+    )
+
+    form = await request.form
+    name = str(form.get("name") or "").strip()
+    redirects = [
+        line.strip() for line in str(form.get("redirect_uris") or "").splitlines() if line.strip()
+    ]
+    scopes = sorted(set(str(form.get("scopes") or "").split()))
+    if not name or len(name) > 128 or not scopes or not set(scopes) <= SUPPORTED_SCOPES:
+        abort(400)
+    try:
+        redirects = validate_redirects(redirects)
+    except ValueError:
+        abort(400)
+    async for db in get_db_session():
+        client = await db.get(OAuthClient, client_id, with_for_update=True)
+        if client is None:
+            abort(404)
+        client.name = name
+        client.redirect_uris = json.dumps(redirects)
+        client.allowed_scopes = json.dumps(scopes)
+        grants = (
+            (
+                await db.execute(
+                    select(OAuthGrant).where(
+                        OAuthGrant.client_id == client_id, OAuthGrant.revoked_at.is_(None)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for grant in grants:
+            # A registered scope reduction immediately drops excess consent and
+            # invalidates tokens carrying rights no longer approved by policy.
+            prior = set(grant.scopes.split())
+            grant.scopes = " ".join(sorted(prior & set(scopes)))
+        families = (
+            (
+                await db.execute(
+                    select(OAuthTokenFamily).where(OAuthTokenFamily.client_id == client_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        now = datetime.now(UTC).replace(tzinfo=None)
+        for family in families:
+            family.revoked_at = now
+            await db.execute(
+                update(OAuthToken).where(OAuthToken.family_id == family.id).values(revoked_at=now)
+            )
+        await db.execute(
+            update(OAuthAuthorizationCode)
+            .where(OAuthAuthorizationCode.client_id == client_id)
+            .values(consumed_at=now)
+        )
+        await write_audit_event(
+            event_type="oauth_client_changed",
+            outcome="success",
+            actor_id=actor_id,
+            target_id=client_id,
+            detail=f"client_id={client_id}; redirects/scopes updated",
+            db=db,
+        )
+        await db.commit()
+        return redirect(url_for("admin.oauth_server_admin"))
+    abort(500)
+
+
+@admin_bp.post("/oauth/clients/<client_id>/secret")
+async def oauth_client_secret_rotate(client_id: str) -> ResponseReturnValue:
+    actor_id = await _oidc_admin_stepup("rotate_oidc_client_secret")
+    import hashlib
+    import secrets
+
+    from arborpress.models.oidc import (
+        OAuthAuthorizationCode,
+        OAuthClient,
+        OAuthToken,
+        OAuthTokenFamily,
+    )
+
+    secret = secrets.token_urlsafe(40)
+    async for db in get_db_session():
+        client = await db.get(OAuthClient, client_id, with_for_update=True)
+        if client is None or client.client_type != "confidential":
+            abort(404)
+        client.secret_hash = hashlib.sha256(secret.encode()).hexdigest()
+        now = datetime.now(UTC).replace(tzinfo=None)
+        families = (
+            (
+                await db.execute(
+                    select(OAuthTokenFamily).where(OAuthTokenFamily.client_id == client_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for family in families:
+            family.revoked_at = now
+            await db.execute(
+                update(OAuthToken).where(OAuthToken.family_id == family.id).values(revoked_at=now)
+            )
+        await db.execute(
+            update(OAuthAuthorizationCode)
+            .where(OAuthAuthorizationCode.client_id == client_id)
+            .values(consumed_at=now)
+        )
+        await write_audit_event(
+            event_type="oauth_client_secret_rotated",
+            outcome="success",
+            actor_id=actor_id,
+            target_id=client_id,
+            detail=f"client_id={client_id}; secret value omitted",
+            db=db,
+        )
+        await db.commit()
+        return await render_template(
+            "admin/oauth_client_created.html", client=client, client_secret=secret, noindex=True
+        )
+    abort(500)
+
+
+@admin_bp.post("/oauth/signing-key/rotate")
+async def oauth_signing_key_rotate() -> ResponseReturnValue:
+    actor_id = await _oidc_admin_stepup("rotate_oidc_signing_key")
+    from arborpress.auth.oauth_server import create_signing_key
+
+    async for db in get_db_session():
+        key = await create_signing_key(db, rotate=True)
+        await write_audit_event(
+            event_type="oidc_signing_key_rotated",
+            outcome="success",
+            actor_id=actor_id,
+            target_id=key.kid,
+            detail=f"kid={key.kid}; algorithm=RS256",
+            db=db,
+        )
+        await db.commit()
+        return redirect(url_for("admin.oauth_server_admin"))
+    abort(500)
+
 
 
 @admin_bp.get("/oidc/providers")

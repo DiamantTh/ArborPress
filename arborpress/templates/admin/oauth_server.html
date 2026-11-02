@@ -1,0 +1,45 @@
+{% extends "admin/_base.html" %}
+{% block title %}OAuth / OpenID Provider{% endblock %}
+{% block admin_content %}
+<h1>OAuth 2.0 / OpenID Connect Provider</h1>
+<p>Canonical issuer: <code>{{ issuer }}</code></p>
+{% if issuer_error %}<p class="flash--error">{{ issuer_error }}</p>{% endif %}
+<p>Status: <strong>{{ 'enabled' if state and state.enabled else 'disabled' }}</strong></p>
+<form method="post" action="{{ url_for('admin.oauth_server_toggle') }}" data-stepup-action="manage_oauth_client" data-stepup-target="instance">
+  {{ csrf_input() }}
+  <label><input type="checkbox" name="enabled" {% if state and state.enabled %}checked{% endif %}> Enable authorization server</label>
+  <button class="btn btn--primary" type="submit">Save server state</button>
+</form>
+<h2>Signing keys</h2>
+<ul>{% for key in keys %}<li>{{ key.kid }} — {{ 'current' if key.is_current else 'retained until ' ~ key.retire_after }}</li>{% else %}<li>No key created.</li>{% endfor %}</ul>
+<form method="post" action="{{ url_for('admin.oauth_signing_key_rotate') }}" data-stepup-action="rotate_oidc_signing_key" data-stepup-target="instance">
+  {{ csrf_input() }}<button class="btn stepup-redirect" type="submit">Rotate OIDC signing key</button>
+</form>
+<h2>Clients</h2>
+{% for client in clients %}
+<section class="security-item">
+  <h3>{{ client.name }} <small>{{ client.client_type }} · {{ client.client_id }}</small></h3>
+  <p>Redirect URIs: <code>{{ client.redirect_uris }}</code></p>
+  <p>Allowed scopes: <code>{{ client.allowed_scopes }}</code></p>
+  <p>Status: {{ 'enabled' if client.enabled else 'disabled' }}</p>
+  <form method="post" action="{{ url_for('admin.oauth_client_edit', client_id=client.client_id) }}" data-stepup-action="manage_oauth_client" data-stepup-target="instance">
+    {{ csrf_input() }}
+    <label>Name <input name="name" value="{{ client.name }}" maxlength="128" required></label>
+    <label>Redirect URIs, one exact URI per line <textarea name="redirect_uris" required>{{ client.redirect_uris|from_json|join('\n') }}</textarea></label>
+    <label>Allowed scopes <input name="scopes" value="{{ client.allowed_scopes|from_json|join(' ') }}" required></label>
+    <button class="btn" type="submit">Save client</button>
+  </form>
+  <form method="post" action="{{ url_for('admin.oauth_client_toggle', client_id=client.client_id) }}" data-stepup-action="manage_oauth_client" data-stepup-target="instance">{{ csrf_input() }}<button class="btn" type="submit">{{ 'Disable' if client.enabled else 'Enable' }}</button></form>
+  {% if client.client_type == 'confidential' %}<form method="post" action="{{ url_for('admin.oauth_client_secret_rotate', client_id=client.client_id) }}" data-stepup-action="rotate_oidc_client_secret" data-stepup-target="instance">{{ csrf_input() }}<button class="btn" type="submit">Rotate client secret</button></form>{% endif %}
+</section>
+{% endfor %}
+<h2>Register client</h2>
+<form method="post" action="{{ url_for('admin.oauth_client_create') }}" data-stepup-action="manage_oauth_client" data-stepup-target="instance">
+  {{ csrf_input() }}
+  <label>Name <input name="name" maxlength="128" required></label>
+  <label>Type <select name="client_type"><option value="public">Public (PKCE)</option><option value="confidential">Confidential</option></select></label>
+  <label>Redirect URIs, one exact URI per line <textarea name="redirect_uris" required></textarea></label>
+  <label>Allowed scopes <input name="scopes" value="openid profile posts:read" required></label>
+  <button class="btn btn--primary" type="submit">Create client</button>
+</form>
+{% endblock %}

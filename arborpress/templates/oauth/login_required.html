@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ _('Anmeldung erforderlich') }}{% endblock %}
+{% set noindex = true %}
+{% block content %}
+<main class="auth-box">
+  <h1>{{ _('Anmeldung erforderlich') }}</h1>
+  <p>{{ _('Melden Sie sich bei ArborPress an und starten Sie anschließend die Autorisierung erneut in der Anwendung.') }}</p>
+  <a class="btn btn--primary" href="{{ login_url }}">{{ _('Bei ArborPress anmelden') }}</a>
+</main>
+{% endblock %}

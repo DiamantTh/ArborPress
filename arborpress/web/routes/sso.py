@@ -531,7 +531,14 @@ async def sso_callback(provider: str) -> Any:
                     "external_identity_id": identity.id,
                 },
             )
+            oauth_resume = session.get("oauth_resume")
             session.clear()
+            if (
+                isinstance(oauth_resume, str)
+                and oauth_resume.startswith("/oauth/authorize?")
+                and len(oauth_resume) <= 2048
+            ):
+                session["oauth_resume"] = oauth_resume
             session["sso_mfa_pending_id"] = pending_mfa.id
             await db.commit()
             return redirect(url_for("auth.mfa_page"))
@@ -553,6 +560,9 @@ async def sso_callback(provider: str) -> Any:
         )
         await db.commit()
         audit.info("OIDC login successful | provider=%s user_id=%s", provider, user.id)
+        oauth_resume = session.pop("oauth_resume", None)
+        if isinstance(oauth_resume, str) and oauth_resume.startswith("/oauth/authorize?"):
+            return redirect(oauth_resume)
         target = (
             url_for("admin.dashboard")
             if user.role.value in {"author", "editor", "moderator", "admin"}

@@ -129,6 +129,12 @@ auth_rate_limit         = "10/minute"
 # auto_link_by_email and remote role mappings are ignored. Existing ArborPress
 # accounts require explicit linking from Account Security after local step-up.
 
+# OAuth2 / OpenID Connect provider (Phase 11C).
+# The issuer is exactly [web].base_url, must be HTTPS, and is never inferred
+# from request headers. The provider remains disabled until enabled from the
+# step-up-protected Admin → OAuth Server page. Do not change base_url after the
+# server has issued stable OIDC subjects or client grants.
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------

@@ -78,6 +78,7 @@ async def create_user_session(
     db.add(db_session)
     await db.flush()
 
+    oauth_resume = session.get("oauth_resume")
     session.clear()
     session["user_id"] = str(user.id)
     session["user_name"] = user.username
@@ -87,6 +88,12 @@ async def create_user_session(
     session["assurance_level"] = assurance_level[:32]
     session["recovery_only"] = bool(recovery_only)
     session["session_id"] = db_session.id
+    if (
+        isinstance(oauth_resume, str)
+        and oauth_resume.startswith("/oauth/authorize?")
+        and len(oauth_resume) <= 2048
+    ):
+        session["oauth_resume"] = oauth_resume
     if recovery_only:
         session["recovery_purpose"] = RECOVERY_PURPOSE
     return db_session

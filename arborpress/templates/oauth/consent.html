@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ _('Anwendungsfreigabe') }}{% endblock %}
+{% set noindex = true %}
+{% block content %}
+<main class="auth-box">
+  <h1>{{ _('Anwendungsfreigabe') }}</h1>
+  <p><strong>{{ client.name }}</strong> {{ _('möchte auf Ihr ArborPress-Konto zugreifen.') }}</p>
+  <h2>{{ _('Angeforderte Rechte') }}</h2>
+  <ul>{% for scope in scopes %}<li><code>{{ scope }}</code></li>{% endfor %}</ul>
+  <form method="post" action="{{ url_for('oauth_provider.consent') }}">
+    {{ csrf_input() }}
+    <input type="hidden" name="request_id" value="{{ request_id }}">
+    <button class="btn btn--primary" name="decision" value="approve">{{ _('Zustimmen') }}</button>
+    <button class="btn" name="decision" value="deny">{{ _('Ablehnen') }}</button>
+  </form>
+</main>
+{% endblock %}

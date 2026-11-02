@@ -1,0 +1,8 @@
+{% extends "admin/_base.html" %}
+{% block title %}OAuth client created{% endblock %}
+{% block admin_content %}
+<h1>{{ client.name }}</h1>
+<p>Client ID: <code>{{ client.client_id }}</code></p>
+{% if client_secret %}<p role="alert">Copy this secret now. It is shown once and cannot be retrieved later.</p><pre>{{ client_secret }}</pre>{% else %}<p>Public clients do not have a client secret.</p>{% endif %}
+<a class="btn" href="{{ url_for('admin.oauth_server_admin') }}">Back</a>
+{% endblock %}

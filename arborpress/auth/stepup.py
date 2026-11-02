@@ -51,6 +51,8 @@ STEPUP_POLICIES: dict[str, str] = {
     "unlink_external_identity": "target",
     "manage_oidc_provider": "instance",
     "rotate_oidc_client_secret": "instance",
+    "manage_oauth_client": "instance",
+    "rotate_oidc_signing_key": "instance",
 }
 STEPUP_REQUIRED_OPERATIONS = frozenset(STEPUP_POLICIES)
 
