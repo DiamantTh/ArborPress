@@ -527,6 +527,22 @@ files = [
 ]
 
 [[package]]
+name = "authlib"
+version = "1.9.2"
+description = "The ultimate Python library in building OAuth and OpenID Connect servers and clients."
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "authlib-1.9.2-py2.py3-none-any.whl", hash = "sha256:4a39f59fa7b94160859cc447514caf199e133b7ca64a351fb4065bf5006d5a40"},
+    {file = "authlib-1.9.2.tar.gz", hash = "sha256:83271024b7d3b9992f0d928abd87c5f6e89cfb5aaada294972b860aa807ddafc"},
+]
+
+[package.dependencies]
+cryptography = ">=45.0.1"
+joserfc = ">=1.6.8"
+
+[[package]]
 name = "babel"
 version = "2.18.0"
 description = "Internationalization utilities"
@@ -1867,6 +1883,24 @@ MarkupSafe = ">=2.0"
 
 [package.extras]
 i18n = ["Babel (>=2.7)"]
+
+[[package]]
+name = "joserfc"
+version = "1.7.7"
+description = "The ultimate Python library for JOSE RFCs, including JWS, JWE, JWK, JWA, JWT"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "joserfc-1.7.7-py3-none-any.whl", hash = "sha256:06979cfbab78bc802f14c0358f32969826cc26720e13cb38926ffdc86bc0cb2c"},
+    {file = "joserfc-1.7.7.tar.gz", hash = "sha256:471d0fd12a5a0d1c0942de280f39efe6f597878315033270b504d4d006d25510"},
+]
+
+[package.dependencies]
+cryptography = ">=45.0.1"
+
+[package.extras]
+drafts = ["pycryptodome"]
 
 [[package]]
 name = "librt"
@@ -4262,4 +4296,4 @@ wysiwyg = ["markdownify"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.14"
-content-hash = "6554905597cdfa3c47134c00b7942fb9544a805138501c146f7fc574ddc27348"
+content-hash = "6060fc7b1c48f54585aca271f383634f863bd2290f62a87a80bca11335f273cd"

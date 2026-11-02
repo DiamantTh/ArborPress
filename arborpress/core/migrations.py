@@ -304,38 +304,7 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
     inspector = sa.inspect(connection)
     expected = {table.name for table in Base.metadata.sorted_tables}
     actual = _table_names(inspector)
-    if actual != expected - {
-        "comment_revisions",
-        "comment_votes",
-        "moderation_decisions",
-        "comment_moderation_appeals",
-        "post_author_relations",
-        "object_relations",
-        "plugin_storage_entries",
-        "plugin_jobs",
-        "smtp_profiles",
-        "notification_events",
-        "notification_channel_preferences",
-        "notification_ws_tickets",
-        "web_push_subscriptions",
-        "web_push_deliveries",
-        "mail_template_overrides",
-        "mail_template_revisions",
-        "notification_type_preferences",
-        "local_federation_actors",
-        "remote_actors",
-        "remote_actor_keys",
-        "federation_inbox_activities",
-        "federation_outbox_activities",
-        "federation_deliveries",
-        "federation_domain_rules",
-        "federation_instance_identity",
-        "federation_actor_key_history",
-        "federation_signature_failure_daily",
-        "external_identities",
-        "oidc_providers",
-        "oidc_failure_daily",
-    }:
+    if actual - expected:
         return False
     allowed_columns = {
         "comments": {
@@ -409,6 +378,14 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "missing table external_identities",
             "missing table oidc_providers",
             "missing table oidc_failure_daily",
+            "missing table oidc_server_settings",
+            "missing table oauth_clients",
+            "missing table oauth_grants",
+            "missing table oauth_authorization_codes",
+            "missing table oauth_token_families",
+            "missing table oauth_tokens",
+            "missing table oidc_subjects",
+            "missing table oidc_signing_keys",
         }:
             continue
         if error == "unexpected column comments.confirmation_token":

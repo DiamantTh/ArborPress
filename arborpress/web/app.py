@@ -24,6 +24,7 @@ from arborpress.web.routes.federation import federation_bp, wellknown_bp
 from arborpress.web.routes.health import health_bp
 from arborpress.web.routes.install import install_bp
 from arborpress.web.routes.notifications import notifications_bp
+from arborpress.web.routes.oauth_provider import oauth_provider_bp
 from arborpress.web.routes.public import public_bp
 from arborpress.web.routes.sso import sso_bp
 from arborpress.web.security import SecurityHeadersMiddleware
@@ -424,6 +425,7 @@ def create_app() -> Quart:
     app.register_blueprint(auth_bp, url_prefix="/auth")
     # §11: SSO blueprint registered; individual routes return 404 if provider not configured
     app.register_blueprint(sso_bp, url_prefix="/auth/sso")
+    app.register_blueprint(oauth_provider_bp)
 
     # §5 Federation (Well-Known + ActivityPub)
     app.register_blueprint(wellknown_bp)

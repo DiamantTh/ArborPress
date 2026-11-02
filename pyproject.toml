@@ -59,6 +59,8 @@ dependencies = [
     "pydantic>=2.12,<3",
     "pydantic-settings>=2.13,<3",
     "packaging>=25.0,<27",
+    "authlib (==1.9.2)",
+    "joserfc (==1.7.7)",
 ]
 
 [project.optional-dependencies]
