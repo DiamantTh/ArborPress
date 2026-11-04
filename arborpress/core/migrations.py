@@ -386,6 +386,7 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "missing table oauth_tokens",
             "missing table oidc_subjects",
             "missing table oidc_signing_keys",
+            "missing table oauth_idempotency_keys",
         }:
             continue
         if error == "unexpected column comments.confirmation_token":

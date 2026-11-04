@@ -11,10 +11,10 @@ CSRF note (§8 / §10):
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import uuid as _uuid
+from typing import cast
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -26,6 +26,8 @@ from quart import (
     request,
     session,
 )
+from quart.typing import ResponseReturnValue
+from werkzeug.exceptions import HTTPException
 
 from arborpress.auth.roles import require_role
 from arborpress.core.config import get_settings
@@ -39,6 +41,27 @@ log = logging.getLogger("arborpress.web.api")
 
 api_v1_bp = Blueprint("api_v1", __name__, url_prefix="/api/v1")
 api_admin_bp = Blueprint("api_admin", __name__, url_prefix="/api/v1/admin")
+
+
+@api_v1_bp.errorhandler(HTTPException)
+@api_admin_bp.errorhandler(HTTPException)
+def _api_http_error(error: HTTPException) -> ResponseReturnValue:
+    status = error.code or 500
+    codes = {
+        400: ("invalid_request", "The request could not be processed."),
+        401: ("unauthorized", "Authentication is required."),
+        403: ("forbidden", "The requested operation is not permitted."),
+        404: ("not_found", "The requested resource was not found."),
+        409: ("conflict", "The request conflicts with the current resource state."),
+        413: ("request_too_large", "The request exceeds the allowed size."),
+        415: ("unsupported_media_type", "The media type is not supported."),
+        429: ("rate_limited", "Too many requests."),
+    }
+    code, message = codes.get(status, ("request_failed", "The request failed."))
+    response = jsonify(error={"code": code, "message": message})
+    response.status_code = status
+    response.headers["Cache-Control"] = "no-store"
+    return cast(ResponseReturnValue, response)
 
 
 # ---------------------------------------------------------------------------
@@ -577,7 +600,6 @@ async def admin_api_post_create():
     body_html = await render_md_async(body)
     short_id = _sec.token_urlsafe(6)[:8]  # 8-char URL-safe short ID
 
-    from datetime import UTC, datetime
 
     now = datetime.now(UTC)
 
@@ -916,98 +938,45 @@ _MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20 MiB
 
 @api_admin_bp.post("/media/upload")
 async def media_upload():
-    """Uploads a media file and stores it under {media_dir}/{yyyy}/{mm}/{filename}.
-
-    Form fields:
-      ``file``    – multipart/form-data file field
-      ``alt_text`` – optional alt text
-
-    Response: ``{"id", "url", "filename", "mime_type", "width", "height", "size_bytes"}``
-    """
+    """Upload a validated raster image through the shared Core media pipeline."""
     files = await request.files
     form = await request.form
     upload = files.get("file")
     if upload is None:
-        abort(400, "Kein Datei-Feld 'file' gefunden")
-
-    mime_type: str = upload.content_type or ""
-    mime_base = mime_type.split(";")[0].strip().lower()
-    if mime_base not in _ALLOWED_UPLOAD_TYPES:
-        abort(415, f"Dateityp nicht erlaubt: {mime_base!r}")
-
-    data: bytes = await upload.read(_MAX_UPLOAD_SIZE + 1)
-    if len(data) > _MAX_UPLOAD_SIZE:
-        abort(413, "File exceeds 20 MiB limit")
-
-    cfg = get_settings()
-    now = datetime.now(UTC)
-    yyyy = now.year
-    mm = now.month
-
-    import mimetypes as _mt
-
-    original_name = os.path.basename(upload.filename or "upload")
-    stem, ext = os.path.splitext(original_name)
-    if not ext:
-        guessed = _mt.guess_extension(mime_base) or ".bin"
-        ext = guessed
-
-    file_id = _uuid.uuid4().hex[:16]
-    safe_filename = f"{file_id}{ext}"
-    dest_dir = cfg.web.media_dir / str(yyyy) / f"{mm:02d}"
-    dest_path = dest_dir / safe_filename
-
-    # Dimensions via Pillow (raster images only)
-    width: int | None = None
-    height: int | None = None
-    if mime_base not in ("image/svg+xml",):
-        try:
-            from io import BytesIO
-
-            from PIL import Image
-
-            img = Image.open(BytesIO(data))
-            width, height = img.size
-        except Exception:
-            log.debug("Pillow konnte Bilddimensionen nicht lesen", exc_info=True)
-
-    # Datei asynchron schreiben
-    await asyncio.to_thread(_write_upload, dest_dir, dest_path, data)
-
-    # DB-Eintrag
-    storage_path = f"{yyyy}/{mm:02d}/{safe_filename}"
-    alt_text = (form.get("alt_text") or "").strip() or None
-
+        abort(400, "file is required")
     from arborpress.core.db import get_db_session
-    from arborpress.models.content import Media
+    from arborpress.media.service import MAX_MEDIA_BYTES, MediaUploadError, store_media_upload
 
-    media_obj = Media(
-        id=str(_uuid.uuid4()),
-        uploader_id=session.get("user_id"),  # type: ignore[attr-defined]
-        filename=safe_filename,
-        mime_type=mime_base,
-        size_bytes=len(data),
-        storage_path=storage_path,
-        alt_text=alt_text,
-        width=width,
-        height=height,
-    )
+    data = upload.read(MAX_MEDIA_BYTES + 1)
+    if len(data) > MAX_MEDIA_BYTES:
+        abort(413, "media_size_limit")
     async for db in get_db_session():
-        db.add(media_obj)
-        await db.commit()
-
-    url = f"{cfg.web.base_url.rstrip('/')}/media/{yyyy}/{mm:02d}/{safe_filename}"
-    return jsonify(
-        {
+        try:
+            media_obj = await store_media_upload(
+                db,
+                uploader_id=str(session.get("user_id") or ""),
+                filename=upload.filename or "upload",
+                content_type=upload.content_type or "",
+                data=data,
+                alt_text=form.get("alt_text"),
+            )
+            await db.commit()
+        except MediaUploadError as exc:
+            await db.rollback()
+            status = 413 if str(exc) in {"media_size_limit", "media_dimensions_limit"} else 415
+            abort(status, str(exc))
+        cfg = get_settings()
+        response = {
             "id": media_obj.id,
-            "url": url,
-            "filename": safe_filename,
-            "mime_type": mime_base,
-            "width": width,
-            "height": height,
-            "size_bytes": len(data),
+            "url": f"{cfg.web.base_url.rstrip('/')}/media/{media_obj.storage_path}",
+            "filename": media_obj.filename,
+            "mime_type": media_obj.mime_type,
+            "width": media_obj.width,
+            "height": media_obj.height,
+            "size_bytes": media_obj.size_bytes,
         }
-    ), 201
+        return jsonify(response), 201
+    abort(500)
 
 
 def _write_upload(dest_dir: Path, dest_path: Path, data: bytes) -> None:

@@ -503,6 +503,269 @@ async def test_oauth_revocation_of_access_token_does_not_revoke_user_consent(
 
 
 @pytest.mark.asyncio
+async def test_oauth_post_write_uses_author_permission_and_idempotency(
+    client, test_engine, monkeypatch
+):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from arborpress.auth.oauth_server import ACCESS_TTL, TOKEN_ACCESS, _now, digest
+    from arborpress.models.content import Post
+    from arborpress.models.oidc import OAuthClient, OAuthGrant, OAuthToken, OAuthTokenFamily
+    from arborpress.models.user import User, UserRole
+
+    monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
+    factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    user_id = str(uuid.uuid4())
+    client_id = "ap_resource_" + secrets.token_urlsafe(12)
+    raw = secrets.token_urlsafe(40)
+    grant_id = str(uuid.uuid4())
+    family_id = str(uuid.uuid4())
+    async with factory() as db:
+        db.add_all(
+            [
+                User(
+                    id=user_id,
+                    username=f"resource-{uuid.uuid4().hex[:8]}",
+                    display_name="Resource Author",
+                    role=UserRole.AUTHOR,
+                ),
+                OAuthClient(
+                    client_id=client_id,
+                    name="Resource API",
+                    client_type="public",
+                    redirect_uris='["https://client.example/cb"]',
+                    allowed_scopes='["posts:write", "posts:read"]',
+                    enabled=True,
+                ),
+                OAuthGrant(
+                    id=grant_id,
+                    user_id=user_id,
+                    client_id=client_id,
+                    scopes="posts:write posts:read",
+                ),
+                OAuthTokenFamily(
+                    id=family_id, grant_id=grant_id, client_id=client_id, user_id=user_id
+                ),
+                OAuthToken(
+                    id=str(uuid.uuid4()),
+                    token_hash=digest(raw),
+                    token_type=TOKEN_ACCESS,
+                    family_id=family_id,
+                    scopes="posts:write posts:read",
+                    expires_at=_now() + ACCESS_TTL,
+                ),
+            ]
+        )
+        await db.commit()
+    headers = {"Authorization": f"Bearer {raw}", "Idempotency-Key": "draft-create-01"}
+    payload = {"title": "API draft", "slug": "api-draft", "body": "Safe markdown"}
+    first = await client.post("/api/v1/oauth/posts", json=payload, headers=headers)
+    assert first.status_code == 201
+    original = await first.get_json()
+    repeated = await client.post("/api/v1/oauth/posts", json=payload, headers=headers)
+    assert repeated.status_code == 200
+    assert (await repeated.get_json())["id"] == original["id"]
+    conflict = await client.post(
+        "/api/v1/oauth/posts",
+        json={**payload, "title": "Changed body"},
+        headers=headers,
+    )
+    assert conflict.status_code == 409
+    assert (await conflict.get_json())["error"]["code"] == "idempotency_conflict"
+    async with factory() as db:
+        assert await db.scalar(select(Post.id).where(Post.slug == "api-draft"))
+
+    viewer_id = str(uuid.uuid4())
+    viewer_client_id = "ap_viewer_" + secrets.token_urlsafe(12)
+    viewer_token = secrets.token_urlsafe(40)
+    viewer_grant_id, viewer_family_id = str(uuid.uuid4()), str(uuid.uuid4())
+    async with factory() as db:
+        db.add_all(
+            [
+                User(
+                    id=viewer_id,
+                    username=f"viewer-{uuid.uuid4().hex[:8]}",
+                    display_name="Read Only",
+                    role=UserRole.VIEWER,
+                ),
+                OAuthClient(
+                    client_id=viewer_client_id,
+                    name="Scoped Viewer",
+                    client_type="public",
+                    redirect_uris='["https://client.example/cb"]',
+                    allowed_scopes='["posts:write"]',
+                    enabled=True,
+                ),
+                OAuthGrant(
+                    id=viewer_grant_id,
+                    user_id=viewer_id,
+                    client_id=viewer_client_id,
+                    scopes="posts:write",
+                ),
+                OAuthTokenFamily(
+                    id=viewer_family_id,
+                    grant_id=viewer_grant_id,
+                    client_id=viewer_client_id,
+                    user_id=viewer_id,
+                ),
+                OAuthToken(
+                    id=str(uuid.uuid4()),
+                    token_hash=digest(viewer_token),
+                    token_type=TOKEN_ACCESS,
+                    family_id=viewer_family_id,
+                    scopes="posts:write",
+                    expires_at=_now() + ACCESS_TTL,
+                ),
+            ]
+        )
+        await db.commit()
+    forbidden = await client.post(
+        "/api/v1/oauth/posts",
+        json={"title": "No local permission", "slug": "viewer-cannot-write", "body": "x"},
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert forbidden.status_code == 403
+    assert (await forbidden.get_json())["error"]["code"] == "forbidden"
+
+
+@pytest.mark.asyncio
+async def test_oauth_resource_api_requires_bearer_and_bounds_pagination(client, monkeypatch):
+    monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
+    anonymous = await client.get("/api/v1/oauth/posts")
+    assert anonymous.status_code == 401
+    bounded = await client.get("/api/v1/oauth/posts", query_string={"per_page": 51})
+    assert bounded.status_code == 400
+    error = await bounded.get_json()
+    assert error == {
+        "error": {"code": "invalid_pagination", "message": "invalid pagination"}
+    }
+
+
+@pytest.mark.asyncio
+async def test_oauth_comment_and_media_resources_use_core_pipelines(
+    client, test_engine, monkeypatch, tmp_path
+):
+    from io import BytesIO
+
+    from PIL import Image
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from werkzeug.datastructures import FileStorage
+
+    from arborpress.auth.oauth_server import ACCESS_TTL, TOKEN_ACCESS, _now, digest
+    from arborpress.content.authors import ensure_primary_author
+    from arborpress.core.config import Settings
+    from arborpress.models.content import Post, PostStatus, PostVisibility
+    from arborpress.models.oidc import OAuthClient, OAuthGrant, OAuthToken, OAuthTokenFamily
+    from arborpress.models.user import User, UserRole
+
+    monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
+    monkeypatch.setattr(
+        "arborpress.core.config.get_settings",
+        lambda: Settings(
+            web={"base_url": "https://arbor.example.test", "media_dir": tmp_path / "media"}
+        ),
+    )
+    factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    user_id = str(uuid.uuid4())
+    client_id = "ap_content_" + secrets.token_urlsafe(12)
+    raw = secrets.token_urlsafe(40)
+    grant_id, family_id, post_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    async with factory() as db:
+        user = User(
+            id=user_id,
+            username=f"resource-content-{uuid.uuid4().hex[:8]}",
+            display_name="Content Author",
+            role=UserRole.AUTHOR,
+        )
+        post = Post(
+            id=post_id,
+            short_id=secrets.token_urlsafe(8)[:10],
+            author_id=user_id,
+            slug=f"resource-comments-{uuid.uuid4().hex[:8]}",
+            title="Commentable post",
+            body_md="body",
+            body_html="<p>body</p>",
+            status=PostStatus.PUBLISHED,
+            visibility=PostVisibility.PUBLIC,
+        )
+        db.add_all(
+            [
+                user,
+                post,
+                OAuthClient(
+                    client_id=client_id,
+                    name="Content API",
+                    client_type="public",
+                    redirect_uris='["https://client.example/cb"]',
+                    allowed_scopes=(
+                        '["comments:read", "comments:write", "media:read", "media:write"]'
+                    ),
+                    enabled=True,
+                ),
+                OAuthGrant(
+                    id=grant_id,
+                    user_id=user_id,
+                    client_id=client_id,
+                    scopes="comments:read comments:write media:read media:write",
+                ),
+                OAuthTokenFamily(
+                    id=family_id, grant_id=grant_id, client_id=client_id, user_id=user_id
+                ),
+                OAuthToken(
+                    id=str(uuid.uuid4()),
+                    token_hash=digest(raw),
+                    token_type=TOKEN_ACCESS,
+                    family_id=family_id,
+                    scopes="comments:read comments:write media:read media:write",
+                    expires_at=_now() + ACCESS_TTL,
+                ),
+            ]
+        )
+        await db.flush()
+        await ensure_primary_author(
+            db, post=post, user_id=user_id, actor_user_id=user_id
+        )
+        await db.commit()
+    headers = {"Authorization": f"Bearer {raw}", "Idempotency-Key": "comment-01"}
+    created_comment = await client.post(
+        f"/api/v1/oauth/posts/{post.slug}/comments",
+        json={"body": "API comment"},
+        headers=headers,
+    )
+    assert created_comment.status_code == 201
+    assert (await created_comment.get_json())["status"] == "pending_moderation"
+    listed_comments = await client.get("/api/v1/oauth/comments", headers=headers)
+    assert listed_comments.status_code == 200
+    listed_data = await listed_comments.get_json()
+    assert all(item["body"] != "API comment" for item in listed_data["items"])
+
+    image = BytesIO()
+    Image.new("RGB", (3, 2), "white").save(image, format="PNG")
+    image.seek(0)
+    upload = await client.post(
+        "/api/v1/oauth/media",
+        headers={"Authorization": f"Bearer {raw}", "Idempotency-Key": "media-01"},
+        form={"alt_text": "small white image"},
+        files={"file": FileStorage(image, filename="ignored.png", content_type="image/png")},
+    )
+    assert upload.status_code == 201
+    media = await upload.get_json()
+    assert media["mime_type"] == "image/png"
+    repeated = await client.post(
+        "/api/v1/oauth/media",
+        headers={"Authorization": f"Bearer {raw}", "Idempotency-Key": "media-01"},
+        form={"alt_text": "small white image"},
+        files={
+            "file": FileStorage(
+                BytesIO(image.getvalue()), filename="ignored.png", content_type="image/png"
+            )
+        },
+    )
+    assert repeated.status_code == 200
+    assert (await repeated.get_json())["id"] == media["id"]
+
+
+@pytest.mark.asyncio
 async def test_oauth_admin_overview_is_ssr_and_does_not_render_secrets(
     client, test_engine, monkeypatch
 ):

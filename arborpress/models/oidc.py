@@ -197,3 +197,26 @@ class OIDCSigningKey(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     retire_after: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+
+
+class OAuthIdempotencyKey(Base):
+    """Short-lived idempotency receipt for retried OAuth resource writes."""
+
+    __tablename__ = "oauth_idempotency_keys"
+    __table_args__ = (
+        UniqueConstraint("client_id", "user_id", "key_hash", name="uq_oauth_idempotency_scope"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    client_id: Mapped[str] = mapped_column(
+        ForeignKey("oauth_clients.client_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)

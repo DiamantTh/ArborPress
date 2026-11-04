@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -35,8 +34,8 @@ async def _seed_post(engine, *, slug="hello-world", title="Hello World",
         db.add(user)
         await db.flush()
 
-        from datetime import UTC, datetime
         import secrets
+        from datetime import UTC, datetime
         post = Post(
             short_id=secrets.token_urlsafe(6)[:8],
             author_id=user.id,
@@ -124,6 +123,9 @@ class TestAPIPostDetail:
         monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
         resp = await client.get("/api/v1/posts/this-does-not-exist-xyz")
         assert resp.status_code == 404
+        assert await resp.get_json() == {
+            "error": {"code": "not_found", "message": "The requested resource was not found."}
+        }
 
     @pytest.mark.asyncio
     async def test_private_post_is_404(self, test_engine, client, monkeypatch):
@@ -213,9 +215,9 @@ class TestAPISerialiser:
     """_post_summary returns expected keys."""
 
     def test_post_summary_keys(self):
+        from datetime import UTC, datetime
+
         from arborpress.web.routes.api import _post_summary
-        from types import SimpleNamespace
-        from datetime import datetime, UTC
 
         post = SimpleNamespace(
             short_id="abc123",
@@ -235,7 +237,6 @@ class TestAPISerialiser:
 
     def test_user_public_keys(self):
         from arborpress.web.routes.api import _user_public
-        from types import SimpleNamespace
 
         user = SimpleNamespace(
             username="bob",

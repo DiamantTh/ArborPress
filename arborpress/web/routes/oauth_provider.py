@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
+import re
 import secrets
 import uuid
-from datetime import UTC, datetime
-from typing import Any, cast
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlencode, urlsplit
 
 from quart import Blueprint, abort, jsonify, redirect, render_template, request, session
 from quart.typing import ResponseReturnValue
-from sqlalchemy import CursorResult, select, update
+from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from arborpress.auth.oauth_server import (
@@ -35,13 +37,137 @@ from arborpress.models.oidc import (
     OAuthAuthorizationCode,
     OAuthClient,
     OAuthGrant,
+    OAuthIdempotencyKey,
     OAuthToken,
     OAuthTokenFamily,
 )
 from arborpress.web.security import validate_csrf
 
+if TYPE_CHECKING:
+    from arborpress.models.content import Media, Post
+    from arborpress.models.user import User
+
 log = logging.getLogger("arborpress.web.oauth_provider")
 oauth_provider_bp = Blueprint("oauth_provider", __name__)
+_RESOURCE_PAGE_SIZE = 50
+_IDEMPOTENCY_TTL = timedelta(hours=24)
+_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _resource_error(code: str, status: int, message: str | None = None) -> ResponseReturnValue:
+    response = jsonify(error={"code": code, "message": message or code.replace("_", " ")})
+    response.status_code = status
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return response
+
+
+async def _resource_context(
+    db: AsyncSession, scope: str
+) -> tuple[
+    tuple[OAuthToken, OAuthTokenFamily, OAuthGrant, User] | None,
+    ResponseReturnValue | None,
+]:
+    """Resolve bearer-only OAuth identity; browser cookies are never a fallback."""
+    from arborpress.models.user import User
+
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.startswith("Bearer ") or len(authorization) > 8192:
+        return None, _resource_error("invalid_token", 401)
+    consumed = await consume_bearer(db, authorization[7:])
+    if consumed is None:
+        return None, _resource_error("invalid_token", 401)
+    token_row, family, grant = consumed
+    if scope not in token_row.scopes.split():
+        return None, _resource_error("insufficient_scope", 403)
+    user = await db.get(User, family.user_id)
+    if user is None or not user.is_active:
+        return None, _resource_error("invalid_token", 401)
+    return (token_row, family, grant, user), None
+
+
+def _resource_page() -> tuple[int, int] | None:
+    if len(request.args.getlist("page")) > 1 or len(request.args.getlist("per_page")) > 1:
+        return None
+    try:
+        page = int(request.args.get("page", "1"))
+        per_page = int(request.args.get("per_page", "20"))
+    except ValueError:
+        return None
+    if page < 1 or page > 1_000_000 or per_page < 1 or per_page > _RESOURCE_PAGE_SIZE:
+        return None
+    return page, per_page
+
+
+def _api_post(post: Post, *, detail: bool = False) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "id": post.short_id,
+        "slug": post.slug,
+        "title": post.title,
+        "excerpt": post.excerpt,
+        "status": post.status.value,
+        "visibility": post.visibility.value,
+        "published_at": post.published_at.isoformat() if post.published_at else None,
+        "url": f"/p/{post.slug}",
+    }
+    if detail:
+        item.update(body_markdown=post.body_md, body_html=post.body_html)
+    return item
+
+
+async def _idempotency_record(
+    db: AsyncSession,
+    *,
+    family: OAuthTokenFamily,
+    user_id: str,
+    resource_type: str,
+    request_hash: str,
+) -> tuple[OAuthIdempotencyKey | None, str | None]:
+    raw_key = request.headers.get("Idempotency-Key")
+    if raw_key is None:
+        return None, None
+    if not _IDEMPOTENCY_KEY_RE.fullmatch(raw_key):
+        return None, "invalid_idempotency_key"
+    now = datetime.now(UTC).replace(tzinfo=None)
+    await db.execute(
+        delete(OAuthIdempotencyKey).where(OAuthIdempotencyKey.expires_at <= now)
+    )
+    key_hash = digest(raw_key)
+    existing = await db.scalar(
+        select(OAuthIdempotencyKey)
+        .where(
+            OAuthIdempotencyKey.client_id == family.client_id,
+            OAuthIdempotencyKey.user_id == user_id,
+            OAuthIdempotencyKey.key_hash == key_hash,
+            OAuthIdempotencyKey.expires_at > now,
+        )
+        .with_for_update()
+    )
+    if existing is not None:
+        if existing.resource_type != resource_type or existing.request_hash != request_hash:
+            return existing, "idempotency_conflict"
+        return existing, None
+    return (
+        OAuthIdempotencyKey(
+            id=str(uuid.uuid4()),
+            client_id=family.client_id,
+            user_id=user_id,
+            key_hash=key_hash,
+            request_hash=request_hash,
+            resource_type=resource_type,
+            resource_id="pending",
+            expires_at=now + _IDEMPOTENCY_TTL,
+        ),
+        None,
+    )
+
+
+def _api_body_hash(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _resource_json(data: Any) -> ResponseReturnValue:
+    return cast(ResponseReturnValue, jsonify(data))
 
 
 def _json_error(error: str, status: int = 400) -> ResponseReturnValue:
@@ -530,54 +656,588 @@ async def userinfo() -> ResponseReturnValue:
 
 @oauth_provider_bp.get("/api/v1/oauth/posts")
 async def oauth_posts() -> ResponseReturnValue:
-    raw = request.headers.get("Authorization", "")
-    if not raw.startswith("Bearer ") or len(raw) > 8192:
-        return _json_error("invalid_token", 401)
+    page_data = _resource_page()
+    if page_data is None:
+        return _resource_error("invalid_pagination", 400)
+    page, per_page = page_data
     async for db in get_db_session():
-        consumed = await consume_bearer(db, raw[7:])
-        if consumed is None:
-            return _json_error("invalid_token", 401)
-        token_row, _family, _grant = consumed
-        if "posts:read" not in token_row.scopes.split():
-            return _json_error("insufficient_scope", 403)
+        context, error = await _resource_context(db, "posts:read")
+        if error is not None:
+            return error
         from arborpress.models.content import Post, PostStatus, PostVisibility
 
-        posts = (
+        base = (Post.status == PostStatus.PUBLISHED) & (Post.visibility == PostVisibility.PUBLIC)
+        total = int(await db.scalar(select(func.count(Post.id)).where(base)) or 0)
+        posts = list(
             (
-                await db.execute(
+                await db.scalars(
                     select(Post)
-                    .where(
-                        Post.status == PostStatus.PUBLISHED,
-                        Post.visibility == PostVisibility.PUBLIC,
-                    )
-                    .order_by(Post.published_at.desc())
-                    .limit(50)
+                    .where(base)
+                    .order_by(Post.published_at.desc(), Post.id.asc())
+                    .offset((page - 1) * per_page)
+                    .limit(per_page)
                 )
-            )
-            .scalars()
-            .all()
+            ).all()
         )
-        await db.commit()
-        response = jsonify(
-            {
-                "items": [
-                    {
-                        "id": post.short_id,
-                        "slug": post.slug,
-                        "title": post.title,
-                        "excerpt": post.excerpt,
-                        "published_at": post.published_at.isoformat()
-                        if post.published_at
-                        else None,
-                        "url": f"/p/{post.slug}",
-                    }
-                    for post in posts
-                ]
-            }
-        )
+        response = jsonify({
+            "items": [_api_post(post) for post in posts],
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "pages": max(1, (total + per_page - 1) // per_page),
+        })
         response.headers["Cache-Control"] = "no-store"
         return response
-    abort(500)
+    return _resource_error("server_error", 500)
+
+
+@oauth_provider_bp.get("/api/v1/oauth/posts/<slug>")
+async def oauth_post_detail(slug: str) -> ResponseReturnValue:
+    async for db in get_db_session():
+        context, error = await _resource_context(db, "posts:read")
+        if error is not None:
+            return error
+        from arborpress.models.content import Post, PostStatus, PostVisibility
+
+        post = await db.scalar(
+            select(Post).where(
+                Post.slug == slug,
+                Post.status == PostStatus.PUBLISHED,
+                Post.visibility == PostVisibility.PUBLIC,
+            )
+        )
+        if post is None:
+            return _resource_error("not_found", 404)
+        response = jsonify(_api_post(post, detail=True))
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    return _resource_error("server_error", 500)
+
+
+@oauth_provider_bp.post("/api/v1/oauth/posts")
+async def oauth_post_create() -> ResponseReturnValue:
+    _rate_limit("resource-post-write", "30/minute")
+    raw_body = await request.get_data()
+    raw_body_bytes = raw_body.encode() if isinstance(raw_body, str) else raw_body
+    if len(raw_body) > 256 * 1024:
+        return _resource_error("request_too_large", 413)
+    data = await request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _resource_error("invalid_json", 400)
+    if set(data) - {"title", "slug", "body", "excerpt", "lang"}:
+        return _resource_error("unsupported_field", 400)
+    async for db in get_db_session():
+        context, error = await _resource_context(db, "posts:write")
+        if error is not None:
+            return error
+        assert context is not None
+        _token, family, _grant, user = context
+        from arborpress.auth.permissions import can
+        from arborpress.core.markdown import render_md_async
+        from arborpress.core.validators import is_valid_slug, strip_control_chars
+        from arborpress.models.content import Post, PostStatus, PostVisibility
+
+        if not await can(db, user, "content.create"):
+            return _resource_error("forbidden", 403)
+        title = strip_control_chars(str(data.get("title") or "")).strip()
+        slug = strip_control_chars(str(data.get("slug") or "")).strip().lower()
+        body = str(data.get("body") or "")
+        if not title or len(title) > 512:
+            return _resource_error("invalid_title", 400)
+        if not is_valid_slug(slug):
+            return _resource_error("invalid_slug", 400)
+        if len(body) > 500_000:
+            return _resource_error("content_too_large", 413)
+        receipt, receipt_error = await _idempotency_record(
+            db,
+            family=family,
+            user_id=str(user.id),
+            resource_type="post",
+            request_hash=_api_body_hash(raw_body_bytes),
+        )
+        if receipt_error:
+            status = 409 if receipt_error == "idempotency_conflict" else 400
+            return _resource_error(receipt_error, status)
+        if receipt is not None and receipt.resource_id != "pending":
+            existing = await db.get(Post, receipt.resource_id)
+            if existing is not None:
+                await db.commit()
+                return jsonify(_api_post(existing, detail=True)), 200
+        if await db.scalar(select(Post.id).where(Post.slug == slug)):
+            return _resource_error("slug_conflict", 409)
+        post = Post(
+            id=str(uuid.uuid4()),
+            short_id=secrets.token_urlsafe(8)[:10],
+            author_id=str(user.id),
+            slug=slug,
+            title=title,
+            body_md=body,
+            body_html=await render_md_async(body),
+            excerpt=str(data.get("excerpt") or "").strip()[:400] or None,
+            status=PostStatus.DRAFT,
+            visibility=PostVisibility.PUBLIC,
+            lang=str(data["lang"])[:8] if data.get("lang") else None,
+            reading_time_min=Post.calc_reading_time(body),
+            published_at=None,
+        )
+        from arborpress.content.authors import ensure_primary_author
+
+        db.add(post)
+        await db.flush()
+        await ensure_primary_author(
+            db, post=post, user_id=str(user.id), actor_user_id=str(user.id)
+        )
+        if receipt is not None:
+            receipt.resource_id = str(post.id)
+            db.add(receipt)
+        await write_audit_event(
+            event_type="oauth_resource_post_created",
+            outcome="success",
+            actor_id=str(user.id),
+            target_id=str(post.id),
+            detail=f"client_id={family.client_id}",
+            db=db,
+        )
+        await db.commit()
+        return jsonify(_api_post(post, detail=True)), 201
+    return _resource_error("server_error", 500)
+
+
+@oauth_provider_bp.patch("/api/v1/oauth/posts/<slug>")
+@oauth_provider_bp.put("/api/v1/oauth/posts/<slug>")
+async def oauth_post_update(slug: str) -> ResponseReturnValue:
+    _rate_limit("resource-post-write", "30/minute")
+    raw_body = await request.get_data()
+    raw_body_bytes = raw_body.encode() if isinstance(raw_body, str) else raw_body
+    if len(raw_body) > 256 * 1024:
+        return _resource_error("request_too_large", 413)
+    data = await request.get_json(silent=True)
+    if not isinstance(data, dict) or not data or set(data) - {"title", "body", "excerpt"}:
+        return _resource_error("invalid_fields", 400)
+    async for db in get_db_session():
+        context, error = await _resource_context(db, "posts:write")
+        if error is not None:
+            return error
+        assert context is not None
+        _token, family, _grant, user = context
+        from arborpress.auth.permissions import can
+        from arborpress.core.markdown import render_md_async
+        from arborpress.core.validators import strip_control_chars
+        from arborpress.models.content import Post, PostRevision
+
+        post = await db.scalar(select(Post).where(Post.slug == slug).with_for_update())
+        if post is None:
+            return _resource_error("not_found", 404)
+        if not await can(db, user, "content.edit", post):
+            return _resource_error("forbidden", 403)
+        old_title, old_body, old_excerpt = post.title, post.body_md, post.excerpt
+        if "title" in data:
+            title = strip_control_chars(str(data["title"] or "")).strip()
+            if not title or len(title) > 512:
+                return _resource_error("invalid_title", 400)
+            post.title = title
+        if "body" in data:
+            body = str(data["body"] or "")
+            if len(body) > 500_000:
+                return _resource_error("content_too_large", 413)
+            post.body_md = body
+            post.body_html = await render_md_async(body)
+            post.reading_time_min = Post.calc_reading_time(body)
+        if "excerpt" in data:
+            post.excerpt = strip_control_chars(str(data["excerpt"] or "")).strip()[:400] or None
+        content_changed = (post.title, post.body_md, post.excerpt) != (
+            old_title,
+            old_body,
+            old_excerpt,
+        )
+        if (post.title, post.body_md) != (old_title, old_body):
+            previous = int(
+                await db.scalar(
+                    select(func.max(PostRevision.rev_number)).where(PostRevision.post_id == post.id)
+                )
+                or 0
+            )
+            db.add(
+                PostRevision(
+                    id=str(uuid.uuid4()),
+                    post_id=str(post.id),
+                    rev_number=previous + 1,
+                    title=old_title,
+                    body_md=old_body,
+                    diff_to_prev=PostRevision.make_diff(old_body, post.body_md),
+                    changed_by_id=str(user.id),
+                    change_summary="OAuth API edit",
+                )
+            )
+        receipt, receipt_error = await _idempotency_record(
+            db,
+            family=family,
+            user_id=str(user.id),
+            resource_type="post_update",
+            request_hash=_api_body_hash(raw_body_bytes + b"\0" + slug.encode()),
+        )
+        if receipt_error:
+            await db.rollback()
+            status = 409 if receipt_error == "idempotency_conflict" else 400
+            return _resource_error(receipt_error, status)
+        if receipt is not None and receipt.resource_id != "pending":
+            resource_id = receipt.resource_id
+            await db.rollback()
+            post = await db.get(Post, resource_id)
+            if post:
+                return _resource_json(_api_post(post, detail=True))
+            return _resource_error("not_found", 404)
+        if receipt is not None:
+            receipt.resource_id = str(post.id)
+            db.add(receipt)
+        if (
+            content_changed
+            and post.status.value == "published"
+            and post.visibility.value == "public"
+        ):
+            await db.flush()
+            from arborpress.federation.services import enqueue_post_activity
+
+            await enqueue_post_activity(
+                db,
+                post_id=str(post.id),
+                activity_type="Update",
+                source_revision=str(post.updated_at or uuid.uuid4()),
+            )
+        await write_audit_event(
+            event_type="oauth_resource_post_updated",
+            outcome="success",
+            actor_id=str(user.id),
+            target_id=str(post.id),
+            detail=f"client_id={family.client_id}",
+            db=db,
+        )
+        await db.commit()
+        return _resource_json(_api_post(post, detail=True))
+    return _resource_error("server_error", 500)
+
+
+@oauth_provider_bp.get("/api/v1/oauth/comments")
+async def oauth_comments_list() -> ResponseReturnValue:
+    page_data = _resource_page()
+    if page_data is None:
+        return _resource_error("invalid_pagination", 400)
+    page, per_page = page_data
+    async for db in get_db_session():
+        context, error = await _resource_context(db, "comments:read")
+        if error is not None:
+            return error
+        from arborpress.models.content import (
+            Comment,
+            CommentStatus,
+            Post,
+            PostStatus,
+            PostVisibility,
+        )
+
+        base = (
+            (Comment.status == CommentStatus.APPROVED)
+            & (Post.status == PostStatus.PUBLISHED)
+            & (Post.visibility == PostVisibility.PUBLIC)
+        )
+        total = int(await db.scalar(select(func.count(Comment.id)).join(Post).where(base)) or 0)
+        rows = (
+            await db.execute(
+                select(Comment, Post.slug)
+                .join(Post)
+                .where(base)
+                .order_by(Comment.created_at.desc(), Comment.id.asc())
+                .offset((page - 1) * per_page)
+                .limit(per_page)
+            )
+        ).all()
+        items = [
+            {
+                "id": comment.id,
+                "post": slug,
+                "author": comment.author_name,
+                "body": comment.body,
+                "created_at": comment.created_at.isoformat() if comment.created_at else None,
+                "parent_id": comment.parent_id,
+                "edited": comment.is_edited,
+            }
+            for comment, slug in rows
+        ]
+        return _resource_json(
+            {"items": items, "page": page, "per_page": per_page, "total": total}
+        )
+    return _resource_error("server_error", 500)
+
+
+@oauth_provider_bp.post("/api/v1/oauth/posts/<slug>/comments")
+async def oauth_comment_create(slug: str) -> ResponseReturnValue:
+    _rate_limit("resource-comment-write", "30/minute")
+    raw_body = await request.get_data()
+    raw_body_bytes = raw_body.encode() if isinstance(raw_body, str) else raw_body
+    if len(raw_body) > 64 * 1024:
+        return _resource_error("request_too_large", 413)
+    data = await request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) - {"body", "parent_id"}:
+        return _resource_error("invalid_fields", 400)
+    async for db in get_db_session():
+        context, error = await _resource_context(db, "comments:write")
+        if error is not None:
+            return error
+        assert context is not None
+        _token, family, _grant, user = context
+        from arborpress.auth.permissions import can
+        from arborpress.comments import CommentPolicyError, create_comment, resolve_comment_policy
+        from arborpress.core.site_settings import get_section
+        from arborpress.models.content import Comment, Post, PostStatus, PostVisibility
+
+        post = await db.scalar(
+            select(Post).where(
+                Post.slug == slug,
+                Post.status == PostStatus.PUBLISHED,
+                Post.visibility == PostVisibility.PUBLIC,
+            )
+        )
+        if post is None:
+            return _resource_error("not_found", 404)
+        if not await can(db, user, "comments.create", post):
+            return _resource_error("forbidden", 403)
+        body = str(data.get("body") or "")
+        if len(body) > 10_000:
+            return _resource_error("content_too_large", 413)
+        receipt, receipt_error = await _idempotency_record(
+            db,
+            family=family,
+            user_id=str(user.id),
+            resource_type="comment",
+            request_hash=_api_body_hash(raw_body_bytes),
+        )
+        if receipt_error:
+            await db.rollback()
+            status = 409 if receipt_error == "idempotency_conflict" else 400
+            return _resource_error(receipt_error, status)
+        if receipt is not None and receipt.resource_id != "pending":
+            comment = await db.get(Comment, receipt.resource_id)
+            if comment is not None:
+                await db.commit()
+                return jsonify({"id": comment.id, "status": comment.status.value}), 200
+        policy = resolve_comment_policy(post, await get_section("comments", db))
+        try:
+            created = await create_comment(
+                db,
+                post=post,
+                policy=policy,
+                author_name=user.display_name or user.username,
+                author_email=None,
+                author_user=user,
+                body=body,
+                parent_id=str(data["parent_id"]) if data.get("parent_id") else None,
+                ip_address=None,
+                user_agent="",
+            )
+        except CommentPolicyError:
+            await db.rollback()
+            return _resource_error(
+                "comment_rejected", 400, "The comment does not meet site policy."
+            )
+        if receipt is not None:
+            receipt.resource_id = str(created.comment.id)
+            db.add(receipt)
+        await db.commit()
+        return cast(
+            ResponseReturnValue,
+            (jsonify({"id": created.comment.id, "status": created.comment.status.value}), 201),
+        )
+    return _resource_error("server_error", 500)
+
+
+@oauth_provider_bp.patch("/api/v1/oauth/comments/<comment_id>")
+async def oauth_comment_update(comment_id: str) -> ResponseReturnValue:
+    _rate_limit("resource-comment-write", "30/minute")
+    data = await request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {"body"}:
+        return _resource_error("invalid_fields", 400)
+    async for db in get_db_session():
+        context, error = await _resource_context(db, "comments:write")
+        if error is not None:
+            return error
+        assert context is not None
+        _token, _family, _grant, user = context
+        from arborpress.comments import (
+            CommentPolicyError,
+            create_comment_revision,
+            resolve_comment_policy,
+        )
+        from arborpress.core.site_settings import get_section
+        from arborpress.models.content import Comment, Post
+
+        comment = await db.get(Comment, comment_id)
+        post = await db.get(Post, comment.post_id) if comment else None
+        if comment is None or post is None or comment.author_user_id != str(user.id):
+            return _resource_error("not_found", 404)
+        policy = resolve_comment_policy(post, await get_section("comments", db))
+        try:
+            revision = await create_comment_revision(
+                db, comment_id=comment_id, actor_user=user, body=str(data["body"]), policy=policy
+            )
+        except CommentPolicyError:
+            await db.rollback()
+            return _resource_error(
+                "comment_edit_rejected", 403, "The comment revision does not meet site policy."
+            )
+        await db.commit()
+        return _resource_json(
+            {
+                "id": comment.id,
+                "revision": revision.revision_number,
+                "status": revision.status.value,
+            }
+        )
+    return _resource_error("server_error", 500)
+
+
+@oauth_provider_bp.get("/api/v1/oauth/media")
+async def oauth_media_list() -> ResponseReturnValue:
+    page_data = _resource_page()
+    if page_data is None:
+        return _resource_error("invalid_pagination", 400)
+    page, per_page = page_data
+    async for db in get_db_session():
+        context, error = await _resource_context(db, "media:read")
+        if error is not None:
+            return error
+        assert context is not None
+        _token, _family, _grant, user = context
+        from arborpress.models.content import Media
+
+        base = Media.uploader_id == str(user.id)
+        total = int(await db.scalar(select(func.count(Media.id)).where(base)) or 0)
+        rows = list(
+            (
+                await db.scalars(
+                    select(Media)
+                    .where(base)
+                    .order_by(Media.uploaded_at.desc(), Media.id.asc())
+                    .offset((page - 1) * per_page)
+                    .limit(per_page)
+                )
+            ).all()
+        )
+        return _resource_json(
+            {
+                "items": [_api_media(item) for item in rows],
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+            }
+        )
+    return _resource_error("server_error", 500)
+
+
+@oauth_provider_bp.get("/api/v1/oauth/media/<media_id>")
+async def oauth_media_detail(media_id: str) -> ResponseReturnValue:
+    async for db in get_db_session():
+        context, error = await _resource_context(db, "media:read")
+        if error is not None:
+            return error
+        assert context is not None
+        _token, _family, _grant, user = context
+        from arborpress.models.content import Media
+
+        item = await db.scalar(
+            select(Media).where(Media.id == media_id, Media.uploader_id == str(user.id))
+        )
+        if item is None:
+            return _resource_error("not_found", 404)
+        return _resource_json(_api_media(item))
+    return _resource_error("server_error", 500)
+
+
+def _api_media(item: Media) -> dict[str, Any]:
+    from arborpress.core.config import get_settings
+
+    return {
+        "id": item.id,
+        "url": f"{get_settings().web.base_url.rstrip('/')}/media/{item.storage_path}",
+        "mime_type": item.mime_type,
+        "size_bytes": item.size_bytes,
+        "width": item.width,
+        "height": item.height,
+        "alt_text": item.alt_text,
+    }
+
+
+@oauth_provider_bp.post("/api/v1/oauth/media")
+async def oauth_media_upload() -> ResponseReturnValue:
+    _rate_limit("resource-media-write", "10/minute")
+    from arborpress.media.service import MAX_MEDIA_BYTES, MediaUploadError, store_media_upload
+
+    async for db in get_db_session():
+        context, error = await _resource_context(db, "media:write")
+        if error is not None:
+            return error
+        assert context is not None
+        _token, family, _grant, user = context
+        files = await request.files
+        form = await request.form
+        upload = files.get("file")
+        if upload is None:
+            return _resource_error("missing_file", 400)
+        data = upload.read(MAX_MEDIA_BYTES + 1)
+        if len(data) > MAX_MEDIA_BYTES:
+            return _resource_error("media_size_limit", 413)
+        from arborpress.auth.permissions import can
+        from arborpress.models.content import Media
+
+        if not await can(db, user, "media.upload"):
+            return _resource_error("forbidden", 403)
+        request_hash = _api_body_hash(
+            data
+            + b"\0"
+            + (upload.content_type or "").encode()
+            + b"\0"
+            + (form.get("alt_text") or "").encode()
+        )
+        receipt, receipt_error = await _idempotency_record(
+            db,
+            family=family,
+            user_id=str(user.id),
+            resource_type="media",
+            request_hash=request_hash,
+        )
+        if receipt_error:
+            status = 409 if receipt_error == "idempotency_conflict" else 400
+            return _resource_error(receipt_error, status)
+        if receipt is not None and receipt.resource_id != "pending":
+            existing = await db.get(Media, receipt.resource_id)
+            if existing is not None:
+                await db.commit()
+                return jsonify(_api_media(existing)), 200
+        try:
+            item = await store_media_upload(
+                db,
+                uploader_id=str(user.id),
+                filename=upload.filename or "upload",
+                content_type=upload.content_type or "",
+                data=data,
+                alt_text=form.get("alt_text"),
+            )
+        except MediaUploadError as exc:
+            await db.rollback()
+            return _resource_error(str(exc), 413 if "limit" in str(exc) else 415)
+        if receipt is not None:
+            receipt.resource_id = str(item.id)
+            db.add(receipt)
+        await write_audit_event(
+            event_type="oauth_resource_media_uploaded",
+            outcome="success",
+            actor_id=str(user.id),
+            target_id=str(item.id),
+            detail=f"client_id={family.client_id};size={item.size_bytes}",
+            db=db,
+        )
+        await db.commit()
+        return jsonify(_api_media(item)), 201
+    return _resource_error("server_error", 500)
 
 
 @oauth_provider_bp.get("/account/authorized-apps")

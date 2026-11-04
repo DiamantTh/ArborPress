@@ -12,7 +12,11 @@ from arborpress.models.user import User, UserRole
 
 SUPPORTED_ACTIONS = {
     "content.edit",
+    "content.create",
+    "content.publish",
     "content.manage_authors",
+    "comments.create",
+    "media.upload",
     "comments.moderate",
     "object_relations.manage",
 }
@@ -21,6 +25,8 @@ SUPPORTED_ACTIONS = {
 def _global_permission(role: UserRole, action: str) -> bool:
     if role in {UserRole.ADMIN, UserRole.EDITOR}:
         return True
+    if action in {"content.create", "media.upload"}:
+        return role == UserRole.AUTHOR
     if action == "comments.moderate":
         return role == UserRole.MODERATOR
     return False
@@ -35,9 +41,17 @@ async def can(
     """Check a bounded action against global roles, authorship, then object relations."""
     if action not in SUPPORTED_ACTIONS or actor is None or not actor.is_active:
         return False
+    if action == "comments.create":
+        return True
     if _global_permission(actor.role, action):
         return True
-    if object is None or action in {"content.manage_authors", "object_relations.manage"}:
+    if object is None or action in {
+        "content.create",
+        "media.upload",
+        "content.publish",
+        "content.manage_authors",
+        "object_relations.manage",
+    }:
         return False
     post_id = str(object.id) if isinstance(object, Post) else str(object)
     if action == "content.edit":

@@ -29,6 +29,7 @@ from quart import Blueprint, Response, abort, jsonify, request
 from quart.typing import ResponseReturnValue
 from sqlalchemy import func, select
 
+from arborpress import BUILD_SHA
 from arborpress.core.db import get_db_session
 from arborpress.federation.policy import canonical_domain, canonical_origin, federation_is_enabled
 from arborpress.federation.security import (
@@ -539,7 +540,7 @@ async def nodeinfo(version: str) -> ResponseReturnValue:
     return jsonify(
         {
             "version": version,
-            "software": {"name": "arborpress", "version": "0.1.0"},
+            "software": {"name": "arborpress", "version": BUILD_SHA},
             "protocols": ["activitypub"],
             "usage": {"users": {"total": user_total}, "localPosts": local_posts},
             "openRegistrations": False,
