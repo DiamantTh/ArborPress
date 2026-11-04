@@ -138,6 +138,21 @@ class TestAPIPostDetail:
         resp = await client.get("/api/v1/posts/private-post")
         assert resp.status_code == 404
 
+    @pytest.mark.asyncio
+    async def test_unexpected_api_error_is_sanitized_json(self, app, client, monkeypatch):
+        monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
+        rule = next(rule for rule in app.url_map.iter_rules() if str(rule) == "/api/v1/posts")
+
+        async def fail_request():
+            raise RuntimeError("private SQL and filesystem detail")
+
+        monkeypatch.setitem(app.view_functions, rule.endpoint, fail_request)
+        resp = await client.get("/api/v1/posts")
+        assert resp.status_code == 500
+        assert await resp.get_json() == {
+            "error": {"code": "server_error", "message": "The request could not be completed."}
+        }
+
 
 # ---------------------------------------------------------------------------
 # Public API – GET /api/v1/tags

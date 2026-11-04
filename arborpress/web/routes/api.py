@@ -64,6 +64,17 @@ def _api_http_error(error: HTTPException) -> ResponseReturnValue:
     return cast(ResponseReturnValue, response)
 
 
+@api_v1_bp.errorhandler(Exception)
+@api_admin_bp.errorhandler(Exception)
+def _api_internal_error(_error: Exception) -> ResponseReturnValue:
+    response = jsonify(
+        error={"code": "server_error", "message": "The request could not be completed."}
+    )
+    response.status_code = 500
+    response.headers["Cache-Control"] = "no-store"
+    return cast(ResponseReturnValue, response)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
