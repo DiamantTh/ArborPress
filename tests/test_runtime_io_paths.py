@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from arborpress.core.cache import FileBackend, get_backend
+from arborpress.core.cache import FileBackend, NamespacedBackend, get_backend
 from arborpress.core.config import LoggingSettings, get_settings, reset_settings
 from arborpress.logging.config import setup_logging
 from arborpress.runtime.paths import get_runtime_paths
@@ -27,8 +27,9 @@ def test_default_file_cache_uses_instance_cache_directory() -> None:
     backend = get_backend()
 
     assert settings.cache.file_dir == paths.cache
-    assert isinstance(backend, FileBackend)
-    assert backend._dir == paths.cache
+    file_backend = backend.probe_backend if isinstance(backend, NamespacedBackend) else backend
+    assert isinstance(file_backend, FileBackend)
+    assert file_backend._dir == paths.cache
     asyncio.run(backend.set("path-test", {"ok": True}, 30))
     assert list(paths.cache.glob("*.cache"))
 
@@ -41,8 +42,9 @@ def test_relative_cache_override_is_instance_cache_relative() -> None:
     backend = get_backend()
 
     assert settings.cache.file_dir == paths.cache / "custom" / "cache"
-    assert isinstance(backend, FileBackend)
-    assert backend._dir == paths.cache / "custom" / "cache"
+    file_backend = backend.probe_backend if isinstance(backend, NamespacedBackend) else backend
+    assert isinstance(file_backend, FileBackend)
+    assert file_backend._dir == paths.cache / "custom" / "cache"
 
 
 def test_absolute_cache_override_is_preserved(tmp_path: Path) -> None:
@@ -55,8 +57,9 @@ def test_absolute_cache_override_is_preserved(tmp_path: Path) -> None:
     backend = get_backend()
 
     assert settings.cache.file_dir == explicit
-    assert isinstance(backend, FileBackend)
-    assert backend._dir == explicit
+    file_backend = backend.probe_backend if isinstance(backend, NamespacedBackend) else backend
+    assert isinstance(file_backend, FileBackend)
+    assert file_backend._dir == explicit
 
 
 def test_relative_cache_override_cannot_escape_instance_cache() -> None:

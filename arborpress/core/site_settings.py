@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 log = logging.getLogger("arborpress.site_settings")
@@ -290,6 +291,8 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
 # ---------------------------------------------------------------------------
 
 _cache: dict[str, dict[str, Any]] = {}
+_cache_deadline: dict[str, float] = {}
+SITE_SETTINGS_CACHE_TTL_SECONDS = 5
 
 
 def get_defaults(section: str) -> dict[str, Any]:
@@ -299,15 +302,22 @@ def get_defaults(section: str) -> dict[str, Any]:
 
 def get_cached(section: str) -> dict[str, Any] | None:
     """Return the cached version, or None if not in cache."""
-    return _cache.get(section)
+    value = _cache.get(section)
+    deadline = _cache_deadline.get(section)
+    if value is not None and deadline is not None and time.monotonic() >= deadline:
+        invalidate_cache(section)
+        return None
+    return value
 
 
 def invalidate_cache(section: str | None = None) -> None:
     """Clear cache – after a save or on application start."""
     if section:
         _cache.pop(section, None)
+        _cache_deadline.pop(section, None)
     else:
         _cache.clear()
+        _cache_deadline.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -321,11 +331,13 @@ async def get_section(section: str, db: Any) -> dict[str, Any]:
     Merges DB values with defaults (DB overrides). Cached in memory.
     Does not raise on DB error – falls back to defaults.
     """
-    if section in _cache:
-        return dict(_cache[section])
+    cached = get_cached(section)
+    if cached is not None:
+        return dict(cached)
 
     merged = await get_section_uncached(section, db)
     _cache[section] = merged
+    _cache_deadline[section] = time.monotonic() + SITE_SETTINGS_CACHE_TTL_SECONDS
     return dict(merged)
 
 
@@ -385,6 +397,7 @@ async def save_section(
         merged = dict(_DEFAULTS.get(section, {}))
         merged.update(data)
         _cache[section] = merged
+        _cache_deadline[section] = time.monotonic() + SITE_SETTINGS_CACHE_TTL_SECONDS
 
         log.info("SiteSettings saved | section=%s by=%s", section, updated_by)
     except Exception as exc:

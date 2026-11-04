@@ -268,7 +268,12 @@ def test_web_factory_initializes_prefix_layout_before_runtime_services(
 def test_theme_plugin_media_cache_and_logs_are_scoped_to_each_prefix(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from arborpress.core.cache import FileBackend, get_backend, reset_backend_for_tests
+    from arborpress.core.cache import (
+        FileBackend,
+        NamespacedBackend,
+        get_backend,
+        reset_backend_for_tests,
+    )
     from arborpress.core.config import get_settings, reset_settings
     from arborpress.logging.config import reset_logging_for_tests, setup_logging
     from arborpress.plugins.registry import PluginRegistry
@@ -329,8 +334,9 @@ def test_theme_plugin_media_cache_and_logs_are_scoped_to_each_prefix(
         assert media_file.read_bytes() == name.encode()
 
         backend = get_backend()
-        assert isinstance(backend, FileBackend)
-        assert backend._dir == paths.cache
+        file_backend = backend.probe_backend if isinstance(backend, NamespacedBackend) else backend
+        assert isinstance(file_backend, FileBackend)
+        assert file_backend._dir == paths.cache
         asyncio.run(backend.set("instance-probe", name, 60))
         assert list(paths.cache.glob("*.cache"))
 

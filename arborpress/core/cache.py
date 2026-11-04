@@ -42,13 +42,20 @@ Public API (async):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import secrets
 import time
 from pathlib import Path
 from typing import Any
 
 log = logging.getLogger("arborpress.cache")
+
+# Internal serialization namespace; this is not a product version.
+CACHE_NAMESPACE = "arborpress:cache:v1"
+MAX_L1_TTL_SECONDS = 5
+MEMCACHED_MAX_TTL_SECONDS = 30 * 24 * 60 * 60
 
 # ---------------------------------------------------------------------------
 # Backend protocol
@@ -72,6 +79,36 @@ class CacheBackend:
 
     def info(self) -> str:
         return self.__class__.__name__
+
+
+class NamespacedBackend(CacheBackend):
+    """Isolate cache keys by format and ArborPress instance prefix."""
+
+    def __init__(self, backend: CacheBackend, namespace: str) -> None:
+        self._backend = backend
+        self._namespace = namespace
+
+    def _key(self, key: str) -> str:
+        return f"{self._namespace}{key}"
+
+    async def get(self, key: str) -> Any | None:  # noqa: ANN401
+        return await self._backend.get(self._key(key))
+
+    async def set(self, key: str, value: Any, ttl: int) -> None:  # noqa: ANN401
+        await self._backend.set(self._key(key), value, ttl)
+
+    async def delete(self, key: str) -> None:
+        await self._backend.delete(self._key(key))
+
+    async def flush(self) -> None:
+        await self._backend.flush()
+
+    def info(self) -> str:
+        return self._backend.info()
+
+    @property
+    def probe_backend(self) -> CacheBackend:
+        return self._backend
 
 
 # ---------------------------------------------------------------------------
@@ -190,13 +227,17 @@ class RedisBackend(CacheBackend):
 
     async def flush(self) -> None:
         r = await self._ensure()
-        # Delete only keys with this prefix
-        keys = await r.keys(f"{self._prefix}*")
-        if keys:
-            await r.delete(*keys)
+        batch: list[Any] = []
+        async for key in r.scan_iter(match=f"{self._prefix}*", count=250):
+            batch.append(key)
+            if len(batch) >= 250:
+                await r.delete(*batch)
+                batch.clear()
+        if batch:
+            await r.delete(*batch)
 
     def info(self) -> str:
-        return f"redis ({self._url})"
+        return "redis"
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +253,7 @@ class MemcachedBackend(CacheBackend):
         self._port = port
         self._prefix = prefix
         self._client: Any = None
+        self._generation: str | None = None
 
     async def _ensure(self) -> Any:  # noqa: ANN401
         if self._client is None:
@@ -224,14 +266,32 @@ class MemcachedBackend(CacheBackend):
             self._client = aiomcache.Client(self._host, self._port)
         return self._client
 
-    def _k(self, key: str) -> bytes:
-        # Memcached: no spaces/control chars, max 250 characters
-        k = f"{self._prefix}{key}"[:250]
-        return k.encode()
+    def _generation_key(self) -> bytes:
+        return f"{self._prefix}generation"[:250].encode()
+
+    async def _current_generation(self, mc: Any) -> str:
+        raw = await mc.get(self._generation_key())
+        if raw is None:
+            candidate = secrets.token_hex(8).encode()
+            try:
+                await mc.add(self._generation_key(), candidate, exptime=0)
+            except Exception as exc:
+                # A concurrent worker may have initialized the shared key.
+                log.debug("Memcached generation add raced (%s)", type(exc).__name__)
+            raw = await mc.get(self._generation_key())
+            if raw is None:
+                raise RuntimeError("memcached cache namespace is unavailable")
+        self._generation = raw.decode("ascii", errors="ignore") or "0"
+        return self._generation
+
+    async def _k(self, key: str, mc: Any) -> bytes:
+        generation = await self._current_generation(mc)
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        return f"{self._prefix}{generation}:{digest}"[:250].encode()
 
     async def get(self, key: str) -> Any | None:  # noqa: ANN401
         mc = await self._ensure()
-        raw = await mc.get(self._k(key))
+        raw = await mc.get(await self._k(key, mc))
         if raw is None:
             return None
         try:
@@ -242,18 +302,28 @@ class MemcachedBackend(CacheBackend):
     async def set(self, key: str, value: Any, ttl: int) -> None:  # noqa: ANN401
         mc = await self._ensure()
         encoded = json.dumps(value, default=str).encode()
-        await mc.set(self._k(key), encoded, exptime=ttl)
+        # Generation-based purge makes old generations unreachable. Bound
+        # nominally permanent entries so stale generations are eventually
+        # reclaimed by Memcached itself.
+        effective_ttl = (
+            min(ttl, MEMCACHED_MAX_TTL_SECONDS)
+            if ttl > 0
+            else MEMCACHED_MAX_TTL_SECONDS
+        )
+        await mc.set(await self._k(key, mc), encoded, exptime=effective_ttl)
 
     async def delete(self, key: str) -> None:
         mc = await self._ensure()
-        await mc.delete(self._k(key))
+        await mc.delete(await self._k(key, mc))
 
     async def flush(self) -> None:
         mc = await self._ensure()
-        await mc.flush_all()
+        generation = secrets.token_hex(8).encode()
+        await mc.set(self._generation_key(), generation, exptime=0)
+        self._generation = generation.decode("ascii")
 
     def info(self) -> str:
-        return f"memcached ({self._host}:{self._port})"
+        return "memcached"
 
 
 # ---------------------------------------------------------------------------
@@ -274,8 +344,7 @@ class FileBackend(CacheBackend):
         self._dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
-        # Replace unsafe characters
-        safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in key)
+        safe = hashlib.sha256(key.encode("utf-8")).hexdigest()
         return self._dir / f"{self._prefix}{safe}.cache"
 
     async def get(self, key: str) -> Any | None:  # noqa: ANN401
@@ -298,9 +367,12 @@ class FileBackend(CacheBackend):
             "expires": (time.time() + ttl) if ttl > 0 else 0,
         }
         try:
-            p.write_text(json.dumps(payload, default=str), encoding="utf-8")
+            temporary = p.with_name(f".{p.name}.{secrets.token_hex(6)}.tmp")
+            temporary.write_text(json.dumps(payload, default=str), encoding="utf-8")
+            temporary.chmod(0o600)
+            temporary.replace(p)
         except OSError as exc:
-            log.warning("FileCache.set failed: %s", exc)
+            log.warning("FileCache.set failed (%s)", type(exc).__name__)
 
     async def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)
@@ -311,7 +383,7 @@ class FileBackend(CacheBackend):
 
     def info(self) -> str:
         count = sum(1 for _ in self._dir.glob(f"{self._prefix}*.cache"))
-        return f"file ({self._dir}, {count} entries)"
+        return f"file ({count} entries)"
 
 
 # ---------------------------------------------------------------------------
@@ -371,12 +443,17 @@ class ValkeyBackend(CacheBackend):
 
     async def flush(self) -> None:
         r = await self._ensure()
-        keys = await r.keys(f"{self._prefix}*")
-        if keys:
-            await r.delete(*keys)
+        batch: list[Any] = []
+        async for key in r.scan_iter(match=f"{self._prefix}*", count=250):
+            batch.append(key)
+            if len(batch) >= 250:
+                await r.delete(*batch)
+                batch.clear()
+        if batch:
+            await r.delete(*batch)
 
     def info(self) -> str:
-        return f"valkey ({self._url})"
+        return "valkey"
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +476,7 @@ class TwoLevelBackend(CacheBackend):
     def __init__(self, l1: CacheBackend, l2: CacheBackend, l1_ttl: int = 30) -> None:
         self._l1 = l1
         self._l2 = l2
-        self._l1_ttl = l1_ttl
+        self._l1_ttl = min(max(1, l1_ttl), MAX_L1_TTL_SECONDS)
 
     async def get(self, key: str) -> Any | None:  # noqa: ANN401
         value = await self._l1.get(key)
@@ -446,15 +523,20 @@ def _build_backend() -> CacheBackend:
         global _default_ttl
         _default_ttl = cache_cfg.ttl
 
+        instance_prefix = _instance_prefix(prefix)
         if backend_name == "redis":
-            backend: CacheBackend = RedisBackend(url=cache_cfg.redis_url, prefix=prefix)
+            backend: CacheBackend = RedisBackend(
+                url=cache_cfg.redis_url, prefix=f"{instance_prefix}backend:"
+            )
         elif backend_name == "valkey":
-            backend = ValkeyBackend(url=cache_cfg.valkey_url, prefix=prefix)
+            backend = ValkeyBackend(
+                url=cache_cfg.valkey_url, prefix=f"{instance_prefix}backend:"
+            )
         elif backend_name == "memcached":
             backend = MemcachedBackend(
                 host=cache_cfg.memcached_host,
                 port=cache_cfg.memcached_port,
-                prefix=prefix,
+                prefix=f"{instance_prefix}backend:",
             )
         elif backend_name == "file":
             from arborpress.runtime.paths import ensure_instance_layout, get_runtime_paths
@@ -464,26 +546,41 @@ def _build_backend() -> CacheBackend:
             file_dir = cache_cfg.file_dir or paths.cache
             backend = FileBackend(
                 directory=str(file_dir),
-                prefix=prefix.replace(":", "_"),
+                prefix=f"{instance_prefix}backend:".replace(":", "_"),
             )
         elif backend_name == "none":
-            return NoneBackend()
+            backend = NoneBackend()
         else:
             # Default: memory – L1 makes no sense on top of memory
-            return MemoryBackend()
+            backend = MemoryBackend()
 
         # Zwei-Ebenen-Cache: L1 (in-process) vor L2 (externer Backend)
         if cache_cfg.l1_enabled:
             backend = TwoLevelBackend(
                 l1=MemoryBackend(),
                 l2=backend,
-                l1_ttl=cache_cfg.l1_ttl,
+                l1_ttl=min(max(1, cache_cfg.l1_ttl), MAX_L1_TTL_SECONDS),
             )
 
-        return backend
+        return NamespacedBackend(backend, instance_prefix)
     except Exception as exc:
-        log.warning("Cache configuration failed (%s) – using memory backend", exc)
-        return MemoryBackend()
+        log.warning(
+            "Cache configuration failed (%s) – using memory backend", type(exc).__name__
+        )
+        return NamespacedBackend(MemoryBackend(), _instance_prefix("ap:"))
+
+
+def _instance_prefix(configured_prefix: str) -> str:
+    """Return a stable per-instance prefix independent of process CWD."""
+    from arborpress.runtime.paths import get_runtime_paths
+
+    prefix_path = str(get_runtime_paths().prefix.resolve())
+    instance_id = hashlib.sha256(prefix_path.encode("utf-8")).hexdigest()[:12]
+    # Configured prefixes are operator-controlled and can be arbitrarily long.
+    # Hash them to keep Memcached keys below its protocol limit and avoid key
+    # collisions caused by truncating long prefixes.
+    configured_id = hashlib.sha256(configured_prefix.encode("utf-8")).hexdigest()[:16]
+    return f"{CACHE_NAMESPACE}:{instance_id}:{configured_id}:"
 
 
 def get_backend() -> CacheBackend:
@@ -514,15 +611,25 @@ def reset_backend(new_backend: CacheBackend | None = None) -> None:
 
 
 async def cache_get(key: str) -> Any | None:  # noqa: ANN401
-    return await get_backend().get(key)
+    try:
+        return await get_backend().get(key)
+    except Exception as exc:
+        log.warning("Cache read failed (%s)", type(exc).__name__)
+        return None
 
 
 async def cache_set(key: str, value: Any, ttl: int | None = None) -> None:  # noqa: ANN401
-    await get_backend().set(key, value, ttl if ttl is not None else _default_ttl)
+    try:
+        await get_backend().set(key, value, ttl if ttl is not None else _default_ttl)
+    except Exception as exc:
+        log.warning("Cache write failed (%s)", type(exc).__name__)
 
 
 async def cache_delete(key: str) -> None:
-    await get_backend().delete(key)
+    try:
+        await get_backend().delete(key)
+    except Exception as exc:
+        log.warning("Cache invalidation failed (%s)", type(exc).__name__)
 
 
 async def cache_flush() -> None:
@@ -531,3 +638,28 @@ async def cache_flush() -> None:
 
 def cache_backend_info() -> str:
     return get_backend().info()
+
+
+def cache_namespace() -> str:
+    """Return the internal cache-format namespace for operator diagnostics."""
+    return CACHE_NAMESPACE
+
+
+async def cache_health() -> tuple[bool, str]:
+    """Probe the backend with an isolated, short-lived ArborPress key."""
+    backend = get_backend()
+    if isinstance(backend, NamespacedBackend):
+        backend = backend.probe_backend
+    if isinstance(backend, TwoLevelBackend):
+        backend = backend._l2
+    key = f"_health:{secrets.token_hex(8)}"
+    try:
+        await backend.set(key, "ok", 5)
+        value = await backend.get(key)
+        await backend.delete(key)
+        if value != "ok":
+            return False, "read_after_write_failed"
+        return True, "ok"
+    except Exception as exc:
+        log.warning("Cache health probe failed (%s)", type(exc).__name__)
+        return False, type(exc).__name__

@@ -170,7 +170,7 @@ prefix  = "ap:"
 # Zwei-Ebenen-Cache: in-process L1 vor externem L2 (redis/valkey/memcached/file).
 # Sinnvoll bei Multi-Worker-Deployments; kein Effekt wenn backend = "memory"/"none".
 # l1_enabled = false
-# l1_ttl     = 30   # L1-TTL in Sekunden (kürzer als ttl, damit L2-Updates greifen)
+# l1_ttl     = 5    # maximale L1-TTL; zur Multi-Worker-Konsistenz auf 5s begrenzt
 
 # Valkey – FOSS Redis-Fork (BSD-3, ab Redis 7.4 wechselte Redis zur BSL):
 # backend   = "valkey"
