@@ -101,7 +101,7 @@ class NamespacedBackend(CacheBackend):
         await self._backend.delete(self._key(key))
 
     async def flush(self) -> None:
-        await self._backend.flush()
+        await _flush_namespace(self._backend, self._namespace)
 
     def info(self) -> str:
         return self._backend.info()
@@ -171,6 +171,13 @@ class MemoryBackend(CacheBackend):
     async def flush(self) -> None:
         async with self._lock:
             self._store.clear()
+
+    async def delete_prefix(self, prefix: str) -> None:
+        """Delete only keys owned by one NamespacedBackend wrapper."""
+        async with self._lock:
+            for key in tuple(self._store):
+                if key.startswith(prefix):
+                    del self._store[key]
 
     def info(self) -> str:
         return f"memory ({len(self._store)} entries)"
@@ -502,6 +509,21 @@ class TwoLevelBackend(CacheBackend):
 
     def info(self) -> str:
         return f"two-level [L1: {self._l1.info()} | L2: {self._l2.info()}]"
+
+
+async def _flush_namespace(backend: CacheBackend, namespace: str) -> None:
+    """Purge one namespace without flushing shared in-process memory stores."""
+    if isinstance(backend, MemoryBackend):
+        await backend.delete_prefix(namespace)
+    elif isinstance(backend, TwoLevelBackend):
+        await _flush_namespace(backend._l1, namespace)
+        await _flush_namespace(backend._l2, namespace)
+    elif isinstance(backend, NoneBackend):
+        return
+    else:
+        # Redis/Valkey/Memcached/File backends have their own configured
+        # ArborPress prefix and implement purge without touching other apps.
+        await backend.flush()
 
 
 # ---------------------------------------------------------------------------

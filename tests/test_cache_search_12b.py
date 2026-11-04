@@ -91,6 +91,30 @@ async def test_cache_namespace_and_file_purge_are_instance_scoped(tmp_path) -> N
     assert (tmp_path / "instance-b_foreign.cache").exists()
 
 
+@pytest.mark.asyncio
+async def test_memory_namespace_purge_preserves_other_namespaces() -> None:
+    from arborpress.core.cache import MemoryBackend, NamespacedBackend, TwoLevelBackend
+
+    shared_memory = MemoryBackend()
+    first = NamespacedBackend(shared_memory, "instance-a:")
+    second = NamespacedBackend(shared_memory, "instance-b:")
+    await first.set("key", "first", 30)
+    await second.set("key", "second", 30)
+    await first.flush()
+    assert await first.get("key") is None
+    assert await second.get("key") == "second"
+
+    shared_l1 = MemoryBackend()
+    shared_l2 = MemoryBackend()
+    first_two_level = NamespacedBackend(TwoLevelBackend(shared_l1, shared_l2), "a:")
+    second_two_level = NamespacedBackend(TwoLevelBackend(shared_l1, shared_l2), "b:")
+    await first_two_level.set("key", "first", 30)
+    await second_two_level.set("key", "second", 30)
+    await first_two_level.flush()
+    assert await first_two_level.get("key") is None
+    assert await second_two_level.get("key") == "second"
+
+
 def test_configured_cache_prefix_is_bounded_and_does_not_truncate_collisions() -> None:
     from arborpress.core.cache import _instance_prefix
 
