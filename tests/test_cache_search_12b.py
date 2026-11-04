@@ -287,6 +287,57 @@ async def test_search_query_and_pagination_are_bounded(db_session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_query_time_search_reflects_post_create_update_visibility_and_delete(
+    db_session,
+) -> None:
+    from arborpress.core.db_capabilities import DBCapabilities
+    from arborpress.core.search import search_public_content
+    from arborpress.models.content import Post, PostStatus, PostVisibility
+
+    post = Post(
+        short_id="searchLifecycle12b",
+        slug="search-index-lifecycle",
+        title="First lifecycle marker",
+        body_md="",
+        status=PostStatus.PUBLISHED,
+        visibility=PostVisibility.PUBLIC,
+        noindex=False,
+        published_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    db_session.add(post)
+    await db_session.flush()
+
+    capabilities = DBCapabilities(engine_name="sqlite", fts_provider="fallback")
+    first = await search_public_content(db_session, "lifecycle marker", capabilities=capabilities)
+    assert [item.slug for item in first.items] == [post.slug]
+
+    post.title = "Updated lifecycle marker"
+    await db_session.flush()
+    old_term = await search_public_content(
+        db_session, "First lifecycle", capabilities=capabilities
+    )
+    updated = await search_public_content(
+        db_session, "Updated lifecycle", capabilities=capabilities
+    )
+    assert old_term.total == 0
+    assert [item.slug for item in updated.items] == [post.slug]
+
+    post.visibility = PostVisibility.HIDDEN
+    await db_session.flush()
+    hidden = await search_public_content(db_session, "Updated lifecycle", capabilities=capabilities)
+    assert hidden.total == 0
+
+    post.visibility = PostVisibility.PUBLIC
+    await db_session.flush()
+    await db_session.delete(post)
+    await db_session.flush()
+    deleted = await search_public_content(
+        db_session, "Updated lifecycle", capabilities=capabilities
+    )
+    assert deleted.total == 0
+
+
+@pytest.mark.asyncio
 async def test_feed_etag_returns_304(client, monkeypatch) -> None:
     monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
     for path in ("/feed.xml", "/feed/atom.xml"):
