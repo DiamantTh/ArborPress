@@ -639,6 +639,12 @@ async def test_oauth_resource_api_requires_bearer_and_bounds_pagination(client, 
     assert error == {
         "error": {"code": "invalid_pagination", "message": "invalid pagination"}
     }
+    monkeypatch.setattr("arborpress.web.ratelimit.check_rate_limit", lambda *_args: False)
+    limited = await client.get(
+        "/api/v1/oauth/posts", headers={"Authorization": "Bearer invalid"}
+    )
+    assert limited.status_code == 429
+    assert (await limited.get_json())["error"]["code"] == "rate_limited"
 
 
 @pytest.mark.asyncio

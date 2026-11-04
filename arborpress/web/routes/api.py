@@ -43,6 +43,13 @@ api_v1_bp = Blueprint("api_v1", __name__, url_prefix="/api/v1")
 api_admin_bp = Blueprint("api_admin", __name__, url_prefix="/api/v1/admin")
 
 
+def _api_rate_limit(name: str, limit: str) -> None:
+    from arborpress.web.ratelimit import check_rate_limit
+
+    if not check_rate_limit(f"api:{name}:{request.remote_addr or 'unknown'}", limit):
+        abort(429)
+
+
 @api_v1_bp.errorhandler(HTTPException)
 @api_admin_bp.errorhandler(HTTPException)
 def _api_http_error(error: HTTPException) -> ResponseReturnValue:
@@ -383,6 +390,7 @@ async def api_search():
     q = request.args.get("q", "").strip()
     if not q:
         return jsonify({"items": [], "total": 0})
+    _api_rate_limit("search", "60/minute")
 
     try:
         page = max(1, int(request.args.get("page", 1)))

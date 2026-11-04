@@ -17,6 +17,7 @@ from quart import Blueprint, abort, jsonify, redirect, render_template, request,
 from quart.typing import ResponseReturnValue
 from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from werkzeug.exceptions import HTTPException
 
 from arborpress.auth.oauth_server import (
     SUPPORTED_SCOPES,
@@ -62,6 +63,19 @@ def _resource_error(code: str, status: int, message: str | None = None) -> Respo
     return response
 
 
+@oauth_provider_bp.errorhandler(HTTPException)
+def _oauth_protocol_http_error(error: HTTPException) -> ResponseReturnValue | HTTPException:
+    if not (
+        request.path.startswith("/api/v1/oauth/")
+        or request.path.startswith("/oauth/")
+    ):
+        return error
+    status = error.code or 500
+    code = "rate_limited" if status == 429 else "invalid_request"
+    message = "Too many requests." if status == 429 else "The request could not be processed."
+    return _resource_error(code, status, message)
+
+
 async def _resource_context(
     db: AsyncSession, scope: str
 ) -> tuple[
@@ -71,6 +85,7 @@ async def _resource_context(
     """Resolve bearer-only OAuth identity; browser cookies are never a fallback."""
     from arborpress.models.user import User
 
+    _rate_limit("resource-bearer", "120/minute")
     authorization = request.headers.get("Authorization", "")
     if not authorization.startswith("Bearer ") or len(authorization) > 8192:
         return None, _resource_error("invalid_token", 401)
@@ -611,6 +626,7 @@ async def revoke() -> ResponseReturnValue:
 @oauth_provider_bp.get("/oauth/userinfo")
 @oauth_provider_bp.get("/api/v1/oauth/me")
 async def userinfo() -> ResponseReturnValue:
+    _rate_limit("resource-bearer", "120/minute")
     raw = request.headers.get("Authorization", "")
     if not raw.startswith("Bearer ") or len(raw) > 8192:
         return _json_error("invalid_token", 401)

@@ -204,6 +204,14 @@ class TestAPIUserProfile:
 
 class TestAPISearch:
     @pytest.mark.asyncio
+    async def test_rate_limit_uses_api_json_error_model(self, client, monkeypatch):
+        monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
+        monkeypatch.setattr("arborpress.web.ratelimit.check_rate_limit", lambda *_args: False)
+        resp = await client.get("/api/v1/search?q=some-query")
+        assert resp.status_code == 429
+        assert (await resp.get_json())["error"]["code"] == "rate_limited"
+
+    @pytest.mark.asyncio
     async def test_empty_q_returns_zero(self, client, monkeypatch):
         monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
         resp = await client.get("/api/v1/search")
