@@ -4,8 +4,7 @@ type = "public"
 author = 'ArborPress'
 license = 'unknown'
 description = 'Dunkle Variante von Autumn Harvest – glühende Herbstfarben auf tiefem Nachtbraun.'
-requires_arborpress = ">=0.1.0"
-tested_with = "0.1.0"
+requires_theme_api = 1
 light_companion = 'autumn-harvest'
 
 capabilities = ["styles"]

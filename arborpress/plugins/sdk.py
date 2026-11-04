@@ -54,7 +54,7 @@ class PluginStorage:
 class PluginContext:
     plugin_id: str
     plugin_version: str
-    arborpress_version: str
+    arborpress_build_sha: str
     runtime_version: str
     rpc: RPCClient
 

@@ -4,8 +4,7 @@ type = "public"
 author = 'ArborPress'
 license = 'unknown'
 description = 'Dunkles Layout mit hohem Kontrast – augenschonend für Nachtarbeit.'
-requires_arborpress = ">=0.1.0"
-tested_with = "0.1.0"
+requires_theme_api = 1
 light_companion = 'default'
 
 capabilities = ["styles"]

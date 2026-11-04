@@ -21,7 +21,7 @@ def _manifest() -> BackupManifest:
     return BackupManifest(
         backup_id="20261018-120000",
         created_at=datetime(2026, 10, 18, 12, tzinfo=UTC).isoformat(),
-        arborpress_version="0.1.0",
+        arborpress_build_sha="a" * 40,
         python_version="3.14.8",
         database_system=None,
         alembic_revisions=(),

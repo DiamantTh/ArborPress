@@ -4,8 +4,7 @@ type = "public"
 author = 'ArborPress'
 license = 'unknown'
 description = 'Herbstpalette mit Tannengrün und Moos.'
-requires_arborpress = ">=0.1.0"
-tested_with = "0.1.0"
+requires_theme_api = 1
 dark_companion = 'autumn-forest-dark'
 
 capabilities = ["styles"]

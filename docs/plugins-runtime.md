@@ -57,7 +57,7 @@ version = "1.0.0"
 author = "Example Author"
 license = "MIT"
 description = "A lifecycle-only example."
-requires_arborpress = ">=0.1.0,<1.0.0"
+requires_plugin_api = 1
 python = ">=3.14,<3.15"
 entrypoint = "sample_plugin.worker:plugin"
 requested_capabilities = ["storage.kv", "data.content.read"]
@@ -68,7 +68,7 @@ dependencies = []
 ```
 
 `manifest_version`, `id`, `name`, `version`, `author`, `license`,
-`requires_arborpress`, and `entrypoint` are required. `description`, `python`,
+`requires_plugin_api`, and `entrypoint` are required. `description`, `python`,
 requested/required capabilities, event subscriptions, task names, and a
 declarative `admin_ui` descriptor are optional. IDs use lowercase ASCII letters/digits
 with single hyphen separators. Versions use PEP 440 parsing and compatibility
@@ -93,8 +93,8 @@ limited to 1 MiB. Pickle and arbitrary Python serialization are not used.
 
 Requests have `protocol`, `id`, `method`, and object-valued `params`; responses
 have the matching protocol/id and either `result` or a structured `error`.
-The initial `runtime.initialize` request carries plugin identity, ArborPress
-and runtime versions, and the locally granted capabilities. Required
+The initial `runtime.initialize` request carries plugin identity, the ArborPress
+build commit SHA, Python runtime identity, and the locally granted capabilities. Required
 capabilities must be granted before start. Grants live outside the manifest in
 instance-local `plugin-grants.toml`; the plugin process cannot change them.
 Grant/revoke uses Admin auth, CSRF and existing step-up protection. Every Core
@@ -243,3 +243,6 @@ restart action. Bundle install/update/uninstall/purge are CLI-only; there is no
 large-bundle upload endpoint. Built-in integrations remain in-process Core
 modules, and there are still no plugin routes, Quart blueprints, plugin-defined
 CLI commands, arbitrary Admin JS, Marketplace, or automatic downloads.
+The plugin API contract is independent of ArborPress product versions. The
+legacy `requires_arborpress` manifest field remains readable for installed
+plugins but is ignored for compatibility decisions.

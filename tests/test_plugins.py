@@ -33,7 +33,7 @@ def _manifest(plugin_id: str, entrypoint: str = "worker:plugin", **overrides: ob
         "version": "1.0.0",
         "author": "Test Suite",
         "license": "MIT",
-        "requires_arborpress": ">=0.1.0",
+        "requires_plugin_api": 1,
         "entrypoint": entrypoint,
         "requested_capabilities": ["importer"],
         "required_capabilities": [],
@@ -219,7 +219,7 @@ def test_plugin_supervisor_bounded_restart_then_persists_auto_disable(tmp_path: 
     [
         {"id": "../escape"},
         {"entrypoint": "os.system"},
-        {"requires_arborpress": "future"},
+        {"requires_plugin_api": 0},
         {"requested_capabilities": ["filesystem-root"]},
         {"manifest_version": 99},
     ],
@@ -252,7 +252,7 @@ def test_registry_keeps_invalid_and_incompatible_plugins_diagnostic(tmp_path: Pa
     future = tmp_path / "future"
     future.mkdir()
     (future / "plugin.toml").write_text(
-        _manifest("future", requires_arborpress=">=99.0"), encoding="utf-8"
+        _manifest("future", requires_plugin_api=99), encoding="utf-8"
     )
     registry = PluginRegistry()
     registry.load_directory(tmp_path)
@@ -382,7 +382,7 @@ def test_admin_descriptor_rejects_raw_html_and_script_fields(tmp_path: Path) -> 
                 "version": "1.0.0",
                 "author": "test",
                 "license": "MIT",
-                "requires_arborpress": ">=0.1.0",
+                "requires_plugin_api": 1,
                 "entrypoint": "worker:plugin",
                 "admin_ui": {
                     "pages": [

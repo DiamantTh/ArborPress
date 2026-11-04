@@ -138,7 +138,7 @@ class BackupEncryption:
 class BackupManifest:
     backup_id: str
     created_at: str
-    arborpress_version: str
+    arborpress_build_sha: str
     database_system: str | None
     alembic_revisions: tuple[str, ...]
     consistency_mode: str
@@ -168,8 +168,8 @@ class BackupManifest:
             raise ValueError("Unsupported backup manifest format version")
         if self.status != "complete":
             raise ValueError("Only complete backup manifests may be finalized")
-        if not self.arborpress_version or not self.consistency_mode:
-            raise ValueError("Backup version and consistency metadata are required")
+        if not self.arborpress_build_sha or not self.consistency_mode:
+            raise ValueError("Backup build identity and consistency metadata are required")
         if type(self.secrets_included) is not bool:
             raise ValueError("secrets_included must be a boolean")
         if self.encryption == "none":
@@ -251,7 +251,7 @@ class BackupManifest:
             f"format_version = {self.format_version}",
             f"backup_id = {_toml_string(self.backup_id)}",
             f"created_at = {_toml_string(self.created_at)}",
-            f"arborpress_version = {_toml_string(self.arborpress_version)}",
+            f"arborpress_build_sha = {_toml_string(self.arborpress_build_sha)}",
             f"python_version = {_toml_string(self.python_version or '')}",
             f"database_system = {_toml_string(self.database_system or '')}",
             f"alembic_revisions = {_toml_array(self.alembic_revisions)}",
@@ -338,7 +338,12 @@ class BackupManifest:
             manifest = cls(
                 backup_id=_required_str(raw, "backup_id"),
                 created_at=_required_str(raw, "created_at"),
-                arborpress_version=_required_str(raw, "arborpress_version"),
+                arborpress_build_sha=_required_str(
+                    raw,
+                    "arborpress_build_sha"
+                    if "arborpress_build_sha" in raw
+                    else "arborpress_version",
+                ),
                 python_version=_optional_str(raw, "python_version"),
                 database_system=_optional_str(raw, "database_system"),
                 alembic_revisions=_string_tuple(raw, "alembic_revisions"),

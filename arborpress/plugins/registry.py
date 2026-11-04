@@ -13,7 +13,6 @@ from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 from pydantic import ValidationError
 
-from arborpress import __version__ as CORE_VERSION
 from arborpress.plugins.manifest import PluginManifest
 from arborpress.plugins.state import PluginStateStore
 
@@ -121,11 +120,9 @@ class PluginRegistry:
                 if manifest.id != child.name:
                     record.status = PluginStatus.INVALID
                     record.error = "manifest id does not match plugin directory name"
-                elif not SpecifierSet(manifest.requires_arborpress).contains(
-                    Version(CORE_VERSION), prereleases=True
-                ):
+                elif manifest.requires_plugin_api != 1:
                     record.status = PluginStatus.INCOMPATIBLE
-                    record.error = "requires_arborpress excludes this ArborPress version"
+                    record.error = "plugin requires an unsupported ArborPress plugin API"
                 elif not SpecifierSet(manifest.python).contains(
                     Version(
                         f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"

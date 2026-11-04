@@ -13,11 +13,9 @@ import math
 import re
 import tomllib
 from dataclasses import dataclass, field
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, cast
 
-from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
@@ -189,7 +187,10 @@ class ThemeManifest(BaseModel):
     author: str = ""
     license: str = "unknown"
     description: str = ""
-    requires_arborpress: str = ">=0.1.0"
+    requires_theme_api: int = 1
+    # Accepted only for reading older user-installed theme manifests. These
+    # legacy product-version fields are ignored and never gate compatibility.
+    requires_arborpress: str | None = None
     tested_with: str | None = None
     parent: str | None = None
     capabilities: list[str] = Field(default_factory=list)
@@ -235,23 +236,11 @@ class ThemeManifest(BaseModel):
             raise ValueError("version must be a valid PEP 440 version") from exc
         return value
 
-    @field_validator("tested_with")
+    @field_validator("requires_theme_api")
     @classmethod
-    def validate_tested_with(cls, value: str | None) -> str | None:
-        if value is not None:
-            try:
-                Version(value)
-            except InvalidVersion as exc:
-                raise ValueError("tested_with must be a valid version") from exc
-        return value
-
-    @field_validator("requires_arborpress")
-    @classmethod
-    def validate_requirement(cls, value: str) -> str:
-        try:
-            SpecifierSet(value)
-        except InvalidSpecifier as exc:
-            raise ValueError("requires_arborpress must be a valid version specifier") from exc
+    def validate_theme_api(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("requires_theme_api must be a positive integer")
         return value
 
     @field_validator("parent", "dark_companion", "light_companion")
@@ -406,7 +395,7 @@ class ThemeManifest(BaseModel):
             author=self.author,
             license=self.license,
             description=self.description,
-            min_core=self.requires_arborpress,
+            min_core=f"theme API {self.requires_theme_api}",
             preview=self.preview or "preview.png",
             features=self.features,
             dark_companion=self.dark_companion,
@@ -475,13 +464,6 @@ def _asset_url(theme_id: str, path: str) -> str:
     return f"/static/themes/{theme_id}/{relative.as_posix()}"
 
 
-def _running_version() -> Version:
-    try:
-        return Version(version("arborpress"))
-    except PackageNotFoundError, InvalidVersion:
-        return Version("0.1.0")
-
-
 def _safe_diagnostic(error: Exception) -> str:
     message = " ".join(str(error).split())
     message = re.sub(r"[\x00-\x1f\x7f]", " ", message)
@@ -496,11 +478,11 @@ class ThemeRegistry:
         extra_dirs: list[Path] | None = None,
         *,
         builtin_dir: Path = _BUILTIN_THEMES_DIR,
-        running_version: Version | None = None,
+        theme_api: int = 1,
     ) -> None:
         self._builtin_dir = builtin_dir
         self._extra_dirs = extra_dirs
-        self._running_version = running_version or _running_version()
+        self._theme_api = theme_api
         self._records: list[ThemeRecord] = []
         self._primary: dict[str, ThemeRecord] = {}
         self._loaded = False
@@ -664,12 +646,11 @@ class ThemeRegistry:
             stack.append(theme_id)
             manifest = record.manifest
             try:
-                requirement = SpecifierSet(manifest.requires_arborpress)
-                if self._running_version not in requirement:
+                if manifest.requires_theme_api != self._theme_api:
                     record.status = "incompatible"
                     record.diagnostics.append(
-                        f"requires ArborPress {manifest.requires_arborpress}; "
-                        f"running {self._running_version}"
+                        f"requires theme API {manifest.requires_theme_api}; "
+                        f"running theme API {self._theme_api}"
                     )
                 depth = 1
                 if manifest.parent:

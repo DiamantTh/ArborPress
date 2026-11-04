@@ -120,7 +120,7 @@ async def _serve(args: argparse.Namespace) -> int:
                         context = PluginContext(
                             args.plugin_id,
                             args.plugin_version,
-                            str(params.get("arborpress_version", "")),
+                            str(params.get("arborpress_build_sha", "unknown")),
                             "1",
                             rpc,
                         )

@@ -4,8 +4,7 @@ type = "public"
 author = 'ArborPress'
 license = 'unknown'
 description = 'Dunkle Variante des Minimal-Themes – Zeitungsstil mit warmem Dunkelton und hellem Weinrot.'
-requires_arborpress = ">=0.1.0"
-tested_with = "0.1.0"
+requires_theme_api = 1
 light_companion = 'minimal'
 
 capabilities = ["styles"]

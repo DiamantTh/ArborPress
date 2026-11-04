@@ -237,4 +237,5 @@ For the per-instance path contract and relative-path rules, see
 
 For the current stabilization target see:
 
-- [0.2.0 stabilization checklist](docs/release-0.2.0-checklist.md)
+- [Operational readiness gates](docs/operational-readiness.md)
+- [API v1 contract and OAuth resources](docs/api.md)

@@ -399,7 +399,7 @@ Requirements:
 - manual installation (no central store)
 - each theme provides a manifest:
   - name, version, license, description
-  - compatibility version range
+  - stable theme API contract number
   - assets (CSS, fonts, icons)
   - optional template overrides (public only)
   - optional progressive JS (must remain CSP-compatible)
@@ -576,7 +576,8 @@ Content management via CLI is optional/extendable.
 ### Plugin model
 - manual installation only
 - manifest-driven registration
-- core validates compatibility version
+- core validates the stable plugin API contract number; ArborPress has no
+  product version sequence
 - declared capabilities:
   - mfa_provider
   - auth_provider

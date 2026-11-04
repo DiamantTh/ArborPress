@@ -4,6 +4,5 @@ type = "admin"
 author = "ArborPress"
 license = "AGPL-3.0-or-later"
 description = "Built-in administrative presentation theme."
-requires_arborpress = ">=0.1.0"
-tested_with = "0.1.0"
+requires_theme_api = 1
 capabilities = []

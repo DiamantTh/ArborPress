@@ -225,4 +225,5 @@ Der verbindliche Instanz-Pfadvertrag und die Regeln für relative Pfade stehen i
 
 Fuer den aktuellen Stabilisierungsschritt siehe:
 
-- [0.2.0 Stabilitaets-Checkliste](docs/release-0.2.0-checklist.md)
+- [Betriebliche Freigabegates](docs/operational-readiness.md)
+- [API-v1-Vertrag und OAuth-Ressourcen](docs/api.md)

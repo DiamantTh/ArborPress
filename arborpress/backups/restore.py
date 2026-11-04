@@ -92,7 +92,7 @@ class RestorePlan:
     backup_id: str
     created_at: str
     format_version: int
-    arborpress_version: str
+    arborpress_build_sha: str
     backup_database_system: str | None
     backup_alembic_revisions: tuple[str, ...]
     target_database_system: str | None
@@ -280,7 +280,7 @@ async def plan_restore(
         backup_id=manifest.backup_id,
         created_at=manifest.created_at,
         format_version=manifest.format_version,
-        arborpress_version=manifest.arborpress_version,
+        arborpress_build_sha=manifest.arborpress_build_sha,
         backup_database_system=manifest.database_system,
         backup_alembic_revisions=manifest.alembic_revisions,
         target_database_system=database_system,

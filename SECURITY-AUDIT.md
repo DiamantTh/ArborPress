@@ -1,14 +1,14 @@
-# ArborPress – Sicherheitsevaluierung & Versionsschema
+# ArborPress – Sicherheitsevaluierung
 
 **Datum**: Juli 2026  
-**Stand**: ArborPress 0.1.0  
+**Stand**: source-identified ArborPress build
 **Status**: Produktionsreife mit empfohlenen Verbesserungen
 
 ---
 
 ## 📋 Inhaltsverzeichnis
 
-1. [Versionsschema](#versionsschema)
+1. [Build-Identität und Freigabestatus](#build-identität-und-freigabestatus)
 2. [Sicherheitsbewertung nach Kategorie](#sicherheitsbewertung-nach-kategorie)
 3. [Abhängigkeiten: Audit & Upgrade-Roadmap](#abhängigkeiten-audit--upgrade-roadmap)
 4. [Proxy-Szenarien (nginx/Traefik)](#proxy-szenarien-nginxtraefik)
@@ -16,19 +16,14 @@
 
 ---
 
-## Versionsschema
+## Build-Identität und Freigabestatus
 
-### Empfehlung: SemVer ohne Vorab-Zeitplan
-
-Versionen werden erst beim Release festgelegt. Bis dahin gelten nur
-die branch-internen Labels `alpha`, `beta`, `rc` und `patch-sec`.
-
-**Praktische Regel**:
-- `0.x.y` für laufende Entwicklungs- und Stabilisierungsschritte
-- `1.0.0` erst, wenn die Kern-Sicherheitsblöcke abgeschlossen und validiert sind
-- `x.y.z-sec` nur für kritische, außerplanmäßige Security-Fixes
-
----
+ArborPress verwendet keine Produktversionsnummern und keine Versions-Tags.
+Sicherheits- und Betriebsnachweise beziehen sich auf den vollständigen
+Git-Commit-SHA, Branch, Remote-/Spiegelstand, Alembic Head, Testergebnisse,
+Datenbankmatrix und Backup-/Restore-Nachweise. Python-Wheel-Metadaten führen
+nur einen internen PEP-440-Platzhalter; die Paketidentität ist der eingebettete
+Build-SHA.
 
 ## Sicherheitsbewertung nach Kategorie
 
@@ -139,14 +134,14 @@ form-action 'self';
 
 **Empfehlungen für Produktiv**:
 ```
-# Phase 1 (v0.2.0)
+# Phase 1
 script-src 'self' 'strict-dynamic';
 style-src 'self' 'nonce-{random}';
 img-src 'self' https: data: (via Whitelist);
 upgrade-insecure-requests;
 require-trusted-types-for 'script';  # CSP-3, experimentell
 
-# Phase 2 (v1.0.0)
+# Phase 2
 Entfernen von 'unsafe-inline' komplett
 SVG-Rendering über Safe-API (nicht raw)
 ```
@@ -395,7 +390,7 @@ aktiv genutzt wird oder ein Sicherheitsgrund vorliegt.
 
 ## Priorisierte Handlungsliste
 
-### 🔴 KRITISCH (Blocker für v1.0.0)
+### 🔴 KRITISCH (Blocker für den Produktionsbetrieb)
 
 - [ ] **cryptography ≥45.0** einspielen (OpenSSL-3.x)
   - **Effort**: 1–2h, **Impact**: CRITICAL
@@ -415,7 +410,7 @@ aktiv genutzt wird oder ein Sicherheitsgrund vorliegt.
 
 ---
 
-### 🟠 HOCH (vor v0.3.0)
+### 🟠 HOCH (vor Produktivbetrieb)
 
 - [ ] **CSP-Header von 'unsafe-inline' befreien**
   - Effort: 6–8h, **Impact**: HIGH (XSS-Reduktion)
@@ -436,7 +431,7 @@ aktiv genutzt wird oder ein Sicherheitsgrund vorliegt.
 
 ---
 
-### 🟡 MITTEL (nach v1.0.0)
+### 🟡 MITTEL (nach Produktivbetrieb)
 
 - [ ] **WAF-Regeln** für nginx/Traefik (ModSecurity)
   - Effort: 6h, **Impact**: MEDIUM
@@ -705,7 +700,7 @@ services:
 
 ---
 
-## Checkliste für Go-Live (v1.0.0)
+## Checkliste für Go-Live
 
 - [ ] Security Headers vollständig konfiguriert (nginx/Traefik)
 - [ ] HTTPS mit HSTS 1 Jahr, preload

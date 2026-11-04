@@ -294,7 +294,7 @@ def test_theme_plugin_media_cache_and_logs_are_scoped_to_each_prefix(
                 id = "plugin-{name}"
                 name = "Plugin {name}"
                 version = "1.0.0"
-                min_core = "0.1.0"
+                requires_plugin_api = 1
                 capabilities = ["importer"]
 
                 [entry_points]

@@ -374,7 +374,7 @@ for fs_lang, (bcp, lang_name) in LANG_HEADERS.items():
         "#",
         'msgid ""',
         'msgstr ""',
-        '"Project-Id-Version: arborpress 0.1.0\\n"',
+        '"Project-Id-Version: arborpress\\n"',
         '"Report-Msgid-Bugs-To: \\n"',
         '"POT-Creation-Date: 2026-04-22 00:00+0000\\n"',
         '"PO-Revision-Date: 2026-04-22 00:00+0000\\n"',

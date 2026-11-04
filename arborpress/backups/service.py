@@ -13,7 +13,6 @@ import uuid
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -281,7 +280,7 @@ async def create_backup(
             manifest = BackupManifest(
                 backup_id=backup_id,
                 created_at=created,
-                arborpress_version=_arborpress_version(),
+                arborpress_build_sha=_arborpress_build_sha(),
                 python_version=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
                 database_system=db_result.database_system if db_result else None,
                 alembic_revisions=db_result.alembic_revisions if db_result else (),
@@ -537,8 +536,8 @@ def _fsync_tree_directories(root: Path) -> None:
     _fsync_directory(root)
 
 
-def _arborpress_version() -> str:
-    try:
-        return version("arborpress")
-    except PackageNotFoundError:
-        return "0.1.0"
+def _arborpress_build_sha() -> str:
+    """Return the build's source identity for diagnostics, not a product version."""
+    from arborpress import BUILD_SHA
+
+    return BUILD_SHA

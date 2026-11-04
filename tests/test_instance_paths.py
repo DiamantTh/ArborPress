@@ -83,7 +83,7 @@ def test_external_themes_use_instance_themes_and_builtins_remain_package_resourc
             name = "Operator Theme"
 version = "1.0.0"
 type = "public"
-requires_arborpress = ">=0.1.0"
+requires_theme_api = 1
             """
         ),
         encoding="utf-8",
@@ -146,7 +146,7 @@ def test_duplicate_plugin_ids_are_diagnosed_instead_of_shadowed(
         version = "1.0.0"
         author = "Tests"
         license = "MIT"
-        requires_arborpress = ">=0.1.0"
+        requires_theme_api = 1
         entrypoint = "worker:plugin"
         requested_capabilities = []
         """

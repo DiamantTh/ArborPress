@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from arborpress import __version__
+from arborpress import BUILD_SHA
 from arborpress.plugins.capabilities import (
     Capability,
     CapabilityGrantStore,
@@ -260,7 +260,7 @@ class PluginProcessManager:
                     "protocol": PROTOCOL_VERSION,
                     "plugin_id": manifest.id,
                     "plugin_version": manifest.version,
-                    "arborpress_version": __version__,
+                    "arborpress_build_sha": BUILD_SHA,
                     "runtime_version": "1",
                     "granted_capabilities": sorted(grants.grants_for(manifest.id)),
                 },

@@ -19,7 +19,8 @@ PREFIX/instance/backups/YYYYMMDD-HHMMSS[-NN]/
 
 Manifest format version 1 remains readable for existing sets; new sets use
 format version 2. The manifest records the UTC backup ID and exact
-ISO-8601 UTC creation time, ArborPress and Python versions, database engine
+ISO-8601 UTC creation time, the ArborPress source commit SHA and Python build
+version, database engine
 and Alembic heads when included, consistency mode, compression backend and
 profile, encryption state, component-relative paths, sizes, SHA-256
 digests, archive format, member inventory, media segment numbers, omitted

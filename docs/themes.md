@@ -39,8 +39,7 @@ type = "public"
 author = "Example Author"
 license = "MIT"
 description = "A local ArborPress theme."
-requires_arborpress = ">=0.1.0"
-tested_with = "0.1.0"
+requires_theme_api = 1
 capabilities = ["styles"]
 
 [assets]
@@ -51,14 +50,15 @@ public_css = "static/style.css"
 ```
 
 `name`, `version`, and `type` are required. `type` is exactly `public` or
-`admin`. `version` and `tested_with` use comparable PEP 440 versions;
-`requires_arborpress` is a PEP 440 version specifier and must include the
-running ArborPress version. `author`, `license`, `description`, `tested_with`,
+`admin`. `version` is the theme artifact's own identifier; it is not an
+ArborPress product version. `requires_theme_api` declares the stable theme
+contract and currently must be `1`. `author`, `license`, `description`,
 `parent`, `dark_companion`, `light_companion`, `preview`, `features`,
 `capabilities`, `assets`, `entry_points`, and `templates` are optional. If
 `preview` is present, it is a `static/` path declared in `assets.images` or
 `assets.icons`.
-`tested_with` is informative, not a compatibility guarantee.
+Legacy `requires_arborpress` and `tested_with` fields are accepted when reading
+older installed themes but ignored. New themes must use `requires_theme_api`.
 
 The existing feature flags remain under `[features]`:
 

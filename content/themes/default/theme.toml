@@ -4,6 +4,5 @@ type = "public"
 author = "Example Author"
 license = "MIT"
 description = "Example theme manifest for installation under instance/themes."
-requires_arborpress = ">=0.1.0"
-tested_with = "0.1.0"
+requires_theme_api = 1
 capabilities = []

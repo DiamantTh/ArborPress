@@ -27,7 +27,6 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
-from arborpress import __version__
 from arborpress.plugins.manifest import PLUGIN_ID_RE, PluginManifest
 from arborpress.runtime.paths import ArborPressPaths, get_runtime_paths
 
@@ -141,10 +140,8 @@ class PluginLifecycle:
         wheels.mkdir(mode=0o700)
         try:
             manifest, digest = _extract_bundle(source, package, wheels)
-            if not SpecifierSet(manifest.requires_arborpress).contains(
-                Version(__version__), prereleases=True
-            ):
-                raise PluginLifecycleError("plugin requires an incompatible ArborPress version")
+            if manifest.requires_plugin_api != 1:
+                raise PluginLifecycleError("plugin requires an unsupported plugin API")
             if not SpecifierSet(manifest.python).contains(
                 Version(
                     f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"

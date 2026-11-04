@@ -110,7 +110,7 @@ jobs:
         run: poetry run mypy arborpress/
 
       - name: Build wheel and source distribution
-        run: poetry build
+        run: poetry run python scripts/build_package.py
 
       - name: Verify wheel contains Vite manifest and browser assets
         run: |
@@ -147,7 +147,7 @@ jobs:
               "webauthn-register", "admin", "editor", "editor-tiptap",
           ):
               assert AssetResolver().resolve(entry).javascript.endswith(".js")
-          assert arborpress.__version__
+          assert len(arborpress.BUILD_SHA) == 40
           assert importlib.util.find_spec("poetry") is None
           assert shutil.which("node") is None
           PY

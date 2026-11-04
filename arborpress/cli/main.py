@@ -488,7 +488,7 @@ def backup_inspect(
         return
     typer.echo(f"ID: {summary.backup_id}")
     typer.echo(f"Created: {summary.manifest.created_at}")
-    typer.echo(f"ArborPress: {summary.manifest.arborpress_version}")
+    typer.echo(f"ArborPress build: {summary.manifest.arborpress_build_sha}")
     typer.echo(f"Database: {summary.manifest.database_system or 'not included'}")
     typer.echo(f"Alembic revisions: {', '.join(summary.manifest.alembic_revisions) or 'none'}")
     typer.echo(
@@ -677,7 +677,7 @@ def restore_plan_command(
         typer.echo(json.dumps(plan.as_json(), indent=2, sort_keys=True))
         return
     typer.echo(f"Backup: {plan.backup_id} ({plan.created_at})")
-    typer.echo(f"Format: {plan.format_version}; ArborPress: {plan.arborpress_version}")
+    typer.echo(f"Format: {plan.format_version}; ArborPress build: {plan.arborpress_build_sha}")
     typer.echo(
         "Database: "
         f"{plan.backup_database_system or 'not selected'} → "

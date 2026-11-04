@@ -35,7 +35,10 @@ class PluginManifest(BaseModel):
     author: str = Field(min_length=1, max_length=160)
     license: str = Field(min_length=1, max_length=80)
     description: str = Field(default="", max_length=2000)
-    requires_arborpress: str
+    # Product-version constraints are no longer enforced. Keep the optional
+    # legacy field readable for installed manifests during API-contract rollout.
+    requires_plugin_api: int = 1
+    requires_arborpress: str | None = None
     entrypoint: str
     requested_capabilities: tuple[str, ...] = ()
     required_capabilities: tuple[str, ...] = ()
@@ -62,7 +65,17 @@ class PluginManifest(BaseModel):
             raise ValueError("version must be a valid PEP 440 version") from exc
         return value
 
-    @field_validator("requires_arborpress", "python")
+    @field_validator("requires_arborpress")
+    @classmethod
+    def validate_legacy_requirement(cls, value: str | None) -> str | None:
+        if value is not None:
+            try:
+                SpecifierSet(value)
+            except InvalidSpecifier as exc:
+                raise ValueError("legacy requires_arborpress must be a valid specifier") from exc
+        return value
+
+    @field_validator("python")
     @classmethod
     def validate_specifier(cls, value: str) -> str:
         try:
@@ -98,6 +111,8 @@ class PluginManifest(BaseModel):
                 f"unsupported manifest_version {self.manifest_version}; "
                 f"supported version is {SUPPORTED_MANIFEST_VERSION}"
             )
+        if self.requires_plugin_api < 1:
+            raise ValueError("requires_plugin_api must be a positive integer")
         if not set(self.required_capabilities).issubset(self.requested_capabilities):
             raise ValueError("required_capabilities must also be requested")
         if self.events and self.subscriptions:

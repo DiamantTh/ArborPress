@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound, select_autoescape
-from packaging.version import Version
 
 from arborpress.themes.jinja import install_theme_template_loader
 from arborpress.themes.manifest import ThemeManifest, ThemeRegistry, get_theme_registry
@@ -19,7 +18,7 @@ def _write_theme(
     parent: str | None = None,
     templates: tuple[str, ...] = (),
     css: str | None = None,
-    requires: str = ">=0.1.0",
+    theme_api: int = 1,
     extra: str = "",
 ) -> Path:
     theme_dir = root / theme_id
@@ -29,7 +28,7 @@ def _write_theme(
         f'name = "{theme_id.title()}"',
         'version = "1.2.3"',
         f'type = "{theme_type}"',
-        f'requires_arborpress = "{requires}"',
+        f"requires_theme_api = {theme_api}",
         f'parent = "{parent}"' if parent else "",
         f"capabilities = {json.dumps(capabilities)}",
         f"templates = {json.dumps(list(templates))}",
@@ -69,7 +68,7 @@ def _registry(tmp_path: Path) -> tuple[ThemeRegistry, Path, Path]:
         ThemeRegistry(
             builtin_dir=builtin,
             extra_dirs=[instance],
-            running_version=Version("0.1.0"),
+            theme_api=1,
         ),
         builtin,
         instance,
@@ -136,8 +135,8 @@ def test_admin_theme_css_uses_its_own_entry_point(tmp_path: Path) -> None:
         ('name = "Bad"\nversion = "1.0.0"\ntype = "private"\n', "type"),
         ('name = "Bad"\nversion = "not-a-version"\ntype = "public"\n', "version"),
         (
-            'name = "Bad"\nversion = "1.0.0"\ntype = "public"\nrequires_arborpress = "=>oops"\n',
-            "requires_arborpress",
+            'name = "Bad"\nversion = "1.0.0"\ntype = "public"\nrequires_theme_api = 0\n',
+            "requires_theme_api",
         ),
         (
             'name = "Bad"\nversion = "1.0.0"\ntype = "public"\ncapabilities = ["python"]\n',
@@ -234,13 +233,13 @@ def test_compatibility_missing_parent_parent_type_and_depth_statuses(
             f"depth-{index}",
             parent=f"depth-{index - 1}" if index else None,
         )
-    _write_theme(instance, "incompatible-version", requires=">=9.0")
+    _write_theme(instance, "incompatible-theme-api", theme_api=9)
     registry.load()
 
     statuses = {record.id: record.status for record in registry.records()}
     assert statuses["missing"] == "missing_parent"
     assert statuses["wrong-child"] == "incompatible"
-    assert statuses["incompatible-version"] == "incompatible"
+    assert statuses["incompatible-theme-api"] == "incompatible"
     assert statuses["depth-7"] == "valid"
     assert statuses["depth-8"] == "incompatible"
 

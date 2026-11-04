@@ -27,7 +27,7 @@
     {% for item in themes %}
       <tr>
         <th scope="row"><a href="{{ url_for('admin.theme_detail', theme_id=item.id) }}">{{ item.name }}</a><br><code>{{ item.id }}</code> · {{ item.version or '–' }}</th>
-        <td>{{ item.source }}{% if item.derived %} · Derived{% endif %}{% if item.parent %}<br>Parent: <code>{{ item.parent }}</code>{% endif %}<br>{{ item.author or 'Unknown author' }} · {{ item.license or 'unknown license' }}<br>Requires ArborPress {{ item.requires or '–' }} · tested with {{ item.tested_with or '–' }}</td>
+        <td>{{ item.source }}{% if item.derived %} · Derived{% endif %}{% if item.parent %}<br>Parent: <code>{{ item.parent }}</code>{% endif %}<br>{{ item.author or 'Unknown author' }} · {{ item.license or 'unknown license' }}<br>Theme API {{ item.theme_api or '–' }}</td>
         <td>{{ item.status }}{% if item.diagnostics %}<ul>{% for warning in item.diagnostics %}<li>{{ warning }}</li>{% endfor %}</ul>{% endif %}{% if item.trusted %}<span> · trusted ({{ item.trust_source }})</span>{% else %}<span> · untrusted</span>{% endif %}</td>
         <td>{% if item.configured %}configured{% endif %}{% if item.effective %} / effective{% endif %}</td>
         <td>

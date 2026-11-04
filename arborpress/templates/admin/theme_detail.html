@@ -4,7 +4,7 @@
 <p><a href="{{ url_for('admin.themes_overview') }}">← Theme-Verwaltung</a></p>
 <h1>{{ theme.name if theme else record.id }}</h1>
 <p><code>{{ record.id }}</code> · {{ record.type or 'unknown type' }} · {{ record.source }}{% if theme and theme.derived %} · lokal abgeleitet{% endif %}</p>
-<p>Status: <strong>{{ record.status }}</strong>{% if theme %} · Version {{ theme.version }} · {{ theme.author }} · {{ theme.license }} · requires ArborPress {{ theme.requires_arborpress }} · tested with {{ theme.tested_with or '–' }}{% endif %}</p>
+<p>Status: <strong>{{ record.status }}</strong>{% if theme %} · Theme artifact {{ theme.version }} · {{ theme.author }} · {{ theme.license }} · theme API {{ theme.requires_theme_api }}{% endif %}</p>
 {% if theme and theme.parent %}<p>Parent: <a href="{{ url_for('admin.theme_detail', theme_id=theme.parent) }}"><code>{{ theme.parent }}</code></a></p>{% endif %}
 {% if children %}<p>Abhängige Child Themes: {% for child_id in children %}<a href="{{ url_for('admin.theme_detail', theme_id=child_id) }}"><code>{{ child_id }}</code></a>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
 {% if management_error %}<div class="alert alert--error" role="alert">{{ management_error }}</div>{% endif %}
