@@ -346,6 +346,14 @@ async def test_public_api_etag_and_cookie_response_are_not_shared(
         "/api/v1/posts/etag-content", headers={"If-None-Match": first.headers["ETag"]}
     )
     assert second.status_code == 304
+    exported = await client.get("/api/v1/posts/etag-content/export?format=md")
+    assert exported.status_code == 200
+    assert exported.headers.get("ETag")
+    exported_unchanged = await client.get(
+        "/api/v1/posts/etag-content/export?format=md",
+        headers={"If-None-Match": exported.headers["ETag"]},
+    )
+    assert exported_unchanged.status_code == 304
 
     from sqlalchemy import select
 

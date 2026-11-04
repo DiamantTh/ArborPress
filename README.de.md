@@ -101,10 +101,12 @@ arborpress key import <file>         Schlüssel importieren (RSA ≥ 4096)
 arborpress key rotate <id>           Schlüssel rotieren (Step-up)
 arborpress key status                Schlüsselstatus anzeigen
 
-arborpress search reindex            FTS-Index neu aufbauen (§12)
+arborpress search status             Effektiven Provider und Health anzeigen
+arborpress search reindex            Aktiven Suchpfad prüfen
 
+arborpress cache status              Backend-Health und Namespace anzeigen
 arborpress cache purge               Cache leeren
-arborpress cache warm                Cache aufwärmen
+arborpress cache warm                Sichere öffentliche Caches aufwärmen
 
 arborpress federation inbox-process  ActivityPub-Inbox verarbeiten (§5)
 arborpress federation status         Federation-Konfiguration anzeigen

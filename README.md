@@ -82,6 +82,9 @@ Theme runtime and theme.toml conventions are documented in
 operator themes under the active prefix's instance/themes/; source-checkout
 examples in content/themes/ are not discovered automatically.
 
+Search providers, cache behavior, invalidation, and HTTP validators are covered
+in [docs/search-cache.md](docs/search-cache.md).
+
 ## CLI Reference (§14)
 
 ```
@@ -111,10 +114,12 @@ arborpress key import <file>         Import key (RSA ≥ 4096)
 arborpress key rotate <id>           Rotate key (step-up)
 arborpress key status                Show key status
 
-arborpress search reindex            Rebuild FTS index (§12)
+arborpress search status             Show effective provider and health
+arborpress search reindex            Verify the active search path
 
+arborpress cache status              Show backend health and namespace
 arborpress cache purge               Clear cache
-arborpress cache warm                Warm cache
+arborpress cache warm                Warm safe public cache entries
 
 arborpress federation inbox-process  Process ActivityPub inbox (§5)
 arborpress federation status         Show federation configuration

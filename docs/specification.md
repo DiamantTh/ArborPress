@@ -40,8 +40,10 @@ Arbor Press is designed as a **classic server-side application first**:
 - Admin interface for content management and security settings.
 - Media handling with stable URLs.
 - Search:
-  - FTS as progressive enhancement where available
-  - fallback search always available
+  - shared visibility-aware SSR and API search service
+  - PostgreSQL GIN / MariaDB FULLTEXT indexes, maintained by the database
+  - bounded parameterized LIKE fallback (including SQLite)
+  - external search health probes do not imply an implemented sync/query adapter
 - Import/Export designed to be independent from raw DB backup (portable content model).
 
 ### Optional functionality (supported by design)
@@ -560,8 +562,8 @@ Content management via CLI is optional/extendable.
 - user management (add/disable/roles)
 - auth policy status
 - key management (generate/import/rotate/status)
-- search reindex
-- cache purge/warm
+- search status / reindex verification
+- cache status / scoped purge / safe warm
 - federation inbox processing (if enabled)
 - healthcheck
 

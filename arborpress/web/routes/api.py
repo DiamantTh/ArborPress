@@ -1064,7 +1064,7 @@ async def api_post_export(slug: str):
 
         if fmt == "json":
             payload = post.body_json or {}
-            return jsonify(
+            return await _public_api_json(
                 {
                     "format": "editorjs",
                     "version": "2.x",
@@ -1077,27 +1077,39 @@ async def api_post_export(slug: str):
         if fmt == "md":
             from quart import Response
 
-            return Response(
-                post.body_md or "",
-                mimetype="text/markdown; charset=utf-8",
-                headers={"Content-Disposition": f'attachment; filename="{slug}.md"'},
+            from arborpress.web.http_cache import conditional_response
+
+            return await conditional_response(
+                Response(
+                    post.body_md or "",
+                    mimetype="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{slug}.md"'},
+                ),
+                last_modified=post.updated_at,
             )
 
         if fmt == "html":
             from quart import Response
 
-            return Response(
-                post.body_html or "",
-                mimetype="text/html; charset=utf-8",
+            from arborpress.web.http_cache import conditional_response
+
+            return await conditional_response(
+                Response(post.body_html or "", mimetype="text/html; charset=utf-8"),
+                last_modified=post.updated_at,
             )
 
         # fmt == "xml"
         from quart import Response
 
-        return Response(
-            _post_export_xml(post),
-            mimetype="application/xml; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{slug}.xml"'},
+        from arborpress.web.http_cache import conditional_response
+
+        return await conditional_response(
+            Response(
+                _post_export_xml(post),
+                mimetype="application/xml; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{slug}.xml"'},
+            ),
+            last_modified=post.updated_at,
         )
 
 

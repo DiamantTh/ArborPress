@@ -35,6 +35,10 @@ editorial action.
 Collection routes accept `page` (default `1`) and `per_page` (default `20`,
 maximum `50`). Values must be single positive integers; result ordering is
 stable and each response includes `items`, `page`, `per_page`, and `total`.
+Public API read responses use ETags and return `304 Not Modified` when the
+client's validator still matches. Cookie or Bearer-authenticated responses are
+private/no-store. `GET /api/v1/search` shares its public visibility rules with
+SSR search and returns only public, published, indexable posts and pages.
 
 API errors use a stable envelope:
 
