@@ -125,12 +125,59 @@ class SecurityHeadersMiddleware:
 
         path: str = scope.get("path", "")
         headers_to_add = self._build_headers(path)
+        request_headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        has_cookie = b"cookie" in request_headers
+        has_authorization = b"authorization" in request_headers
 
         async def _send(message: dict) -> None:
             if message["type"] == "http.response.start":
                 existing = list(message.get("headers", []))
+                names = {key.lower() for key, _ in existing}
+                response_sets_cookie = any(key.lower() == b"set-cookie" for key, _ in existing)
+                existing_cache_control = next(
+                    (value.lower() for key, value in existing if key.lower() == b"cache-control"),
+                    b"",
+                )
+                explicitly_no_store = b"no-store" in existing_cache_control
+                force_no_store = (
+                    path.startswith(self._admin_path)
+                    or path.startswith("/auth")
+                    or path.startswith("/api/v1/admin")
+                    or path.startswith("/api/v1/oauth")
+                    or has_authorization
+                )
+                if force_no_store:
+                    if explicitly_no_store:
+                        # Preserve a route's stricter, deliberate no-store
+                        # value while removing duplicate middleware headers.
+                        kept_cache_control = False
+                        unique_headers = []
+                        for key, value in existing:
+                            if key.lower() == b"cache-control":
+                                if kept_cache_control:
+                                    continue
+                                kept_cache_control = True
+                            unique_headers.append((key, value))
+                        existing = unique_headers
+                    else:
+                        existing = [(k, v) for k, v in existing if k.lower() != b"cache-control"]
+                        names.discard(b"cache-control")
+                        existing.append((b"cache-control", _NO_STORE.encode()))
+                        names.add(b"cache-control")
+                elif explicitly_no_store:
+                    # Keep explicit route policy (e.g. one-time token results).
+                    pass
+                elif has_cookie or response_sets_cookie:
+                    # Never let an SSR response that can include account- or
+                    # session-specific controls enter a shared cache.
+                    existing = [(k, v) for k, v in existing if k.lower() != b"cache-control"]
+                    names.discard(b"cache-control")
+                    existing.append((b"cache-control", b"private, no-cache"))
+                    names.add(b"cache-control")
                 for k, v in headers_to_add:
-                    existing.append((k.encode(), v.encode()))
+                    if k.encode().lower() not in names:
+                        existing.append((k.encode(), v.encode()))
+                        names.add(k.encode().lower())
                 message = dict(message)
                 message["headers"] = existing
             await send(message)
@@ -150,8 +197,13 @@ class SecurityHeadersMiddleware:
             # HSTS must come exclusively from the proxy – see docs/proxy/*.conf.
         ]
 
-        # §8 Admin/Auth: no-store + noindex
-        if path.startswith(self._admin_path) or path.startswith("/auth"):
+        # Admin, auth, and bearer APIs are never cacheable.
+        if (
+            path.startswith(self._admin_path)
+            or path.startswith("/auth")
+            or path.startswith("/api/v1/admin")
+            or path.startswith("/api/v1/oauth")
+        ):
             headers.append(("Cache-Control", _NO_STORE))
             headers.append(("X-Robots-Tag", "noindex, nofollow"))
 

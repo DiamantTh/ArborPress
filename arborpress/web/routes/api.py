@@ -16,7 +16,7 @@ import os
 import uuid as _uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from quart import (
     Blueprint,
@@ -63,6 +63,7 @@ def _api_http_error(error: HTTPException) -> ResponseReturnValue:
         413: ("request_too_large", "The request exceeds the allowed size."),
         415: ("unsupported_media_type", "The media type is not supported."),
         429: ("rate_limited", "Too many requests."),
+        503: ("service_unavailable", "The requested service is temporarily unavailable."),
     }
     code, message = codes.get(status, ("request_failed", "The request failed."))
     response = jsonify(error={"code": code, "message": message})
@@ -135,6 +136,13 @@ def _page_summary(pg) -> dict:
     }
 
 
+async def _public_api_json(payload: dict[str, Any]) -> ResponseReturnValue:
+    """Serialize a visibility-filtered public response with an HTTP validator."""
+    from arborpress.web.http_cache import conditional_response
+
+    return await conditional_response(jsonify(payload), max_age=60)
+
+
 def _user_public(u, post_count: int = 0) -> dict:
     return {
         "username": u.username,
@@ -186,7 +194,9 @@ async def api_posts_list():
 
             tag_obj = (await db.execute(_sel(Tag).where(Tag.slug == tag))).scalar_one_or_none()
             if tag_obj is None:
-                return jsonify({"items": [], "page": page, "per_page": per_page, "total": 0})
+                return await _public_api_json(
+                    {"items": [], "page": page, "per_page": per_page, "total": 0}
+                )
             tag_subq = _sel(_pt.c.post_id).where(_pt.c.tag_id == tag_obj.id).scalar_subquery()
             base = base & Post.id.in_(tag_subq)
 
@@ -208,7 +218,7 @@ async def api_posts_list():
             .all()
         )
 
-        return jsonify(
+        return await _public_api_json(
             {
                 "items": [_post_summary(p) for p in posts],
                 "page": page,
@@ -247,7 +257,7 @@ async def api_post_detail(slug: str):
                 return redirect(f"/api/v1/posts/{old.slug}", 301)
             abort(404)
 
-        return jsonify(
+        return await _public_api_json(
             {
                 **_post_summary(post),
                 "body_html": post.body_html,
@@ -279,7 +289,7 @@ async def api_page_detail(slug: str):
         if page is None:
             abort(404)
 
-        return jsonify(
+        return await _public_api_json(
             {
                 **_page_summary(page),
                 "body_html": page.body_html,
@@ -326,7 +336,7 @@ async def api_tags_list():
             }
             for t, cnt in rows
         ]
-        return jsonify({"items": items, "total": len(items)})
+        return await _public_api_json({"items": items, "total": len(items)})
 
 
 @api_v1_bp.get("/users/<handle>")
@@ -372,89 +382,66 @@ async def api_user_profile(handle: str):
             )
         ).scalar_one()
 
-        return jsonify(_user_public(user, post_count))
+        return await _public_api_json(_user_public(user, post_count))
 
 
 @api_v1_bp.get("/search")
 async def api_search():
-    """Full-text search (§12 FTS).
-
-    Query parameters: q, page (default 1), per_page (default 20, max 50)
-    """
-    from sqlalchemy import select
-
+    """Public search using the shared SSR/API visibility policy."""
     from arborpress.core.db import get_db_session
-    from arborpress.core.db_capabilities import get_capabilities
-    from arborpress.models.content import Post, PostStatus, PostVisibility
+    from arborpress.core.search import search_public_content
+    from arborpress.core.site_settings import get_section
 
     q = request.args.get("q", "").strip()
-    if not q:
-        return jsonify({"items": [], "total": 0})
     _api_rate_limit("search", "60/minute")
-
     try:
-        page = max(1, int(request.args.get("page", 1)))
-        per_page = min(max(1, int(request.args.get("per_page", 20))), 50)
+        page = int(request.args.get("page", 1))
+        per_page = int(request.args.get("per_page", 20))
     except ValueError:
         abort(400, "page and per_page must be integers")
 
-    try:
-        caps = get_capabilities()
-    except RuntimeError:
-        caps = None  # not yet initialised – fall through to ILIKE
-
     async for db in get_db_session():
-        base = (Post.status == PostStatus.PUBLISHED) & (Post.visibility == PostVisibility.PUBLIC)
-        if caps and caps.fts_provider == "pg_fts":
-            from sqlalchemy import func as _f
-
-            stmt = (
-                select(Post)
-                .where(base)
-                .where(
-                    _f.to_tsvector("simple", Post.title + " " + Post.body_md).op("@@")(
-                        _f.plainto_tsquery("simple", q)
-                    )
-                )
-                .order_by(Post.published_at.desc())
-                .limit(per_page)
-                .offset((page - 1) * per_page)
+        settings = await get_section("search", db)
+        try:
+            result = await search_public_content(
+                db,
+                q,
+                page=page,
+                per_page=per_page,
+                language=request.args.get("lang"),
+                configured_provider=settings.get("provider", "auto"),
             )
-        elif caps and caps.fts_provider == "mariadb_fulltext":
-            from sqlalchemy import text
-
-            stmt = (
-                select(Post)
-                .where(base)
-                .where(text("MATCH(title, body_md) AGAINST(:q IN BOOLEAN MODE)"))
-                .params(q=q)
-                .order_by(Post.published_at.desc())
-                .limit(per_page)
-                .offset((page - 1) * per_page)
-            )
-        else:
-            # Fallback: ILIKE
-            stmt = (
-                select(Post)
-                .where(base)
-                .where(Post.title.ilike(f"%{q}%"))
-                .order_by(Post.published_at.desc())
-                .limit(per_page)
-                .offset((page - 1) * per_page)
-            )
-
-        posts = (await db.execute(stmt)).scalars().all()
-        return jsonify(
+        except ValueError as exc:
+            abort(400, str(exc))
+        except Exception as exc:
+            log.warning("Search request failed (%s)", type(exc).__name__)
+            abort(503, "Search is temporarily unavailable")
+        return await _public_api_json(
             {
-                "items": [_post_summary(p) for p in posts],
-                "q": q,
-                "page": page,
-                "per_page": per_page,
-                "total": len(posts),  # FTS total is expensive; return page count
+                "items": [
+                    {
+                        "kind": item.kind,
+                        "id": item.object_id,
+                        "slug": item.slug,
+                        "title": item.title,
+                        "excerpt": item.excerpt,
+                        "lang": item.lang,
+                        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+                        "url": f"/{'p' if item.kind == 'post' else 'page'}/{item.slug}",
+                    }
+                    for item in result.items
+                ],
+                "q": result.query,
+                "page": result.page,
+                "per_page": result.per_page,
+                "total": result.total,
+                "pages": max(1, (result.total + result.per_page - 1) // result.per_page),
+                "provider": result.provider,
+                "degraded": result.degraded,
             }
         )
     # Should not be reached
-    return jsonify({"items": [], "total": 0, "q": q})
+    return await _public_api_json({"items": [], "total": 0, "q": q})
 
 
 # ---------------------------------------------------------------------------

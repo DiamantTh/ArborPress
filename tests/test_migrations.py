@@ -24,7 +24,7 @@ from arborpress.core.migrations import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pre_alembic_phase1_schema.sql"
-CURRENT_HEAD = "0016_oauth_resource_idempotency"
+CURRENT_HEAD = "0017_search_indexes"
 
 
 def _sqlite_engine(path: Path) -> AsyncEngine:

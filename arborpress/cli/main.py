@@ -905,18 +905,41 @@ def healthcheck() -> None:
     import asyncio
 
     async def _check() -> None:
-        from arborpress.core.db import get_engine
-        from arborpress.core.db_capabilities import detect_capabilities
+        from arborpress.core.cache import cache_backend_info, cache_health
+        from arborpress.core.db import get_db_session, get_engine
+        from arborpress.core.db_capabilities import detect_capabilities, set_capabilities
+        from arborpress.core.search import search_health
+        from arborpress.core.site_settings import get_section
 
         engine = get_engine()
         try:
+            configured = "auto"
+            async for db in get_db_session():
+                settings = await get_section("search", db)
+                configured = str(settings.get("provider", "auto"))
+                break
             caps = await detect_capabilities(engine)
+            set_capabilities(caps)
             typer.echo(
                 __("DB: {engine} {version}").format(
                     engine=caps.engine_name, version=caps.version_string
                 )
             )
             typer.echo(__("FTS: {provider}").format(provider=caps.fts_provider))
+            search_status = await search_health(engine, configured)
+            typer.echo(
+                f"Search: {search_status['provider']} "
+                f"({'healthy' if search_status['healthy'] else 'degraded'})"
+            )
+            try:
+                cache_ok, cache_detail = await asyncio.wait_for(cache_health(), timeout=1.0)
+                cache_backend = cache_backend_info()
+            except Exception as exc:
+                cache_ok, cache_detail, cache_backend = False, type(exc).__name__, "unknown"
+            typer.echo(
+                f"Cache: {cache_backend} "
+                f"({'healthy' if cache_ok else 'degraded'}: {cache_detail})"
+            )
             typer.echo(__("Status: OK"))
         except Exception as exc:
             typer.echo(__("DB error: {exc}").format(exc=exc), err=True)
@@ -1603,7 +1626,7 @@ def user_password_disable(
                     "  Set up WebAuthn or TOTP first before disabling the password.",
                     err=True,
                 )
-                raise typer.Exit(1)
+                raise typer.Exit(1) from None
             user.legacy_password_enabled = False
             user.legacy_password_hash = None
             db.add(user)
@@ -1887,7 +1910,7 @@ def mfa_remove(
                     )
                     await db.commit()
                     typer.echo("ERROR: This is the last usable authentication path.", err=True)
-                    raise typer.Exit(1)
+                    raise typer.Exit(1) from None
             await db.delete(device)
             if device.device_type == MFADeviceType.TOTP:
                 await write_audit_event(
@@ -2117,22 +2140,95 @@ def search_reindex(
         ),
     ),
 ) -> None:
-    """Rebuilds the search index (§12 FTS, §14 search reindex)."""
-    from arborpress.core.site_settings import get_defaults
+    """Validate the active search path and report its real rebuild semantics."""
+    import json
 
-    effective = provider or get_defaults("search").get("provider", "fallback")
-    typer.echo(f"Reindex with provider {effective!r} (TODO: provider-specific actions).")
+    from arborpress.core.db import get_db_session, get_engine
+    from arborpress.core.db_capabilities import detect_capabilities, set_capabilities
+    from arborpress.core.search import search_health
+    from arborpress.core.site_settings import get_section
 
-    async def _show_caps() -> None:
-        from arborpress.core.db import get_engine
-        from arborpress.core.db_capabilities import detect_capabilities
+    allowed = {
+        "auto", "pg_fts", "mariadb_fulltext", "sqlite_fts5", "fallback",
+        "meilisearch", "typesense", "elasticsearch", "manticore",
+    }
+    if provider is not None and provider not in allowed:
+        typer.echo("Unsupported search provider selection.", err=True)
+        raise typer.Exit(2)
 
+    async def _run() -> dict[str, Any]:
+        configured_default = "auto"
+        async for db in get_db_session():
+            search_settings = await get_section("search", db)
+            configured_default = str(search_settings.get("provider", "auto"))
+            break
+        configured = provider or configured_default
         caps = await detect_capabilities(get_engine())
-        typer.echo(f"DB-FTS:     {caps.fts_provider}")
-        if caps.external_fts:
-            typer.echo(f"Externe FTS: {caps.external_fts}")
+        set_capabilities(caps)
+        status = await search_health(get_engine(), configured or "auto")
+        status["database"] = caps.engine_name
+        status["database_capability"] = caps.fts_provider
+        status["external_service_reachable"] = bool(caps.external_fts)
+        return status
 
-    asyncio.run(_show_caps())
+    try:
+        status = asyncio.run(_run())
+    except Exception as exc:
+        typer.echo(f"Search status failed ({type(exc).__name__}).", err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(json.dumps(status, indent=2))
+    if status["provider"] in {"pg_fts", "mariadb_fulltext"}:
+        typer.echo(
+            "Search indexes are maintained by the database as content changes; "
+            "no batch rebuild is needed."
+        )
+    elif status["provider"] == "like":
+        typer.echo("Using the bounded database LIKE fallback; no separate index exists to rebuild.")
+    if status["degraded"]:
+        typer.echo("Search is degraded; see the diagnostic field above.", err=True)
+        raise typer.Exit(1)
+
+
+@search_app.command("status")
+def search_status(
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON diagnostics"),
+) -> None:
+    """Report the configured and effective public search provider."""
+    import json
+
+    from arborpress.core.db import get_db_session, get_engine
+    from arborpress.core.db_capabilities import detect_capabilities, set_capabilities
+    from arborpress.core.search import search_health
+    from arborpress.core.site_settings import get_section
+
+    async def _run() -> dict[str, Any]:
+        configured = "auto"
+        async for db in get_db_session():
+            settings = await get_section("search", db)
+            configured = str(settings.get("provider", "auto"))
+            break
+        caps = await detect_capabilities(get_engine())
+        set_capabilities(caps)
+        status = await search_health(get_engine(), configured)
+        status["database"] = caps.engine_name
+        status["database_capability"] = caps.fts_provider
+        status["external_service_reachable"] = bool(caps.external_fts)
+        return status
+
+    try:
+        status = asyncio.run(_run())
+    except Exception as exc:
+        typer.echo(f"Search status unavailable ({type(exc).__name__}).", err=True)
+        raise typer.Exit(1) from exc
+    if json_output:
+        typer.echo(json.dumps(status, indent=2))
+    else:
+        typer.echo(f"Configured: {status['configured_provider']}")
+        typer.echo(f"Effective:  {status['provider']}")
+        typer.echo(f"Database:   {status['database']}")
+        typer.echo(f"Health:     {'healthy' if status['healthy'] else 'degraded'}")
+        typer.echo(f"Details:    {status['diagnostic']}")
 
 
 # ---------------------------------------------------------------------------
@@ -2143,11 +2239,17 @@ def search_reindex(
 @cache_app.command("status")
 def cache_status() -> None:
     """Shows cache backend status (§14 cache status)."""
-    from arborpress.core.cache import cache_backend_info
+    from arborpress.core.cache import cache_backend_info, cache_health, cache_namespace
 
     info = cache_backend_info()
+    healthy, diagnostic = asyncio.run(cache_health())
+    cfg = get_settings().cache
     typer.echo(f"Cache backend: {info}")
-    typer.echo(f"Default TTL:   {get_settings().cache.ttl}s")
+    typer.echo(f"Namespace:     {cache_namespace()}")
+    typer.echo(f"L1/L2:         {'enabled' if cfg.l1_enabled else 'disabled'}"
+               + (f" / L1 TTL {min(max(cfg.l1_ttl, 1), 5)}s max" if cfg.l1_enabled else ""))
+    typer.echo(f"Reachability:  {'healthy' if healthy else 'degraded'} ({diagnostic})")
+    typer.echo(f"Default TTL:   {cfg.ttl}s")
 
 
 @cache_app.command("purge")
@@ -2166,20 +2268,13 @@ def cache_purge() -> None:
 
 @cache_app.command("warm")
 def cache_warm() -> None:
-    """Pre-warms important cache entries (§14 cache warm)."""
+    """Warm safe public caches where configured.
 
-    async def _warm() -> None:
-        from arborpress.core.db import get_db_session
-        from arborpress.core.site_settings import get_section
-
-        sections = ["general", "theme", "mail", "comments", "captcha", "federation", "search"]
-        async for db in get_db_session():
-            for sec in sections:
-                await get_section(sec, db)
-                typer.echo(f"  Warm: site_settings[{sec!r}]")
-        typer.echo("Cache warmed up.")
-
-    asyncio.run(_warm())
+    Core page/object response caching is not enabled today; warming private
+    mail/auth/federation settings in an exiting one-shot CLI process would not
+    benefit web workers, so report that there is no safe shared target.
+    """
+    typer.echo("No shared public response-cache entries are configured; nothing to warm.")
 
 
 # ---------------------------------------------------------------------------

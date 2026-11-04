@@ -15,6 +15,7 @@ Canonical URL hierarchy:
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import logging
 import mimetypes
 import os
@@ -504,30 +505,39 @@ async def post_detail(slug: str):
             rel_result = await db.execute(rel_stmt)
             related_posts = [row[0] for row in rel_result.all()]
 
-    return await _render(
-        "post.html",
-        post=post,
-        captcha=captcha_ctx,
-        related_posts=related_posts,
-        comment_threads=comment_threads,
-        comment_count=len(visible_comments),
-        comment_policy=comment_policy,
-        comment_vote_counts=vote_counts,
-        comment_own_votes=own_votes,
-        comment_editable_ids=editable_comments,
-        comment_author_decisions=author_decisions,
-        comment_pending_own=own_pending_comments,
-        comment_hidden_own=own_hidden_comments,
-        comment_appeal_days=appeal_days,
-        comment_active_user=active_user,
-        post_authors=post_authors,
-        comment_author_ids=comment_author_ids,
-        comment_reply_target=reply_target,
-        comment_quote_target=quote_target,
-        comment_edit_target=edit_target,
-        comment_reason_catalog=REASON_CATALOG,
-        post_activitypub_actor_uri=post_activitypub_actor_uri,
+    assert post is not None
+    from arborpress.web.http_cache import conditional_response
+
+    response = Response(
+        await _render(
+            "post.html",
+            post=post,
+            captcha=captcha_ctx,
+            related_posts=related_posts,
+            comment_threads=comment_threads,
+            comment_count=len(visible_comments),
+            comment_policy=comment_policy,
+            comment_vote_counts=vote_counts,
+            comment_own_votes=own_votes,
+            comment_editable_ids=editable_comments,
+            comment_author_decisions=author_decisions,
+            comment_pending_own=own_pending_comments,
+            comment_hidden_own=own_hidden_comments,
+            comment_appeal_days=appeal_days,
+            comment_active_user=active_user,
+            post_authors=post_authors,
+            comment_author_ids=comment_author_ids,
+            comment_reply_target=reply_target,
+            comment_quote_target=quote_target,
+            comment_edit_target=edit_target,
+            comment_reason_catalog=REASON_CATALOG,
+            post_activitypub_actor_uri=post_activitypub_actor_uri,
+        ),
+        mimetype="text/html",
     )
+    # The representation includes comment/thread state and session-specific
+    # controls, so use a body ETag instead of a Post timestamp as its validator.
+    return await conditional_response(response, private=True)
 
 
 # ---------------------------------------------------------------------------
@@ -582,7 +592,12 @@ async def page_detail(slug: str):
     if page.visibility == PostVisibility.PRIVATE:
         abort(404)
     # hidden: reachable but not linked in navigation/footer
-    return await _render("page.html", page=page)
+    from arborpress.web.http_cache import conditional_response
+
+    response = Response(await _render("page.html", page=page), mimetype="text/html")
+    # Theme/template changes also affect the rendered representation; its ETag
+    # is a more accurate validator than the Page row timestamp.
+    return await conditional_response(response, private=True)
 
 
 # ---------------------------------------------------------------------------
@@ -631,75 +646,44 @@ async def tag_archive(tag: str):
 
 @public_bp.get("/search")
 async def search():
-    """Volltext-Suche (§12 FTS, §6)."""
+    """Public search through the same visibility-aware service as API v1."""
     q = request.args.get("q", "").strip()
     results = []
 
     if q:
-        from arborpress.core.db_capabilities import get_capabilities
-        from arborpress.models.content import Post, PostStatus, PostVisibility
-
-        caps = get_capabilities()
-
         try:
+            from arborpress.core.search import search_public_content
+            from arborpress.core.site_settings import get_section
+
             async for db in get_db_session():
-                if caps and caps.fts_provider == "pg_fts":
-                    from sqlalchemy import func, text
-
-                    stmt = (
-                        select(Post)
-                        .where(
-                            Post.status == PostStatus.PUBLISHED,
-                            Post.visibility == PostVisibility.PUBLIC,
-                        )
-                        .where(
-                            func.to_tsvector("simple", Post.title + " " + Post.body_md).op("@@")(
-                                func.plainto_tsquery("simple", q)
-                            )
-                        )
-                        .limit(50)
-                    )
-                elif caps and caps.fts_provider == "mariadb_fulltext":
-                    from sqlalchemy import text
-
-                    stmt = (
-                        select(Post)
-                        .where(
-                            Post.status == PostStatus.PUBLISHED,
-                            Post.visibility == PostVisibility.PUBLIC,
-                        )
-                        .where(text("MATCH(title, body_md) AGAINST(:q IN BOOLEAN MODE)"))
-                        .params(q=q)
-                        .limit(50)
-                    )
-                else:
-                    # Fallback: LIKE (§12)
-                    from arborpress.models.content import PostVisibility
-
-                    stmt = (
-                        select(Post)
-                        .where(
-                            Post.status == PostStatus.PUBLISHED,
-                            Post.visibility == PostVisibility.PUBLIC,
-                        )
-                        .where(Post.title.ilike(f"%{q}%"))
-                        .limit(50)
-                    )
-
-                result = await db.execute(stmt)
-                posts = result.scalars().all()
+                search_settings = await get_section("search", db)
+                search_result = await search_public_content(
+                    db,
+                    q,
+                    per_page=50,
+                    configured_provider=search_settings.get("provider", "auto"),
+                )
                 results = [
                     {
-                        "title": p.title,
-                        "url": url_for("public.post_detail", slug=p.slug),
-                        "excerpt": p.excerpt,
+                        "title": item.title,
+                        "url": url_for(
+                            "public.post_detail" if item.kind == "post" else "public.page_detail",
+                            slug=item.slug,
+                        ),
+                        "excerpt": item.excerpt,
                     }
-                    for p in posts
+                    for item in search_result.items
                 ]
         except Exception as exc:
-            log.warning("Suche fehlgeschlagen: %s", exc)
+            if isinstance(exc, ValueError):
+                abort(400, "Search query is invalid")
+            log.warning("Public search failed (%s)", type(exc).__name__)
+            abort(503, "Search is temporarily unavailable")
 
-    return await _render("search.html", q=q, results=results)
+    from arborpress.web.http_cache import conditional_response
+
+    response = Response(await _render("search.html", q=q, results=results), mimetype="text/html")
+    return await conditional_response(response, private=True)
 
 
 # ---------------------------------------------------------------------------
@@ -737,8 +721,20 @@ async def media_serve(yyyy: int, mm: int, filename: str):
             while chunk := await f.read(65536):
                 yield chunk
 
+    stat = media_path.stat()
+    validator = hashlib.sha256(
+        f"{stat.st_ino}:{stat.st_size}:{stat.st_mtime_ns}".encode()
+    ).hexdigest()
     resp = Response(stream_file(), mimetype=mime)
-    # Cache-Header werden von SecurityHeadersMiddleware gesetzt (§10)
+    from arborpress.web.http_cache import conditional_response
+
+    await conditional_response(
+        resp,
+        etag=validator,
+        last_modified=stat.st_mtime,
+        weak_etag=True,
+        cache_control="public, max-age=31536000, immutable",
+    )
 
     # §10 SVG-XSS-Schutz: SVGs können JavaScript enthalten und werden auf
     # derselben Origin ausgeliefert → restriktive CSP aufzwingen, sodass
@@ -1352,14 +1348,18 @@ def _post_url(base: str, post) -> str:
 def _rfc3339(d: dt.datetime | None) -> str:
     """ISO-8601 / RFC 3339 date for Atom. Always UTC + Z suffix."""
     if d is None:
-        return dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        return "1970-01-01T00:00:00Z"
+    if d.tzinfo is not None:
+        d = d.astimezone(dt.UTC).replace(tzinfo=None)
     return d.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _rfc822_ts(d: dt.datetime | None) -> str:
     """RFC-822 date for RSS 2.0."""
     if d is None:
-        return _rfc822(dt.datetime.utcnow().timestamp(), usegmt=True)
+        return "Thu, 01 Jan 1970 00:00:00 GMT"
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=dt.UTC)
     return _rfc822(d.timestamp(), usegmt=True)
 
 
@@ -1410,7 +1410,6 @@ async def rss_feed():
     language = general.get("site_language", "de")
     posts = await _feed_posts()
 
-    now_rfc = _rfc822_ts(dt.datetime.utcnow())
     last_build = _rfc822_ts(posts[0].published_at if posts else None)
 
     items = []
@@ -1437,13 +1436,15 @@ async def rss_feed():
         f"    <description>{description}</description>\n"
         f"    <language>{language}</language>\n"
         f"    <lastBuildDate>{last_build}</lastBuildDate>\n"
-        f"    <pubDate>{now_rfc}</pubDate>\n"
+        f"    <pubDate>{last_build}</pubDate>\n"
         f'    <atom:link href="{base_url}/feed.xml" rel="self" '
         f'type="application/rss+xml"/>\n' + "\n".join(items) + "\n"
         "  </channel>\n"
         "</rss>"
     )
-    return Response(xml, content_type=_RSS_MIME)
+    from arborpress.web.http_cache import conditional_response
+
+    return await conditional_response(Response(xml, content_type=_RSS_MIME), max_age=300)
 
 
 @public_bp.get("/feed/atom.xml")
@@ -1492,4 +1493,6 @@ async def atom_feed():
         f'  <link href="{base_url}/feed/atom.xml" rel="self"/>\n' + "\n".join(entries) + "\n"
         "</feed>"
     )
-    return Response(xml, content_type=_ATOM_MIME)
+    from arborpress.web.http_cache import conditional_response
+
+    return await conditional_response(Response(xml, content_type=_ATOM_MIME), max_age=300)

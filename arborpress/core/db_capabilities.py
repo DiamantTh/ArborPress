@@ -63,8 +63,8 @@ class DBCapabilities:
     # Feature-Flags (neuere Versionen)
     returning: bool = False          # RETURNING in INSERT/UPDATE/DELETE
     merge_stmt: bool = False         # MERGE / INSERT … ON CONFLICT DO UPDATE
-    json_table: bool = False         # json_table() / JSON_TABLE() Tabellenfunktion: PG 17+, MariaDB 10.6+
-    uuid_type: bool = False          # Nativer UUID-Typ / gen_random_uuid(): PG 16+ (builtin), MariaDB 11.4+
+    json_table: bool = False         # json_table()/JSON_TABLE(): PG 17+, MariaDB 10.6+
+    uuid_type: bool = False          # UUID/gen_random_uuid(): PG 16+ (builtin), MariaDB 11.4+
     vector_ops: bool = False         # Vektor/Embedding-Support: pgvector-Extension, MariaDB 11.6+
 
     # Externe FTS-Engine (falls konfiguriert)
@@ -211,12 +211,11 @@ async def detect_capabilities(engine: AsyncEngine) -> DBCapabilities:
             caps.vector_ops = False
 
     # -----------------------------------------------------------------------
-    # Detect external FTS engine (optional, overrides native provider)
+    # Detect configured external service reachability for diagnostics only.
+    # The search service does not currently synchronize/query external indexes,
+    # so this must not claim an external provider is active or healthy search.
     # -----------------------------------------------------------------------
     caps.external_fts = await _detect_external_fts()
-    if caps.external_fts:
-        caps.fts_available = True
-        caps.fts_provider = caps.external_fts
 
     log.info(
         "DB-Capabilities: engine=%s version=%s fts=%s(%s) external_fts=%r "
@@ -258,7 +257,7 @@ async def _detect_external_fts() -> str:
         if provider == "manticore":
             return "manticore"  # No HTTP check here (MySQL protocol)
     except Exception as exc:
-        log.debug("External FTS detection failed: %s", exc)
+        log.debug("External FTS detection failed (%s)", type(exc).__name__)
     return ""
 
 
@@ -270,8 +269,8 @@ async def _check_meilisearch(cfg: dict) -> str:
             r = await client.get(f"{url}/health")
             if r.status_code == 200:
                 return "meilisearch"
-    except Exception:
-        log.debug("Meilisearch not reachable: %s", url)
+    except Exception as exc:
+        log.debug("Meilisearch health probe failed (%s)", type(exc).__name__)
     return ""
 
 
@@ -288,8 +287,8 @@ async def _check_typesense(cfg: dict) -> str:
             )
             if r.status_code == 200:
                 return "typesense"
-    except Exception:
-        log.debug("Typesense not reachable: %s:%s", host, port)
+    except Exception as exc:
+        log.debug("Typesense health probe failed (%s)", type(exc).__name__)
     return ""
 
 
@@ -301,8 +300,8 @@ async def _check_elasticsearch(cfg: dict) -> str:
             r = await client.get(url)
             if r.status_code == 200:
                 return "elasticsearch"
-    except Exception:
-        log.debug("Elasticsearch not reachable: %s", url)
+    except Exception as exc:
+        log.debug("Elasticsearch health probe failed (%s)", type(exc).__name__)
     return ""
 
 
