@@ -17,7 +17,9 @@ backup/restore evidence, build artifact identity, and deployment configuration.
 - Review open security findings and verify the security-sensitive regression
   suites.
 - Build a wheel whose embedded build SHA matches the source commit; smoke-test
-  installation and CLI startup in an isolated environment.
+  installation and CLI startup in an isolated environment. Use
+  `poetry run python scripts/build_package.py`; plain `poetry build` remains a
+  metadata/buildability check and carries the neutral `unknown` source marker.
 - Record container/runtime checks and the exact deployment artifact checksum.
 
 These gates describe evidence for an operational decision. They do not create

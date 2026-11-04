@@ -1,6 +1,6 @@
 # ArborPress – Sicherheitsevaluierung
 
-**Datum**: Juli 2026  
+**Datum**: November 2026
 **Stand**: source-identified ArborPress build
 **Status**: Produktionsreife mit empfohlenen Verbesserungen
 
