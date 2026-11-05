@@ -79,11 +79,17 @@ async def test_full_encrypted_sqlite_restore_includes_secret_config_and_files(
     tags = Base.metadata.tables["tags"]
     async with engine.begin() as connection:
         await connection.execute(insert(tags).values(id=987_654, slug="saved", label="Saved"))
+    from cryptography.fernet import Fernet
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from arborpress.auth.oauth_server import create_signing_key, private_key
-    from arborpress.models.oidc import OIDCSigningKey
-    from arborpress.models.user import User, WebAuthnCredential
+    from arborpress.auth.oidc_providers import _fernet as provider_fernet
+    from arborpress.auth.oidc_providers import provider_secret
+    from arborpress.models.oidc import OIDCProvider, OIDCSigningKey
+
+    actor_recovery_key = Fernet.generate_key()
+    actor_cipher = Fernet(actor_recovery_key)
+    from arborpress.models.user import InstanceKeypair, User, WebAuthnCredential
 
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as db:
@@ -97,6 +103,16 @@ async def test_full_encrypted_sqlite_restore_includes_secret_config_and_files(
         signing_key = await create_signing_key(db)
         signing_kid = signing_key.kid
         signing_material = private_key(signing_key)
+        db.add(InstanceKeypair(
+            id=1, key_id_url="https://backup.example/ap/actor#main-key",
+            public_key_pem=signing_key.public_key_pem,
+            private_key_enc=actor_cipher.encrypt(signing_material), algorithm="rsa-sha256",
+        ))
+        db.add(OIDCProvider(
+            id="backup-provider", name="Recovery provider", issuer="https://issuer.example",
+            client_id="recovery-client", enabled=False,
+            client_secret_enc=provider_fernet().encrypt(b"synthetic-provider-secret"),
+        ))
         await db.commit()
     key = BackupKey("passphrase", b"full restore recovery phrase")
     try:
@@ -147,6 +163,13 @@ async def test_full_encrypted_sqlite_restore_includes_secret_config_and_files(
             recovered_credential = await db.get(WebAuthnCredential, "backup-credential")
             assert recovered_credential is not None
             assert recovered_credential.public_key == b"backup-webauthn-public"
+            recovered_actor_key = await db.get(InstanceKeypair, 1)
+            assert recovered_actor_key is not None
+            assert actor_cipher.decrypt(recovered_actor_key.private_key_enc) == signing_material
+            assert recovered_actor_key.key_id_url == "https://backup.example/ap/actor#main-key"
+            recovered_provider = await db.get(OIDCProvider, "backup-provider")
+            assert recovered_provider is not None
+            assert provider_secret(recovered_provider) == "synthetic-provider-secret"
         assert (paths.config / "config.toml").read_text(encoding="utf-8") == (
             'secret = "saved secret"\n'
         )
@@ -870,7 +893,9 @@ async def test_restore_maintenance_marker_blocks_web_requests(client, runtime_pr
     marker.parent.mkdir(parents=True, exist_ok=True)
     try:
         marker.write_text('{"restore_id":"test"}\n', encoding="utf-8")
-        response = await client.get("/_health")
+        assert (await client.get("/_health")).status_code == 200
+        assert (await client.get("/_ready")).status_code == 503
+        response = await client.get("/")
         assert response.status_code == 503
         assert response.headers["Cache-Control"] == "no-store"
         assert response.headers["Retry-After"] == "60"
