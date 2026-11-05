@@ -158,7 +158,9 @@ async def collect_doctor_report(*, production: bool = False) -> dict[str, object
         production_blocker=True,
     )
 
-    schema_head: str | None = None
+    from arborpress.core.migrations import migration_history
+
+    schema_head: str | None = migration_history()[0][0]
     schema_state = "unavailable"
     engine = None
     database_version: str | None = None
@@ -310,7 +312,7 @@ async def collect_doctor_report(*, production: bool = False) -> dict[str, object
 
     site: dict[str, dict[str, object]] = {}
     try:
-        if engine is not None:
+        if engine is not None and schema_state == "current":
             from sqlalchemy.ext.asyncio import async_sessionmaker
 
             from arborpress.core.site_settings import get_section_uncached
@@ -333,7 +335,7 @@ async def collect_doctor_report(*, production: bool = False) -> dict[str, object
     try:
         from arborpress.core.search import search_health
 
-        if engine is not None:
+        if engine is not None and schema_state == "current":
             search_status = await asyncio.wait_for(
                 search_health(engine, str(search.get("provider", "auto"))), timeout=2.0
             )
@@ -417,6 +419,16 @@ async def collect_doctor_report(*, production: bool = False) -> dict[str, object
                     and oauth_state is not None
                     and oauth_state.issuer == settings.web.base_url.rstrip("/")
                 )
+                if oauth_enabled and oauth_ok:
+                    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+                    from arborpress.auth.oauth_server import private_key
+
+                    signing_key = await db.scalar(
+                        select(OIDCSigningKey).where(OIDCSigningKey.is_current)
+                    )
+                    if signing_key is not None:
+                        load_pem_private_key(private_key(signing_key), password=None)
                 _check(
                     checks,
                     "oauth_oidc_server",

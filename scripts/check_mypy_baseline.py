@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +34,15 @@ def main() -> int:
     if result.returncode not in {0, 1} or (result.returncode == 1 and count == 0):
         print("mypy failed without a valid diagnostic result.", file=sys.stderr)
         return 2
+    current: Counter[str] = Counter()
+    for line in output.splitlines():
+        match = re.match(r"(.+?):\d+(?::\d+)?: error: (.*)", line)
+        if match:
+            current[match.group(1) + ": " + match.group(2)] += 1
+    unexpected = current - Counter(baseline.get("findings", {}))
+    if unexpected:
+        print("New mypy diagnostic fingerprints:", dict(unexpected), file=sys.stderr)
+        return 1
     if count > allowed:
         print("Repository-wide mypy baseline regressed.", file=sys.stderr)
         return 1

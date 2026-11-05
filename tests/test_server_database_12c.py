@@ -20,7 +20,12 @@ from arborpress.runtime.paths import ArborPressPaths, ensure_instance_layout
 
 
 @pytest.mark.asyncio
-async def test_server_database_release_drill(tmp_path: Path) -> None:
+@pytest.mark.parametrize("start_revision", (
+    "0012_federation_signature_summaries", "0013_oidc_external_identities",
+    "0014_oidc_provider_lifecycle", "0015_oauth_oidc_authorization_server",
+    "0016_oauth_resource_idempotency", "0017_search_indexes",
+))
+async def test_server_database_release_drill(tmp_path: Path, start_revision: str) -> None:
     database_url = os.environ.get("ARBORPRESS_TEST_DATABASE_URL")
     if not database_url:
         pytest.skip("set ARBORPRESS_TEST_DATABASE_URL to a disposable server database")
@@ -46,7 +51,7 @@ async def test_server_database_release_drill(tmp_path: Path) -> None:
             assert "MariaDB" in capabilities.version_string
             assert (capabilities.major, capabilities.minor) >= (11, 4)
 
-        await downgrade_database("0012_federation_signature_summaries", engine)
+        await downgrade_database(start_revision, engine)
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
         user_id = str(uuid.uuid4())
         suffix = secrets.token_hex(6)

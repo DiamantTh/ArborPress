@@ -8,7 +8,7 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any, cast
 
-from quart import Quart, Response, session
+from quart import Quart, Response, request, session
 from quart.templating import Environment as QuartEnvironment
 from quart.typing import ResponseReturnValue
 
@@ -63,6 +63,8 @@ def create_app() -> Quart:
     @app.before_request
     async def _restore_maintenance_gate() -> ResponseReturnValue | None:
         """Fail closed while an offline restore is switching instance state."""
+        if request.path in {"/_health", "/_ready"}:
+            return None
         markers = (
             paths.run / "restore-maintenance.json",
             paths.run / "restore-journal.json",

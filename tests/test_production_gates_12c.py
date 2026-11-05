@@ -58,6 +58,8 @@ async def test_readiness_blocks_restore_journal_without_leaking_details(client) 
     marker = get_runtime_paths().run / "restore-journal.json"
     marker.write_text('{"secret":"do-not-return"}', encoding="utf-8")
     try:
+        liveness = await client.get("/_health")
+        assert liveness.status_code == 200
         response = await client.get("/_ready")
         assert response.status_code == 503
         assert response.headers["Cache-Control"] == "no-store"
