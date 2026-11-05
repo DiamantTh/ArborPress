@@ -348,7 +348,6 @@ class FileBackend(CacheBackend):
     def __init__(self, directory: str, prefix: str = "ap_") -> None:
         self._dir = Path(directory)
         self._prefix = prefix
-        self._dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
         safe = hashlib.sha256(key.encode("utf-8")).hexdigest()
@@ -374,6 +373,7 @@ class FileBackend(CacheBackend):
             "expires": (time.time() + ttl) if ttl > 0 else 0,
         }
         try:
+            self._dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             temporary = p.with_name(f".{p.name}.{secrets.token_hex(6)}.tmp")
             temporary.write_text(json.dumps(payload, default=str), encoding="utf-8")
             temporary.chmod(0o600)
@@ -667,7 +667,7 @@ def cache_namespace() -> str:
     return CACHE_NAMESPACE
 
 
-async def cache_health() -> tuple[bool, str]:
+async def cache_health(*, read_only: bool = False) -> tuple[bool, str]:
     """Probe the backend with an isolated, short-lived ArborPress key."""
     backend = get_backend()
     if isinstance(backend, NamespacedBackend):
@@ -676,6 +676,9 @@ async def cache_health() -> tuple[bool, str]:
         backend = backend._l2
     key = f"_health:{secrets.token_hex(8)}"
     try:
+        if read_only:
+            await backend.get(key)
+            return True, "read_reachable"
         await backend.set(key, "ok", 5)
         value = await backend.get(key)
         await backend.delete(key)

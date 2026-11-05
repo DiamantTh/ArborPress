@@ -224,6 +224,17 @@ async def dashboard():
     return await render_template("admin/dashboard.html", stats=stats, noindex=True)
 
 
+@admin_bp.get("/system")
+async def system_status() -> ResponseReturnValue:
+    """Render sanitized read-only operational status for administrators."""
+    _require_session()
+    require_role("admin")
+    from arborpress.core.doctor import collect_doctor_report
+
+    report = await collect_doctor_report(production=False)
+    return await render_template("admin/system_status.html", report=report, noindex=True)
+
+
 async def _oidc_admin_stepup(operation: str = "manage_oidc_provider") -> str:
     _require_session()
     require_role("admin")

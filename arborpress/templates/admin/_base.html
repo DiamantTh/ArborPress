@@ -31,6 +31,7 @@
 <a href="{{ url_for('admin.federation_diagnostics') }}"{% if request.endpoint and request.endpoint.startswith('admin.federation') %} aria-current="page"{% endif %}>{{ _('Federation') }}</a>
 <a href="{{ url_for('admin.oidc_providers') }}"{% if request.endpoint and request.endpoint.startswith('admin.oidc_provider') %} aria-current="page"{% endif %}>{{ _('OIDC') }}</a>
 <a href="{{ url_for('admin.oauth_server_admin') }}"{% if request.endpoint and request.endpoint.startswith('admin.oauth_') %} aria-current="page"{% endif %}>OAuth Server</a>
+<a href="{{ url_for('admin.system_status') }}"{% if request.endpoint == 'admin.system_status' %} aria-current="page"{% endif %}>{{ _('Systemstatus') }}</a>
 {% endif %}
 <form method="post" action="{{ url_for('auth.logout') }}" style="display:inline">
   {{ csrf_input() }}

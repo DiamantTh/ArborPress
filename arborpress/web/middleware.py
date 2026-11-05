@@ -23,9 +23,7 @@ class ReverseProxyMiddleware:
         self.app = app
         self.trusted_proxies = trusted_proxies
 
-    async def __call__(
-        self, scope: dict, receive: Callable, send: Callable
-    ) -> None:
+    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
         if scope["type"] in ("http", "websocket"):
             raw_headers = list(scope.get("headers", []))
             headers = dict(raw_headers)
@@ -49,7 +47,9 @@ class ReverseProxyMiddleware:
                 raw_headers.append((b"host", host_value.encode()))
 
             # Prefix for apps mounted below /
-            forwarded_prefix = headers.get(b"x-forwarded-prefix", b"").decode().split(",")[0].strip()
+            forwarded_prefix = (
+                headers.get(b"x-forwarded-prefix", b"").decode().split(",")[0].strip()
+            )
             if forwarded_prefix:
                 prefix = "/" + forwarded_prefix.strip("/")
                 scope["root_path"] = "" if prefix == "/" else prefix

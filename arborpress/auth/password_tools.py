@@ -8,10 +8,10 @@ Focus:
 
 from __future__ import annotations
 
+import secrets
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from importlib import resources
-import secrets
 
 from zxcvbn import zxcvbn
 
@@ -132,7 +132,9 @@ def generate_random_password(*, length: int = DEFAULT_RANDOM_PASSWORD_LENGTH) ->
     return "".join(secrets.choice(SAFE_RANDOM_ALPHABET) for _ in range(length))
 
 
-def generate_diceware_passphrase(*, word_count: int = DEFAULT_DICEWARE_WORDS, delimiter: str = "-") -> str:
+def generate_diceware_passphrase(
+    *, word_count: int = DEFAULT_DICEWARE_WORDS, delimiter: str = "-"
+) -> str:
     if word_count < 4:
         raise ValueError("Diceware passphrases must contain at least 4 words.")
     if word_count > 10:
@@ -143,6 +145,8 @@ def generate_diceware_passphrase(*, word_count: int = DEFAULT_DICEWARE_WORDS, de
     return delimiter.join(words)
 
 
-def generate_xkcd_passphrase(*, word_count: int = DEFAULT_DICEWARE_WORDS, delimiter: str = "-") -> str:
+def generate_xkcd_passphrase(
+    *, word_count: int = DEFAULT_DICEWARE_WORDS, delimiter: str = "-"
+) -> str:
     """Backward-compatible alias for the Diceware-style wordlist generator."""
     return generate_diceware_passphrase(word_count=word_count, delimiter=delimiter)

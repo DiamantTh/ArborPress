@@ -162,6 +162,8 @@ dirs = [
 [cache]
 # Backend: memory (default) | redis | valkey | memcached | file | none
 backend = "memory"
+# Optional dependency by default; readiness blocks only when explicitly true.
+required = false
 # Standard-TTL in Sekunden
 ttl     = 300
 # Key-Präfix

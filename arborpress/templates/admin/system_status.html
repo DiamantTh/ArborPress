@@ -1,0 +1,21 @@
+{% extends "admin/_base.html" %}
+{% block title %}{{ _('Systemstatus') }}{% endblock %}
+
+{% block admin_content %}
+<h1>{{ _('Systemstatus') }}</h1>
+<p>{{ _('Read-only status. Secrets, database URLs and private keys are not displayed.') }}</p>
+<dl>
+  <dt>{{ _('Build commit') }}</dt><dd><code>{{ report.build_sha or _('unavailable') }}</code></dd>
+  <dt>{{ _('Alembic Head') }}</dt><dd><code>{{ report.alembic_head or _('unavailable') }}</code></dd>
+  <dt>{{ _('Datenbank') }}</dt><dd>{{ report.database_backend }}</dd>
+</dl>
+<p><strong>{{ report.status }}</strong> — {{ report.summary.blockers }} {{ _('Blocker') }}, {{ report.summary.warnings }} {{ _('Warnungen') }}</p>
+<table>
+  <thead><tr><th>{{ _('Prüfung') }}</th><th>{{ _('Status') }}</th><th>{{ _('Ergebnis') }}</th></tr></thead>
+  <tbody>
+  {% for check in report.checks %}
+    <tr><th scope="row">{{ check.key }}</th><td>{{ check.level }}</td><td>{{ check.message }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

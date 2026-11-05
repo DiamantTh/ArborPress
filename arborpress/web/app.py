@@ -63,8 +63,11 @@ def create_app() -> Quart:
     @app.before_request
     async def _restore_maintenance_gate() -> ResponseReturnValue | None:
         """Fail closed while an offline restore is switching instance state."""
-        marker = paths.run / "restore-maintenance.json"
-        if marker.exists() or marker.is_symlink():
+        markers = (
+            paths.run / "restore-maintenance.json",
+            paths.run / "restore-journal.json",
+        )
+        if any(marker.exists() or marker.is_symlink() for marker in markers):
             log.warning("Web request rejected while instance restore maintenance is active")
             return Response(
                 "ArborPress is temporarily unavailable while an offline restore is in progress.\n",
@@ -328,10 +331,13 @@ def create_app() -> Quart:
     admin_prefix = cfg.web.admin_path.rstrip("/")
 
     # §14 Install-Wizard (vor allen anderen Blueprints registrieren)
+    from arborpress.web.routes.discovery import discovery_bp
+
+    app.register_blueprint(discovery_bp)
     app.register_blueprint(install_bp)
 
     # §14 Install gate: redirect all requests to /install while .installed is missing
-    # Exceptions: /install itself, /static/, /health
+    # Exceptions: /install itself, /static/, and liveness/readiness probes.
     @app.before_request
     async def _install_gate() -> ResponseReturnValue | None:
         from arborpress.core.config import is_installed
@@ -354,6 +360,7 @@ def create_app() -> Quart:
             or (path in install_enrollment_routes and _session.get("install_enrollment"))
             or path.startswith("/static/")
             or path == "/_health"
+            or path == "/_ready"
             or path == "/favicon.ico"
         ):
             return None
@@ -582,8 +589,11 @@ def create_app() -> Quart:
         from arborpress.core.db_capabilities import detect_capabilities, set_capabilities
         from arborpress.core.scheduler import run_scheduler
 
-        restore_marker = paths.run / "restore-maintenance.json"
-        if restore_marker.exists() or restore_marker.is_symlink():
+        restore_markers = (
+            paths.run / "restore-maintenance.json",
+            paths.run / "restore-journal.json",
+        )
+        if any(marker.exists() or marker.is_symlink() for marker in restore_markers):
             raise RuntimeError(
                 "An interrupted ArborPress restore is marked in maintenance mode; "
                 "run `arborpress restore recover --offline` before starting the web service."

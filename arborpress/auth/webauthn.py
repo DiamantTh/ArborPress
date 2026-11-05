@@ -13,9 +13,9 @@ guard managed via the admin UI.
 
 from __future__ import annotations
 
+import base64
 import ipaddress
 import logging
-import base64
 import re
 from typing import Any
 from urllib.parse import urlparse
@@ -266,9 +266,9 @@ class WebAuthnService:
             from webauthn.helpers.structs import (
                 AttestationConveyancePreference,
                 AuthenticatorSelectionCriteria,
+                COSEAlgorithmIdentifier,
                 ResidentKeyRequirement,
                 UserVerificationRequirement,
-                COSEAlgorithmIdentifier,
             )
             kwargs["attestation"] = AttestationConveyancePreference(self.attestation)
             kwargs["authenticator_selection"] = AuthenticatorSelectionCriteria(

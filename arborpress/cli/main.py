@@ -35,6 +35,7 @@ from arborpress.runtime.paths import (
 if TYPE_CHECKING:
     from cryptography.fernet import Fernet
 
+    from arborpress.auth.password_tools import PasswordAssessment
     from arborpress.backups.encryption import BackupKey
     from arborpress.themes.manifest import ThemeRecord, ThemeRegistry
 
@@ -891,7 +892,7 @@ def serve(
 
     quart_app = create_app()
     typer.echo(__("Starting ArborPress on {bind}").format(bind=hcfg.bind[0]))
-    asyncio.run(hypercorn.asyncio.serve(quart_app, hcfg))  # type: ignore[arg-type]
+    asyncio.run(hypercorn.asyncio.serve(quart_app, hcfg))
 
 
 # ---------------------------------------------------------------------------
@@ -946,6 +947,52 @@ def healthcheck() -> None:
             raise typer.Exit(1) from exc
 
     asyncio.run(_check())
+
+
+@app.command("doctor")
+def doctor(
+    production: bool = typer.Option(False, "--production", help="Apply production readiness gates"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """Run read-only runtime, schema, security and optional-service diagnostics."""
+    from arborpress.core.doctor import collect_doctor_report
+
+    try:
+        report = cast(
+            dict[str, Any], asyncio.run(collect_doctor_report(production=production))
+        )
+    except Exception as exc:
+        payload = {
+            "status": "blocked",
+            "production": production,
+            "build_sha": None,
+            "alembic_head": None,
+            "database_backend": "unknown",
+            "checks": [
+                {
+                    "key": "doctor",
+                    "level": "blocker",
+                    "status": "failed",
+                    "message": f"Doctor could not complete ({type(exc).__name__}).",
+                }
+            ],
+            "summary": {"blockers": 1, "warnings": 0},
+        }
+        report = payload
+    if as_json:
+        typer.echo(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        mode = "production" if production else "diagnostic"
+        typer.echo(f"ArborPress doctor ({mode}) — {report['status']}")
+        typer.echo(f"Build SHA: {report.get('build_sha') or 'unavailable'}")
+        typer.echo(f"Alembic head: {report.get('alembic_head') or 'unavailable'}")
+        typer.echo(f"Database backend: {report.get('database_backend') or 'unknown'}")
+        for item in report["checks"]:
+            typer.echo(f"[{item['level'].upper()}] {item['key']}: {item['message']}")
+        summary = report["summary"]
+        typer.echo(f"Summary: {summary['blockers']} blocker(s), {summary['warnings']} warning(s)")
+    if int(report["summary"]["blockers"]) > 0:
+        raise typer.Exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -1346,7 +1393,7 @@ def _prompt_password_twice() -> str:
     if first != second:
         typer.echo(__("Passwords do not match."), err=True)
         raise typer.Exit(2)
-    return first
+    return cast(str, first)
 
 
 def _build_breakglass_password(
@@ -1369,7 +1416,9 @@ def _build_breakglass_password(
     raise typer.BadParameter("generator must be one of: diceware, random")
 
 
-def _print_password_assessment(assessment) -> None:
+def _print_password_assessment(
+    assessment: PasswordAssessment,
+) -> None:
     typer.echo(__("zxcvbn score:            {score}/4").format(score=assessment.score))
     if assessment.warning:
         typer.echo(__("Warning:                 {warning}").format(warning=assessment.warning))
@@ -1451,7 +1500,7 @@ def user_password_set(
     elif password is None:
         password = _prompt_password_twice()
 
-    async def _load_security() -> dict:
+    async def _load_security() -> dict[str, Any]:
         from arborpress.core.db import get_db_session
         from arborpress.core.site_settings import get_security_settings
 
@@ -1462,7 +1511,7 @@ def user_password_set(
     sec = asyncio.run(_load_security())
 
     try:
-        from arborpress.auth.breakglass import validate_password_policy
+        from arborpress.auth.password_tools import validate_password_policy
 
         assessment = validate_password_policy(
             password,
@@ -1540,9 +1589,9 @@ def user_password_generate(
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
 ) -> None:
     """Generates a break-glass password and prints the quality assessment."""
-    from arborpress.auth.breakglass import validate_password_policy
+    from arborpress.auth.password_tools import validate_password_policy
 
-    async def _load_security() -> dict:
+    async def _load_security() -> dict[str, Any]:
         from arborpress.core.db import get_db_session
         from arborpress.core.site_settings import get_security_settings
 
@@ -2416,7 +2465,7 @@ def federation_kek_init() -> None:
     typer.echo("\nStore the key securely – losing it makes all actor key pairs unusable.")
 
 
-def _get_actor_fernet() -> Fernet:  # type: ignore[name-defined]
+def _get_actor_fernet() -> Fernet:
     """Returns the Fernet object with the actor KEK.
 
     Aborts if no KEK is configured.
@@ -3567,7 +3616,7 @@ def webauthn_status() -> None:
     rp_id = resolve_rp_id(cfg.web.base_url)
     origin = resolve_origin(cfg.web.base_url)
 
-    async def _run():
+    async def _run() -> tuple[dict[str, Any], int, str]:
         from sqlalchemy import func, select
 
         from arborpress.models.user import WebAuthnCredential
@@ -3576,9 +3625,10 @@ def webauthn_status() -> None:
             wa = await get_webauthn_settings(db)
             count = (
                 await db.execute(select(func.count()).select_from(WebAuthnCredential))
-            ).scalar_one() or 0
+            ).scalar_one()
             rp_name = await resolve_rp_name(db)
-            return wa, count, rp_name
+            return wa, int(count or 0), rp_name
+        raise RuntimeError("Database session is unavailable")
 
     wa, count, rp_name = asyncio.run(_run())
     typer.echo(f"resolved rp.id   : {rp_id}")
@@ -3618,14 +3668,15 @@ def webauthn_cli_unlock(
         )
         raise typer.Exit(1)
 
-    async def _run():
+    async def _run() -> str:
         async for db in _gds():
             wa = await get_webauthn_settings(db)
-            old = wa.get("rp_id_last_known", "")
+            old = str(wa.get("rp_id_last_known", ""))
             wa["rp_id_last_known"] = resolved
             wa["rp_id_locked"] = True
             await save_section("webauthn", wa, db, updated_by="cli:webauthn-unlock")
             return old
+        raise RuntimeError("Database session is unavailable")
 
     old = asyncio.run(_run())
     typer.echo(f"OK - rp.id unlocked: {old or '(unset)'} -> {resolved}")

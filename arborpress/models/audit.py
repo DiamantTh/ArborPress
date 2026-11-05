@@ -7,7 +7,7 @@ This allows operators to enable persistent DB audit trails without code changes.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column

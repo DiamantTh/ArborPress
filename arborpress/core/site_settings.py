@@ -171,6 +171,8 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         # Provider: auto|pg_fts|mariadb_fulltext|sqlite_fts5
         #   |meilisearch|typesense|elasticsearch|manticore|fallback
         "provider": "auto",
+        # Search falls back to database search unless explicitly required.
+        "required": False,
         # Meilisearch
         "meilisearch_url": "http://localhost:7700",
         "meilisearch_api_key": "",

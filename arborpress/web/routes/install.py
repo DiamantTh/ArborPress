@@ -161,6 +161,8 @@ async def install_submit():
         from arborpress.core.db import get_engine as _get_engine
         from arborpress.core.db_capabilities import (
             detect_capabilities as _detect_caps,
+        )
+        from arborpress.core.db_capabilities import (
             set_capabilities as _set_caps,
         )
         from arborpress.core.scheduler import run_scheduler as _run_scheduler

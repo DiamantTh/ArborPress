@@ -18,8 +18,10 @@ To extract:
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
+from babel.support import NullTranslations, Translations
 from quart import g, request
 
 log = logging.getLogger("arborpress.i18n")
@@ -56,6 +58,7 @@ def detect_language(default: str = "de-DE") -> str:
     4. Configured default
     """
     from arborpress.core.config import get_settings
+
     cfg = get_settings()
 
     # 1. URL-Prefix
@@ -91,14 +94,13 @@ def get_lang() -> str:
 async def i18n_before_request() -> None:
     """Set g.lang for every request."""
     from arborpress.core.config import get_settings
+
     g.lang = detect_language(get_settings().web.default_lang)
 
 
 # ---------------------------------------------------------------------------
 # Translation runtime (babel.support.Translations)
 # ---------------------------------------------------------------------------
-
-from babel.support import NullTranslations, Translations
 
 _cache: dict[str, NullTranslations] = {}  # lang → Translations object
 
@@ -130,7 +132,6 @@ _ = gettext
 # CLI translation helper (no request context required)
 # ---------------------------------------------------------------------------
 
-import os
 
 def _cli_lang() -> str:
     """Determine language for CLI output.
@@ -145,11 +146,12 @@ def _cli_lang() -> str:
         return env
     try:
         from arborpress.core.config import get_settings
+
         lang = get_settings().web.default_lang
         if lang in _SUPPORTED:
             return lang
-    except Exception:
-        pass
+    except OSError, ValueError:
+        return "de-DE"
     return "de-DE"
 
 
@@ -170,6 +172,7 @@ __ = cli_gettext
 def url_for_lang(lang: str, endpoint: str, **values: object) -> str:
     """Build a URL in prefix mode (§7)."""
     from quart import url_for as _url_for
+
     url = _url_for(endpoint, **values)
     return f"/{lang}{url}"
 
@@ -177,6 +180,7 @@ def url_for_lang(lang: str, endpoint: str, **values: object) -> str:
 def register_i18n(app: object) -> None:
     """Register the before-request hook on the Quart app (§7)."""
     import quart
+
     assert isinstance(app, quart.Quart)
     app.before_request(i18n_before_request)
     # Make translation function available as Jinja2 global

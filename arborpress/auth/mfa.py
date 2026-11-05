@@ -35,6 +35,7 @@ def encrypt_secret(secret: bytes) -> bytes:
     import hashlib
 
     from cryptography.fernet import Fernet
+
     from arborpress.core.config import get_settings
 
     key = base64.urlsafe_b64encode(
@@ -49,6 +50,7 @@ def decrypt_secret(secret_enc: bytes) -> bytes:
     import hashlib
 
     from cryptography.fernet import Fernet
+
     from arborpress.core.config import get_settings
 
     key = base64.urlsafe_b64encode(

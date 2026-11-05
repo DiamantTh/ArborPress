@@ -35,19 +35,21 @@ from urllib.parse import urlparse
 
 log = logging.getLogger("arborpress.rdap")
 
-_CACHE_TTL: int   = 86_400   # 24 hours
-_TIMEOUT: float   = 8.0      # per request, applied as httpx connect+read timeout
-_MAX_BODY: int    = 512 * 1024  # 512 KB – abort oversized responses
-_ARIN_BASE: str   = "https://rdap.arin.net/registry/ip"
+_CACHE_TTL: int = 86_400  # 24 hours
+_TIMEOUT: float = 8.0  # per request, applied as httpx connect+read timeout
+_MAX_BODY: int = 512 * 1024  # 512 KB – abort oversized responses
+_ARIN_BASE: str = "https://rdap.arin.net/registry/ip"
 
 # Allowed RDAP server hostnames (SSRF whitelist – only follow links to these)
-_RIR_RDAP_HOSTS: frozenset[str] = frozenset({
-    "rdap.arin.net",
-    "rdap.db.ripe.net",
-    "rdap.apnic.net",
-    "rdap.lacnic.net",
-    "rdap.afrinic.net",
-})
+_RIR_RDAP_HOSTS: frozenset[str] = frozenset(
+    {
+        "rdap.arin.net",
+        "rdap.db.ripe.net",
+        "rdap.apnic.net",
+        "rdap.lacnic.net",
+        "rdap.afrinic.net",
+    }
+)
 
 # ip_str → (expires_monotonic, result_dict)
 _CACHE: dict[str, tuple[float, dict]] = {}
@@ -84,7 +86,7 @@ def _extract(data: dict) -> dict:
 
     # IP range / CIDR
     start = data.get("startAddress", "")
-    end   = data.get("endAddress", "")
+    end = data.get("endAddress", "")
     if start and end:
         result["range"] = f"{start} – {end}"
     elif start:
@@ -131,7 +133,7 @@ def _extract(data: dict) -> dict:
                 continue
             sub_roles = sub.get("roles", [])
             sub_vcard = sub.get("vcardArray", [])
-            sub_name  = ""
+            sub_name = ""
             sub_email = ""
             if isinstance(sub_vcard, list) and len(sub_vcard) > 1:
                 for prop in sub_vcard[1]:
@@ -194,6 +196,7 @@ async def _fetch_rdap(url: str, *, follow_redirects: bool = True) -> dict | None
     """
     try:
         import httpx
+
         timeout = httpx.Timeout(connect=5.0, read=_TIMEOUT, write=5.0, pool=5.0)
         async with httpx.AsyncClient(
             timeout=timeout,
@@ -215,7 +218,11 @@ async def _fetch_rdap(url: str, *, follow_redirects: bool = True) -> dict | None
                 async for chunk in r.aiter_bytes(8192):
                     total += len(chunk)
                     if total > _MAX_BODY:
-                        log.warning("RDAP: response from %s exceeded %d KB cap, aborting", url, _MAX_BODY // 1024)
+                        log.warning(
+                            "RDAP: response from %s exceeded %d KB cap, aborting",
+                            url,
+                            _MAX_BODY // 1024,
+                        )
                         return None
                     chunks.append(chunk)
         return json.loads(b"".join(chunks))
@@ -277,7 +284,9 @@ async def lookup(ip_str: str) -> dict:
                     href = link.get("href", "")
                     if href and href != f"{_ARIN_BASE}/{ip_str}":
                         if not _is_allowed_rdap_host(href):
-                            log.warning("RDAP: related link %s rejected (not a known RIR host)", href)
+                            log.warning(
+                                "RDAP: related link %s rejected (not a known RIR host)", href
+                            )
                             break
                         # Second hop: no further redirects allowed
                         deeper = await _fetch_rdap(href, follow_redirects=False)

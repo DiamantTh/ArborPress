@@ -197,6 +197,9 @@ class CacheSettings(BaseSettings):
     none:       Cache deaktiviert (immer Cache-Miss).
     """
     backend: Literal["memory", "redis", "valkey", "memcached", "file", "none"] = "memory"
+    # Optional by default. Readiness gates it only when an operator explicitly
+    # marks the cache as required for this deployment.
+    required: bool = False
     ttl: int = 300           # default TTL in seconds
     prefix: str = "ap:"      # key prefix
     # L1-Cache (in-process, vor externem Backend)

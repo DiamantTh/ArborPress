@@ -27,7 +27,8 @@ class HIBPCheckError(RuntimeError):
 
 
 def _hash_prefix_suffix(password: str) -> tuple[str, str]:
-    digest = hashlib.sha1(password.encode("utf-8")).hexdigest().upper()
+    # HIBP's range API requires SHA-1; it is not used for password storage.
+    digest = hashlib.sha1(password.encode("utf-8"), usedforsecurity=False).hexdigest().upper()
     return digest[:5], digest[5:]
 
 

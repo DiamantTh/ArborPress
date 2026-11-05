@@ -82,6 +82,7 @@ def _lookup_country(ip_str: str, db_path: str) -> str | None:
     """
     try:
         import geoip2.database  # optional dep ([geoip] extra)
+
         with geoip2.database.Reader(db_path) as reader:
             response = reader.country(ip_str)
             return response.country.iso_code
@@ -137,10 +138,7 @@ async def _check_rbl(ip_str: str, rbl_zones: list[str]) -> list[str]:
         *[_rbl_lookup_one(reversed_ip, z) for z in rbl_zones],
         return_exceptions=True,
     )
-    return [
-        zone for zone, listed in zip(rbl_zones, results)
-        if listed is True
-    ]
+    return [zone for zone, listed in zip(rbl_zones, results, strict=True) if listed is True]
 
 
 # ---------------------------------------------------------------------------
@@ -168,12 +166,8 @@ async def check_comment_ip(
         return "allow", "no IP available", None
 
     # Parse settings
-    whitelist_lines = [
-        e for e in filter_settings.get("ip_whitelist", "").splitlines() if e.strip()
-    ]
-    blocklist_lines = [
-        e for e in filter_settings.get("ip_blocklist", "").splitlines() if e.strip()
-    ]
+    whitelist_lines = [e for e in filter_settings.get("ip_whitelist", "").splitlines() if e.strip()]
+    blocklist_lines = [e for e in filter_settings.get("ip_blocklist", "").splitlines() if e.strip()]
     country_whitelist = [
         c.strip().upper()
         for c in filter_settings.get("country_whitelist", "").split(",")
@@ -185,9 +179,7 @@ async def check_comment_ip(
         if c.strip()
     ]
     rbl_enabled = bool(filter_settings.get("rbl_enabled", False))
-    rbl_zones_raw: str = filter_settings.get(
-        "rbl_zones", "zen.spamhaus.org\nbl.spamcop.net"
-    )
+    rbl_zones_raw: str = filter_settings.get("rbl_zones", "zen.spamhaus.org\nbl.spamcop.net")
     rbl_zones = [z.strip() for z in rbl_zones_raw.splitlines() if z.strip()]
     rbl_action: FilterAction = filter_settings.get("rbl_action", "block")
     if rbl_action not in ("block", "flag"):
@@ -222,7 +214,7 @@ async def check_comment_ip(
                 _check_rbl(ip_str, rbl_zones),
                 timeout=5.0,  # don't stall the request more than 5 s
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.warning("comment_filter: RBL lookup timed out for %s", ip_str)
             listed_in = []
 
