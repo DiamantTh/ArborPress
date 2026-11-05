@@ -55,3 +55,16 @@ for installs or upgrades. New schema changes belong in a reviewed Alembic
 revision. The current baseline, `0001_pre_alembic_baseline`, records the
 pre-Phase-2 model schema without invoking `metadata.create_all()` from inside
 the revision.
+
+## Commit-based update and rollback gate
+
+Record the running commit and schema before upgrading. Test upgrades from
+`0012_federation_signature_summaries`, `0013_oidc_external_identities`,
+`0014_oidc_provider_lifecycle`, `0015_oauth_oidc_authorization_server`,
+`0016_oauth_resource_idempotency` and later heads with representative data.
+Downgrade is not universally data-preserving: inspect every intervening revision
+and test a copy first. If the old application cannot safely use the installed
+schema, restore the fully verified pre-update database and filesystem backup
+with all writers stopped. Follow [the operational runbook](production-operations.md)
+for maintenance journals, uncertain commits and recovery; no global DB/filesystem
+atomicity is promised.

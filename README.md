@@ -244,3 +244,6 @@ For the current stabilization target see:
 
 - [Operational readiness gates](docs/operational-readiness.md)
 - [API v1 contract and OAuth resources](docs/api.md)
+
+Operational deployment and recovery: [production operations](docs/production-operations.md).
+Read-only diagnostics: `arborpress --prefix PREFIX doctor --production --json`.

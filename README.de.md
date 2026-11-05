@@ -229,3 +229,6 @@ Fuer den aktuellen Stabilisierungsschritt siehe:
 
 - [Betriebliche Freigabegates](docs/operational-readiness.md)
 - [API-v1-Vertrag und OAuth-Ressourcen](docs/api.md)
+
+Operational deployment and recovery: [production operations](docs/production-operations.md).
+Read-only diagnostics: `arborpress --prefix PREFIX doctor --production --json`.

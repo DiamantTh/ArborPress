@@ -1,3 +1,4 @@
+# Keep access logging disabled unless query and sensitive header redaction is verified.
 # ArborPress Traefik-Hinweise
 #
 # Für Traefik reichen Labels und die wichtigsten Sicherheitsbausteine.
@@ -44,7 +45,7 @@ http:
     arborpress:
       loadBalancer:
         servers:
-          - url: "http://127.0.0.1:5000"
+          - url: "http://127.0.0.1:8066"
 
         healthCheck:
           path: "/_health"         # ArborPress Health-Endpunkt (entrypoint.sh + _health route)
@@ -102,5 +103,5 @@ http:
     #   traefik.http.routers.arborpress.rule=Host(`blog.example.com`)
     #   traefik.http.routers.arborpress.entrypoints=websecure
     #   traefik.http.routers.arborpress.tls.certresolver=letsencrypt
-    #   traefik.http.services.arborpress.loadbalancer.server.port=5000
+    #   traefik.http.services.arborpress.loadbalancer.server.port=8066
     #   traefik.http.routers.arborpress.middlewares=arborpress-headers@file

@@ -105,12 +105,14 @@ WORKDIR /build
 # zu 'cache-redis' installiert werden, z. B. "sqlite" für SQLite-Support.
 # Standardmäßig leer – Extras werden nur installiert wenn angegeben.
 ARG PIP_EXTRAS=""
+ARG BUILD_SHA=unknown
 
 # Paket inkl. aller Abhängigkeiten installieren.
 # cache-redis: optionaler Redis-Cache-Backend-Support.
 COPY pyproject.toml poetry.lock README.md LICENSE ./
 COPY arborpress/ ./arborpress/
 COPY --from=frontend-builder /build/arborpress/static/dist/ ./arborpress/static/dist/
+RUN /opt/venv/bin/python -c "import os,re,pathlib; sha=os.environ['BUILD_SHA']; assert sha == 'unknown' or re.fullmatch('[0-9a-f]{40}',sha); pathlib.Path('arborpress/_build_info.py').write_text('BUILD_SHA = ' + repr(sha) + '\n')"
 RUN set -eu; \
     set -- --only main --extras cache-redis; \
     set -f; \

@@ -25,3 +25,17 @@ backup/restore evidence, build artifact identity, and deployment configuration.
 These gates describe evidence for an operational decision. They do not create
 a product version sequence, guarantee compatibility for arbitrary external
 extensions, or replace a deployment-specific recovery plan.
+
+## Mandatory CI and deployment decision
+
+The CI matrix retains Python 3.14/3.15 and Node 24, enforces global Ruff and a
+committed mypy regression baseline, and adds disposable PostgreSQL/MariaDB
+migration/recovery jobs and Ubuntu/AlmaLinux container smoke jobs. Artifact
+publication depends on those jobs, a locked dependency audit, CycloneDX SBOM,
+artifact inspection and checksums. A job definition is not passing evidence.
+
+Use [production operations and safe-to-deploy checklist](production-operations.md).
+Record each mandatory gate as passed, failed, or not executed, linking its
+actual run. Withhold production approval when any mandatory gate lacks proof.
+`doctor --production` is necessary operational evidence, not a replacement for
+CI, cryptographic verification, restore drills or independent security review.

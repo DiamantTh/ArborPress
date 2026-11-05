@@ -61,10 +61,11 @@ async def test_engine(runtime_prefix):
     tmp.close()
     db_path = tmp.name
 
+    core_url = os.environ.get("ARBORPRESS_TEST_CORE_URL")
     engine = create_async_engine(
-        f"sqlite+aiosqlite:///{db_path}",
+        core_url or f"sqlite+aiosqlite:///{db_path}",
         echo=False,
-        connect_args={"check_same_thread": False},
+        connect_args={} if core_url else {"check_same_thread": False},
     )
     # Test databases use the same packaged migration path as fresh installs.
     import arborpress.models  # noqa: F401

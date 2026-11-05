@@ -1,0 +1,6 @@
+{
+  "baseline_commit": "4545688e364ad52c44c56a5771e9053cafad0263",
+  "max_errors": 264,
+  "known_files": 27,
+  "note": "Legacy repository-wide strict-mypy findings are tracked by count. New Phase 12C operational modules and touched CLI/health modules are checked separately with zero findings."
+}

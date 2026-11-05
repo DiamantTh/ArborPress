@@ -71,8 +71,8 @@ dependencies = []
 `requires_plugin_api`, and `entrypoint` are required. `description`, `python`,
 requested/required capabilities, event subscriptions, task names, and a
 declarative `admin_ui` descriptor are optional. IDs use lowercase ASCII letters/digits
-with single hyphen separators. Versions use PEP 440 parsing and compatibility
-fields use version specifiers. Required capabilities must also be requested;
+with single hyphen separators. Extension package identifiers use PEP 440 parsing. Core compatibility uses the
+integer `requires_plugin_api` contract; legacy product-version fields do not gate compatibility. Required capabilities must also be requested;
 unknown names are rejected. Subscriptions require `events.subscribe`, tasks
 require `jobs.schedule`, and `admin_ui` requires `admin.declarative`. An invalid or incompatible package remains
 visible in diagnostics but cannot start. The supported file is `plugin.toml`;

@@ -98,16 +98,14 @@ jobs:
       - name: Run tests
         run: poetry run pytest tests/ -v
 
-      # These checks currently report pre-existing repository-wide findings.
-      # Keep them visible on both interpreters without making the new CI
-      # workflow permanently red for issues unrelated to the Python baseline.
-      - name: Ruff (existing findings are non-blocking)
-        continue-on-error: true
+      - name: Ruff gate
         run: poetry run ruff check arborpress/
 
-      - name: mypy (existing findings are non-blocking)
-        continue-on-error: true
-        run: poetry run mypy arborpress/
+      - name: Strict operational modules
+        run: poetry run mypy arborpress/core/doctor.py arborpress/web/routes/health.py arborpress/cli/main.py
+
+      - name: Global mypy regression gate
+        run: poetry run python scripts/check_mypy_baseline.py
 
       - name: Build wheel and source distribution
         run: poetry run python scripts/build_package.py
@@ -152,3 +150,140 @@ jobs:
           assert shutil.which("node") is None
           PY
           PATH="${smoke_venv}/bin" "${smoke_venv}/bin/arborpress" --help
+
+  databases:
+    name: Database ${{ matrix.backend }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [postgresql, mariadb]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: disposable
+          POSTGRES_DB: arborpress
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: disposable
+          MARIADB_DATABASE: arborpress
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      ARBORPRESS_TEST_DATABASE_URL: ${{ matrix.backend == 'postgresql' && 'postgresql+asyncpg://postgres:disposable@127.0.0.1:5432/arborpress' || 'mysql+aiomysql://root:disposable@127.0.0.1:3306/arborpress' }}
+      ARBORPRESS_TEST_RESTORE_URL: ${{ matrix.backend == 'postgresql' && 'postgresql+asyncpg://postgres:disposable@127.0.0.1:5432/arborpress' || 'mysql+aiomysql://root:disposable@127.0.0.1:3306/arborpress' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: python -m pip install "poetry==2.5.1"
+      - run: poetry install --with dev --no-interaction
+      - name: Server database migrations and cryptographic recovery drills
+        run: poetry run pytest tests/test_server_database_12c.py tests/test_backup_restore_backends.py -v
+
+      - name: Auth, content, API and OAuth server-backend regression
+        env:
+          ARBORPRESS_TEST_CORE_URL: ${{ env.ARBORPRESS_TEST_DATABASE_URL }}
+        run: poetry run pytest tests/test_auth.py tests/test_content.py tests/test_api.py tests/test_oauth_server.py tests/test_oidc.py tests/test_oidc_lifecycle.py -v
+
+      - name: Production doctor on an isolated wheel reference installation
+        env:
+          ARBORPRESS_WEB__BASE_URL: https://reference.example.test
+        run: |
+          poetry run python scripts/build_package.py
+          python -m venv /tmp/arborpress-reference-wheel
+          /tmp/arborpress-reference-wheel/bin/pip install dist/*.whl
+          export ARBORPRESS_WEB__SECRET_KEY=$(openssl rand -hex 48)
+          export ARBORPRESS_DB__URL=$(poetry run python - <<'PYREF'
+          import asyncio, os
+          from sqlalchemy.engine import make_url
+          from sqlalchemy.ext.asyncio import create_async_engine
+          async def main():
+              url = make_url(os.environ['ARBORPRESS_TEST_DATABASE_URL'])
+              engine = create_async_engine(url, isolation_level='AUTOCOMMIT')
+              async with engine.connect() as connection:
+                  await connection.exec_driver_sql('CREATE DATABASE arborpress_reference')
+              await engine.dispose()
+              print(url.set(database='arborpress_reference').render_as_string(hide_password=False))
+          asyncio.run(main())
+          PYREF
+          )
+          /tmp/arborpress-reference-wheel/bin/arborpress --prefix /tmp/arborpress-reference db upgrade
+          touch /tmp/arborpress-reference/instance/config/.installed
+          /tmp/arborpress-reference-wheel/bin/arborpress --prefix /tmp/arborpress-reference doctor --production --json
+
+  containers:
+    name: Container ${{ matrix.base }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        base: [ubuntu, almalinux]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build Python-only image
+        run: docker build --build-arg BUILD_SHA=${{ github.sha }} --build-arg PIP_EXTRAS=sqlite -f container/Containerfile.${{ matrix.base }} -t arborpress-smoke .
+      - name: Migrate, start, health, persistence and shutdown
+        shell: bash
+        run: |
+          ap_secret=$(openssl rand -hex 48)
+          docker volume create arborpress-smoke-state
+          docker run -d --name arborpress-smoke -p 127.0.0.1:8066:8066 \
+            -v arborpress-smoke-state:/home/arborpress/instance \
+            -e ARBORPRESS_WEB__SECRET_KEY="$ap_secret" \
+            -e ARBORPRESS_DB__URL=sqlite+aiosqlite:////home/arborpress/instance/data/smoke.db \
+            arborpress-smoke
+          for ap_attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8066/_health; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8066/_health
+          test "$(docker exec arborpress-smoke id -u)" = 1001
+          docker exec arborpress-smoke test -s /home/arborpress/instance/data/smoke.db
+          docker exec arborpress-smoke touch /home/arborpress/instance/config/.installed
+          curl -fsS http://127.0.0.1:8066/_ready
+          docker stop --time 30 arborpress-smoke
+          test "$(docker inspect -f '{{.State.ExitCode}}' arborpress-smoke)" = 0
+      - name: Container logs
+        if: always()
+        run: docker logs arborpress-smoke
+
+  artifacts:
+    needs: [frontend, validate, databases, containers]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: arborpress-browser-assets
+          path: arborpress/static
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: python -m pip install "poetry==2.5.1" pip-audit cyclonedx-bom
+      - run: poetry install --with dev --no-interaction
+      - name: Audit locked dependencies
+        run: |
+          python scripts/runtime_audit_requirements.py > /tmp/arborpress-runtime-pins.txt
+          pip-audit --no-deps --disable-pip -r /tmp/arborpress-runtime-pins.txt
+      - run: poetry run python scripts/build_package.py
+      - name: CycloneDX runtime lock SBOM
+        run: |
+          python scripts/sbom_project.py > /tmp/arborpress-sbom-project.toml
+          cyclonedx-py requirements /tmp/arborpress-runtime-pins.txt --pyproject /tmp/arborpress-sbom-project.toml --output-reproducible -o dist/SBOM.cdx.json
+      - name: Inspect and identify artifacts
+        run: poetry run python scripts/validate_artifacts.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arborpress-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error

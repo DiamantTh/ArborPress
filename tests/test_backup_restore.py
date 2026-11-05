@@ -23,8 +23,9 @@ from arborpress.backups.restore import (
     recover_restore,
     restore_journal_path,
     restore_maintenance_path,
+    validate_restore_staging,
 )
-from arborpress.backups.service import BackupLockError, backup_lock, create_backup
+from arborpress.backups.service import BackupLockError, backup_lock, create_backup, verify_backup
 from arborpress.runtime.paths import ArborPressPaths, ensure_instance_layout
 
 
@@ -78,6 +79,25 @@ async def test_full_encrypted_sqlite_restore_includes_secret_config_and_files(
     tags = Base.metadata.tables["tags"]
     async with engine.begin() as connection:
         await connection.execute(insert(tags).values(id=987_654, slug="saved", label="Saved"))
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from arborpress.auth.oauth_server import create_signing_key, private_key
+    from arborpress.models.oidc import OIDCSigningKey
+    from arborpress.models.user import User, WebAuthnCredential
+
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as db:
+        user = User(id="backup-auth-user", username="backup-admin", display_name="Backup admin")
+        db.add(user)
+        await db.flush()
+        db.add(WebAuthnCredential(
+            id="backup-credential", user_id="backup-auth-user", label="Recovery fixture",
+            credential_id=b"backup-webauthn-id", public_key=b"backup-webauthn-public",
+        ))
+        signing_key = await create_signing_key(db)
+        signing_kid = signing_key.kid
+        signing_material = private_key(signing_key)
+        await db.commit()
     key = BackupKey("passphrase", b"full restore recovery phrase")
     try:
         backup = await create_backup(
@@ -96,6 +116,9 @@ async def test_full_encrypted_sqlite_restore_includes_secret_config_and_files(
         plan = await plan_restore(backup.backup_id, paths=paths, engine=engine, key=key)
         assert plan.compatible
         assert plan.config_coverage == "complete"
+        verified = verify_backup(backup.backup_id, paths, key=key)
+        assert verified.verification_level == "full-cryptographic"
+        await validate_restore_staging(plan, paths=paths, engine=engine, key=key)
         structural_plan = await plan_restore(backup.backup_id, paths=paths, engine=engine)
         assert any(
             "structural-only verification" in warning for warning in structural_plan.warnings
@@ -116,6 +139,14 @@ async def test_full_encrypted_sqlite_restore_includes_secret_config_and_files(
             key=key,
         )
         assert report["result"] == "success"
+        async with factory() as db:
+            recovered_key = await db.get(OIDCSigningKey, signing_kid)
+            assert recovered_key is not None
+            assert private_key(recovered_key) == signing_material
+            assert await db.get(User, "backup-auth-user") is not None
+            recovered_credential = await db.get(WebAuthnCredential, "backup-credential")
+            assert recovered_credential is not None
+            assert recovered_credential.public_key == b"backup-webauthn-public"
         assert (paths.config / "config.toml").read_text(encoding="utf-8") == (
             'secret = "saved secret"\n'
         )
