@@ -33,7 +33,7 @@ dependencies = [
     "argon2-cffi>=25.1,<26",      # §2 break-glass
     "pyotp>=2.9,<3",              # TOTP/HOTP §3
     "zxcvbn>=4.5,<5",             # Passwortqualitaet fuer Break-Glass §2
-    "cryptography>=46.0,<47",     # OpenPGP key ops §13
+    "cryptography>=50.0,<51",     # OpenPGP key ops §13
     "PyJWT[crypto]>=2.10,<3",     # verified OIDC ID tokens §11
     # Content & Sanitization
     "bleach>=6.3,<7",              # §10 federated/user-content sanitization
@@ -41,7 +41,7 @@ dependencies = [
     "markdown-it-py>=4.0,<5",      # Markdown rendering §1
     "mdit-py-plugins>=0.5,<1",     # Markdown-Erweiterungen (Tasklists, Footnotes)
     # Media
-    "pillow>=12.2,<13",           # image handling §1
+    "pillow>=13.0,<14",           # image handling §1
     "aiofiles>=24.1,<26",         # async file I/O
     # Mail §13
     "aiosmtplib>=5.1,<6",         # py3.10+ baseline, aktuelle API
@@ -161,6 +161,10 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "S"]
 ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+# Preserve the published migration verbatim; its one formatting-only finding is inherited.
+"arborpress/migrations/versions/0008_mail_templates_notification_preferences.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.14"
