@@ -271,3 +271,13 @@ The system uses Python and library APIs only. It never starts `tar`, `bzip2`,
 compression, encryption, checksumming, verification, and restoration use
 Python/library APIs. Remote storage, schedules, incrementals, and plugin
 backup hooks are not implemented.
+
+## Production evidence and identity recovery
+
+Use the [production operations runbook](production-operations.md) for commit-based
+updates, maintenance, rollback and recovery. A backup manifest is not evidence of
+full cryptographic verification. Keep verification and isolated restore-drill
+results with the exact source SHA and backend. The production doctor intentionally
+does not claim a backup was verified merely because its manifest exists.
+Encrypted full backups must retain the matching application secret and actor
+key-encryption secret alongside database ciphertext; test decryption after restore.
