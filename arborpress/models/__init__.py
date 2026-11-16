@@ -64,7 +64,7 @@ from arborpress.models.oidc import (  # noqa: F401
     OIDCSubject,
 )
 from arborpress.models.plugin import PluginJob, PluginStorageEntry  # noqa: F401
-from arborpress.models.settings import SiteSetting  # noqa: F401
+from arborpress.models.settings import PortableImportReceipt, SiteSetting  # noqa: F401
 from arborpress.models.user import (  # noqa: F401
     AccountType,
     ActorKeypair,

@@ -24,7 +24,7 @@ from arborpress.core.migrations import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pre_alembic_phase1_schema.sql"
-CURRENT_HEAD = "0018_webauthn_user_handles"
+CURRENT_HEAD = "0019_portable_import_receipts"
 
 
 def _sqlite_engine(path: Path) -> AsyncEngine:
@@ -149,7 +149,7 @@ async def test_empty_database_upgrade_noop_and_repeated_install(tmp_path: Path) 
         assert status.is_current
         assert status.current_revisions == (CURRENT_HEAD,)
         before = await _schema_snapshot(engine)
-        assert len(before) == 64
+        assert len(before) == 65
         assert "oauth_idempotency_keys" in before
         assert "webauthn_credentials" in before
 
@@ -257,9 +257,7 @@ async def test_webauthn_user_handle_migration_preserves_credentials_and_roundtri
         async with engine.connect() as connection:
             row = (
                 await connection.execute(
-                    sa.text(
-                        "SELECT webauthn_user_handle FROM users WHERE id=:user_id"
-                    ),
+                    sa.text("SELECT webauthn_user_handle FROM users WHERE id=:user_id"),
                     {"user_id": user_id},
                 )
             ).one()
@@ -275,25 +273,29 @@ async def test_webauthn_user_handle_migration_preserves_credentials_and_roundtri
         # Credential-ID-to-user mappings remain usable and survive re-upgrade.
         await downgrade_database("0017_search_indexes", engine)
         async with engine.connect() as connection:
-            assert await connection.scalar(
-                sa.text("SELECT COUNT(*) FROM webauthn_credentials WHERE user_id=:user_id"),
-                {"user_id": user_id},
-            ) == 1
+            assert (
+                await connection.scalar(
+                    sa.text("SELECT COUNT(*) FROM webauthn_credentials WHERE user_id=:user_id"),
+                    {"user_id": user_id},
+                )
+                == 1
+            )
         await upgrade_database(engine)
         async with engine.connect() as connection:
             row = (
                 await connection.execute(
-                    sa.text(
-                        "SELECT webauthn_user_handle FROM users WHERE id=:user_id"
-                    ),
+                    sa.text("SELECT webauthn_user_handle FROM users WHERE id=:user_id"),
                     {"user_id": user_id},
                 )
             ).one()
             assert len(row.webauthn_user_handle) == 64
-            assert await connection.scalar(
-                sa.text("SELECT COUNT(*) FROM webauthn_credentials WHERE user_id=:user_id"),
-                {"user_id": user_id},
-            ) == 1
+            assert (
+                await connection.scalar(
+                    sa.text("SELECT COUNT(*) FROM webauthn_credentials WHERE user_id=:user_id"),
+                    {"user_id": user_id},
+                )
+                == 1
+            )
     finally:
         await engine.dispose()
 

@@ -77,15 +77,25 @@ _ALLOWED_PROTOCOLS: list[str] = ["http", "https", "mailto", "tel"]
 # ---------------------------------------------------------------------------
 
 _md = (
-    MarkdownIt("gfm-like", {"html": False, "linkify": True, "typographer": True})
+    MarkdownIt("gfm-like", {"html": False, "linkify": False, "typographer": True})
     .enable("table")
     .enable("strikethrough")
 )
 
+# Linkification is an optional markdown-it-py extra. Use it when installed,
+# while keeping ordinary Markdown rendering functional without the extra.
+try:
+    import linkify_it  # noqa: F401
+
+    _md.options["linkify"] = True
+except ImportError:
+    pass
+
 # Tasklists ([ ] / [x]) – mdit-py-plugins wenn vorhanden
 try:
     from mdit_py_plugins.tasklists import tasklists_plugin
-    _md = tasklists_plugin(_md)
+
+    tasklists_plugin(_md)
 except ImportError:
     pass  # optionale Dependency, kein Pflicht-Feature
 

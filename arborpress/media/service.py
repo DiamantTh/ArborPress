@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -37,6 +38,7 @@ async def store_media_upload(
     content_type: str,
     data: bytes,
     alt_text: str | None = None,
+    file_created_callback: Callable[[Path], None] | None = None,
 ) -> Media:
     """Validate a raster image and persist it using ArborPress media storage."""
     mime = content_type.split(";", 1)[0].strip().lower()
@@ -65,6 +67,8 @@ async def store_media_upload(
     directory = root / str(now.year) / f"{now.month:02d}"
     destination = directory / safe_filename
     await asyncio.to_thread(_atomic_write, directory, destination, data)
+    if file_created_callback is not None:
+        file_created_callback(destination)
     media = Media(
         id=str(uuid.uuid4()),
         uploader_id=uploader_id,

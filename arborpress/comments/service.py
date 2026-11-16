@@ -94,6 +94,7 @@ async def create_comment(
     ip_address: str | None = None,
     user_agent: str | None = None,
     country_code: str | None = None,
+    imported: bool = False,
 ) -> CommentCreation:
     """Validate relations and persist one comment; plaintext token is returned once."""
     if not policy.enabled:
@@ -117,7 +118,11 @@ async def create_comment(
 
     parent = await _same_post_comment(db, post.id, parent_id) if parent_id else None
     quoted = await _same_post_comment(db, post.id, quote_of_id) if quote_of_id else None
-    if parent_id and (parent is None or parent.status != CommentStatus.APPROVED):
+    if parent_id and (
+        parent is None
+        or (parent.status != CommentStatus.APPROVED and not imported)
+        or parent.status in {CommentStatus.REJECTED, CommentStatus.SPAM, CommentStatus.DELETED}
+    ):
         raise CommentPolicyError("Reply target is unavailable.")
     if quote_of_id and (quoted is None or quoted.status != CommentStatus.APPROVED):
         raise CommentPolicyError("Quote target is unavailable.")
@@ -129,6 +134,10 @@ async def create_comment(
     now = _now()
     if spam:
         status = CommentStatus.SPAM
+    elif imported:
+        # Imported comments always re-enter moderation; source approval is not
+        # trusted across instances and imported guests never receive mail.
+        status = CommentStatus.PENDING_MODERATION
     elif author_user is None and remote_actor is None and policy.guest_confirmation_required:
         if not author_email:
             raise CommentPolicyError("Guest e-mail is required for confirmation.")
