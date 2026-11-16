@@ -105,17 +105,13 @@ class PluginProcessManager:
                         missing_required_grants,
                     )
 
-                    grants = CapabilityGrantStore(
-                        get_runtime_paths().data / "plugin-grants.toml"
-                    )
+                    grants = CapabilityGrantStore(get_runtime_paths().data / "plugin-grants.toml")
                     missing = missing_required_grants(
                         record.id, record.manifest.required_capabilities, grants
                     )
                     if missing:
                         record.runtime_status = PluginStatus.DISABLED
-                        record.last_error = "missing_required_capabilities: " + ", ".join(
-                            missing
-                        )
+                        record.last_error = "missing_required_capabilities: " + ", ".join(missing)
                         raise ValueError(record.last_error)
                 from arborpress.plugins.lifecycle import (
                     PluginLifecycleError,
@@ -384,6 +380,50 @@ class PluginProcessManager:
             running,
             "plugin.admin_page",
             {"page_id": page_id},
+            timeout=self.request_timeout,
+        )
+
+    def portable_plugin_ids(self, capability: Capability) -> tuple[str, ...]:
+        """Return running plugins explicitly granted a portable-data capability."""
+        if capability not in {Capability.IMPORTER, Capability.EXPORTER}:
+            raise ValueError("unsupported portable plugin capability")
+        grants = CapabilityGrantStore(get_runtime_paths().data / "plugin-grants.toml")
+        return tuple(
+            sorted(
+                plugin_id
+                for plugin_id, running in self._running.items()
+                if running.record.manifest is not None
+                and capability.value in running.record.manifest.requested_capabilities
+                and capability.value in grants.grants_for(plugin_id)
+            )
+        )
+
+    async def export_portable_extension(
+        self, plugin_id: str, *, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        if plugin_id not in self.portable_plugin_ids(Capability.EXPORTER):
+            raise PermissionError("exporter capability is not declared and granted")
+        result = await self._request(
+            self._running[plugin_id],
+            "plugin.portable_export",
+            {"context": context},
+            timeout=self.request_timeout,
+        )
+        return result
+
+    async def import_portable_extension(
+        self,
+        plugin_id: str,
+        *,
+        data: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        if plugin_id not in self.portable_plugin_ids(Capability.IMPORTER):
+            raise PermissionError("importer capability is not declared and granted")
+        return await self._request(
+            self._running[plugin_id],
+            "plugin.portable_import",
+            {"data": data, "context": context},
             timeout=self.request_timeout,
         )
 

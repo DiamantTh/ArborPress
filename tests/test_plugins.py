@@ -625,6 +625,53 @@ async def test_private_rpc_calls_core_storage_from_child_process(
     await exercise()
 
 
+@pytest.mark.asyncio
+async def test_portable_plugin_capabilities_run_only_through_granted_child_rpc(
+    tmp_path: Path,
+) -> None:
+    from arborpress.plugins.capabilities import Capability, CapabilityGrantStore
+    from arborpress.runtime.paths import get_runtime_paths
+
+    plugin_dir = _write_plugin(
+        tmp_path,
+        "portable-addon",
+        """
+        class Worker:
+            async def export_portable(self, context):
+                return {'bundle': context['bundle_id'], 'records': [{'key': 'value'}]}
+            async def import_portable(self, data, context):
+                return {'accepted': len(data['records']), 'bundle': context['bundle_id']}
+        plugin = Worker
+        """,
+    )
+    (plugin_dir / "plugin.toml").write_text(
+        _manifest(
+            "portable-addon",
+            requested_capabilities=["importer", "exporter"],
+        ),
+        encoding="utf-8",
+    )
+    registry = PluginRegistry()
+    registry.load_directory(plugin_dir.parent)
+    record = registry.get("portable-addon")
+    grants = CapabilityGrantStore(get_runtime_paths().data / "plugin-grants.toml")
+    grants.set_grant("portable-addon", Capability.IMPORTER.value, True)
+    grants.set_grant("portable-addon", Capability.EXPORTER.value, True)
+    manager = PluginProcessManager()
+    await manager.start(record)
+    try:
+        assert manager.portable_plugin_ids(Capability.EXPORTER) == ("portable-addon",)
+        context = {"bundle_id": "bundle-1", "format_level": 1}
+        extension = await manager.export_portable_extension("portable-addon", context=context)
+        assert extension == {"bundle": "bundle-1", "records": [{"key": "value"}]}
+        imported = await manager.import_portable_extension(
+            "portable-addon", data=extension, context=context
+        )
+        assert imported == {"accepted": 1, "bundle": "bundle-1"}
+    finally:
+        await manager.shutdown()
+
+
 def test_subscribed_plugin_receives_only_core_event_dto(tmp_path: Path) -> None:
     from arborpress.plugins.capabilities import CapabilityGrantStore
     from arborpress.runtime.paths import get_runtime_paths

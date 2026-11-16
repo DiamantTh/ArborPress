@@ -72,6 +72,10 @@ tests/                    Automatisierte Tests
 Das Frontend-Buildmodell und lokale Befehle stehen in
 [docs/frontend-build.md](docs/frontend-build.md).
 
+Der portable redaktionelle Transfer zwischen Instanzen ist vom Backup- und
+Restoreweg getrennt und in [docs/content-portability.md](docs/content-portability.md)
+beschrieben.
+
 ## CLI-Referenz (§14)
 
 ```
@@ -107,6 +111,9 @@ arborpress search reindex            Aktiven Suchpfad prüfen
 arborpress cache status              Backend-Health und Namespace anzeigen
 arborpress cache purge               Cache leeren
 arborpress cache warm                Sichere öffentliche Caches aufwärmen
+
+arborpress content export --output transfer.zip
+arborpress content import transfer.zip --dry-run
 
 arborpress federation inbox-process  ActivityPub-Inbox verarbeiten (§5)
 arborpress federation status         Federation-Konfiguration anzeigen

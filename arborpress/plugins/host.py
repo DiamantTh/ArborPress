@@ -171,6 +171,22 @@ async def _serve(args: argparse.Namespace) -> int:
                             result = await value if inspect.isawaitable(value) else value
                             if not isinstance(result, dict):
                                 raise ValueError("admin page values must be a JSON object")
+                    elif method == "plugin.portable_export":
+                        export_fn = getattr(plugin, "export_portable", None)
+                        if export_fn is None:
+                            raise LookupError("portable exporter unavailable")
+                        value = export_fn(params.get("context", {}))
+                        result = await value if inspect.isawaitable(value) else value
+                        if not isinstance(result, dict):
+                            raise ValueError("portable exporter must return a JSON object")
+                    elif method == "plugin.portable_import":
+                        import_fn = getattr(plugin, "import_portable", None)
+                        if import_fn is None:
+                            raise LookupError("portable importer unavailable")
+                        value = import_fn(params.get("data", {}), params.get("context", {}))
+                        result = await value if inspect.isawaitable(value) else value
+                        if not isinstance(result, dict):
+                            raise ValueError("portable importer must return a JSON object")
                     elif method == "runtime.shutdown":
                         await _call(plugin, "shutdown")
                         result = {"stopped": True}

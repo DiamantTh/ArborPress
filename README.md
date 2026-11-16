@@ -77,6 +77,9 @@ The frontend build model and local commands are documented in
 Local backup-set creation and verification are documented in
 [docs/backups.md](docs/backups.md).
 
+Portable editorial transfer between instances is separate from backup and
+restore; see [docs/content-portability.md](docs/content-portability.md).
+
 Theme runtime and theme.toml conventions are documented in
 [docs/themes.md](docs/themes.md). Runtime themes are package built-ins or
 operator themes under the active prefix's instance/themes/; source-checkout
@@ -120,6 +123,9 @@ arborpress search reindex            Verify the active search path
 arborpress cache status              Show backend health and namespace
 arborpress cache purge               Clear cache
 arborpress cache warm                Warm safe public cache entries
+
+arborpress content export --output transfer.zip
+arborpress content import transfer.zip --dry-run
 
 arborpress federation inbox-process  Process ActivityPub inbox (§5)
 arborpress federation status         Show federation configuration

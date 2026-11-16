@@ -37,6 +37,8 @@ GRANTABLE_CAPABILITIES = frozenset(
         Capability.EVENTS_SUBSCRIBE,
         Capability.JOBS_SCHEDULE,
         Capability.ADMIN_DECLARATIVE,
+        Capability.IMPORTER,
+        Capability.EXPORTER,
     }
 )
 _PLUGIN_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")

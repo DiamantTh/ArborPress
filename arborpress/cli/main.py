@@ -70,6 +70,7 @@ themes_app = typer.Typer(help="Theme diagnostics (read-only)", no_args_is_help=T
 backup_app = typer.Typer(help="Local backup set operations", no_args_is_help=True)
 backup_key_app = typer.Typer(help="Backup encryption keyfiles", no_args_is_help=True)
 restore_app = typer.Typer(help="Offline local restore operations", no_args_is_help=True)
+content_app = typer.Typer(help="Portable editorial content transfer", no_args_is_help=True)
 
 app.add_typer(db_app, name="db")
 app.add_typer(user_app, name="user")
@@ -95,6 +96,7 @@ app.add_typer(themes_app, name="themes")
 app.add_typer(backup_app, name="backup")
 backup_app.add_typer(backup_key_app, name="key")
 app.add_typer(restore_app, name="restore")
+app.add_typer(content_app, name="content")
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +254,225 @@ def themes_inspect(
         return
     for key, value in item.items():
         typer.echo(f"{key}: {value}")
+
+
+# ---------------------------------------------------------------------------
+# Local backup sets
+# ---------------------------------------------------------------------------
+
+
+def _portable_author_map(values: list[str] | None) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for value in values or []:
+        portable_id, separator, user_id = value.partition("=")
+        if not separator or not portable_id or not user_id or portable_id in result:
+            raise typer.BadParameter(
+                "Use each --author-map once as PORTABLE_AUTHOR_ID=LOCAL_USER_ID."
+            )
+        result[portable_id] = user_id
+    return result
+
+
+async def _portable_plugins(capability_name: str) -> Any:
+    """Start only enabled, explicitly granted plugins for the requested transfer capability."""
+    from arborpress.core.db import get_session_factory
+    from arborpress.plugins.capabilities import Capability, CapabilityGrantStore
+    from arborpress.plugins.process import PluginProcessManager
+    from arborpress.plugins.registry import discover_instance_plugins
+    from arborpress.plugins.rpc import PluginRPCDispatcher
+    from arborpress.plugins.services import PluginCoreServices
+    from arborpress.runtime.paths import get_runtime_paths
+
+    capability = Capability(capability_name)
+    paths = get_runtime_paths()
+    grants = CapabilityGrantStore(paths.data / "plugin-grants.toml")
+    manager = PluginProcessManager(
+        dispatcher=PluginRPCDispatcher(PluginCoreServices(get_session_factory()), grants)
+    )
+    try:
+        for record in discover_instance_plugins().all():
+            if (
+                record.enabled
+                and record.manifest is not None
+                and capability.value in record.manifest.requested_capabilities
+                and capability.value in grants.grants_for(record.id)
+            ):
+                await manager.start(record)
+        return manager
+    except Exception:
+        await manager.shutdown()
+        raise
+
+
+def _portable_plugin_ids(capability_name: str) -> set[str]:
+    """Inspect declared and granted portable capabilities without running plugins."""
+    from arborpress.plugins.capabilities import Capability, CapabilityGrantStore
+    from arborpress.plugins.registry import discover_instance_plugins
+    from arborpress.runtime.paths import get_runtime_paths
+
+    capability = Capability(capability_name)
+    grants = CapabilityGrantStore(get_runtime_paths().data / "plugin-grants.toml")
+    return {
+        record.id
+        for record in discover_instance_plugins().all()
+        if record.enabled
+        and record.manifest is not None
+        and capability.value in record.manifest.requested_capabilities
+        and capability.value in grants.grants_for(record.id)
+    }
+
+
+@content_app.command("export")
+def content_export(
+    output: Path = typer.Option(..., "--output", "-o", help="Destination ZIP package"),  # noqa: B008
+    include_comments: bool = typer.Option(
+        False,
+        "--include-comments",
+        help="Include only approved comments, without guest contact or moderation metadata",
+    ),
+    include_media: bool = typer.Option(
+        True, "--include-media/--no-media", help="Include validated media files"
+    ),
+    include_plugin_data: bool = typer.Option(
+        False,
+        "--include-plugin-data",
+        help="Run enabled plugins with an explicitly granted exporter capability",
+    ),
+    include_non_public: bool = typer.Option(
+        False,
+        "--include-non-public",
+        help="Also export drafts, private/hidden posts and unpublished pages",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print a machine-readable summary"),
+) -> None:
+    """Export editorial content in the portable ArborPress transfer format."""
+    from arborpress.content.portability import PortabilityError, export_portable
+    from arborpress.core.db import get_session_factory
+
+    async def run() -> dict[str, Any]:
+        manager = None
+        if include_plugin_data:
+            manager = await _portable_plugins("exporter")
+        try:
+            async with get_session_factory()() as db:
+                return await export_portable(
+                    db,
+                    output,
+                    include_comments=include_comments,
+                    include_media=include_media,
+                    include_non_public=include_non_public,
+                    plugin_manager=manager,
+                )
+        finally:
+            if manager is not None:
+                await manager.shutdown()
+
+    try:
+        summary = asyncio.run(run())
+    except (PortabilityError, OSError) as exc:
+        typer.echo(f"Content export failed: {type(exc).__name__}: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(
+        json.dumps(summary, indent=2, sort_keys=True)
+        if as_json
+        else f"Portable package written to {summary['path']} (bundle {summary['bundle_id']})."
+    )
+
+
+@content_app.command("import")
+def content_import(
+    source: Path = typer.Argument(..., exists=True, readable=True),  # noqa: B008
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Validate fully and report the import plan without writes"
+    ),
+    conflict: str = typer.Option("fail", "--conflict", help="Slug policy: fail, skip or remap"),  # noqa: B008
+    author_map: list[str] | None = typer.Option(  # noqa: B008
+        None,
+        "--author-map",
+        help="Explicit mapping PORTABLE_AUTHOR_ID=LOCAL_USER_ID; repeat as needed",
+    ),  # noqa: B008
+    actor_user_id: str | None = typer.Option(
+        None, "--actor-user-id", help="Active local operator account id for an actual import"
+    ),
+    include_comments: bool = typer.Option(
+        True,
+        "--include-comments/--no-comments",
+        help="Import included comments through local moderation policy",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print a machine-readable summary"),
+) -> None:
+    """Validate or import a portable package; imported content stays unpublished."""
+    from arborpress.content.portability import (
+        PortabilityError,
+        _json_loads,
+        import_portable,
+        inspect_portable,
+    )
+    from arborpress.core.db import get_session_factory
+
+    try:
+        mappings = _portable_author_map(author_map)
+    except typer.BadParameter:
+        raise
+    if not dry_run and not actor_user_id:
+        raise typer.BadParameter("--actor-user-id is required for an actual import.")
+
+    async def run() -> dict[str, Any]:
+        import zipfile
+
+        manager = None
+        available_importers: set[str] | None = None
+        try:
+            with zipfile.ZipFile(source, "r") as archive:
+                manifest_info = archive.getinfo("manifest.json")
+                if manifest_info.file_size > 2 * 1024 * 1024:
+                    raise PortabilityError("Manifest exceeds the size limit.")
+                manifest = _json_loads(archive.read("manifest.json"))
+                if not isinstance(manifest, dict):
+                    raise PortabilityError("Manifest is malformed.")
+            if manifest.get("extensions"):
+                if dry_run:
+                    available_importers = _portable_plugin_ids("importer")
+                else:
+                    manager = await _portable_plugins("importer")
+        except OSError, ValueError, KeyError, RecursionError, zipfile.BadZipFile:
+            manager = None
+        try:
+            async with get_session_factory()() as db:
+                if dry_run:
+                    return await inspect_portable(
+                        db,
+                        source,
+                        conflict=conflict,
+                        author_map=mappings,
+                        plugin_manager=manager,
+                        available_importer_ids=available_importers,
+                    )
+                return await import_portable(
+                    db,
+                    source,
+                    actor_user_id=str(actor_user_id),
+                    author_map=mappings,
+                    conflict=conflict,
+                    include_comments=include_comments,
+                    plugin_manager=manager,
+                )
+        finally:
+            if manager is not None:
+                await manager.shutdown()
+
+    try:
+        report = asyncio.run(run())
+    except (PortabilityError, OSError) as exc:
+        typer.echo(f"Content import failed: {type(exc).__name__}: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if as_json:
+        typer.echo(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        typer.echo("Dry-run import plan:" if dry_run else "Portable content import completed:")
+        typer.echo(json.dumps(report, indent=2, sort_keys=True))
+    if not report.get("valid", True):
+        raise typer.Exit(2)
 
 
 # ---------------------------------------------------------------------------
@@ -938,8 +1159,7 @@ def healthcheck() -> None:
             except Exception as exc:
                 cache_ok, cache_detail, cache_backend = False, type(exc).__name__, "unknown"
             typer.echo(
-                f"Cache: {cache_backend} "
-                f"({'healthy' if cache_ok else 'degraded'}: {cache_detail})"
+                f"Cache: {cache_backend} ({'healthy' if cache_ok else 'degraded'}: {cache_detail})"
             )
             typer.echo(__("Status: OK"))
         except Exception as exc:
@@ -958,9 +1178,7 @@ def doctor(
     from arborpress.core.doctor import collect_doctor_report
 
     try:
-        report = cast(
-            dict[str, Any], asyncio.run(collect_doctor_report(production=production))
-        )
+        report = cast(dict[str, Any], asyncio.run(collect_doctor_report(production=production)))
     except Exception as exc:
         payload = {
             "status": "blocked",
@@ -2198,8 +2416,15 @@ def search_reindex(
     from arborpress.core.site_settings import get_section
 
     allowed = {
-        "auto", "pg_fts", "mariadb_fulltext", "sqlite_fts5", "fallback",
-        "meilisearch", "typesense", "elasticsearch", "manticore",
+        "auto",
+        "pg_fts",
+        "mariadb_fulltext",
+        "sqlite_fts5",
+        "fallback",
+        "meilisearch",
+        "typesense",
+        "elasticsearch",
+        "manticore",
     }
     if provider is not None and provider not in allowed:
         typer.echo("Unsupported search provider selection.", err=True)
@@ -2295,8 +2520,10 @@ def cache_status() -> None:
     cfg = get_settings().cache
     typer.echo(f"Cache backend: {info}")
     typer.echo(f"Namespace:     {cache_namespace()}")
-    typer.echo(f"L1/L2:         {'enabled' if cfg.l1_enabled else 'disabled'}"
-               + (f" / L1 TTL {min(max(cfg.l1_ttl, 1), 5)}s max" if cfg.l1_enabled else ""))
+    typer.echo(
+        f"L1/L2:         {'enabled' if cfg.l1_enabled else 'disabled'}"
+        + (f" / L1 TTL {min(max(cfg.l1_ttl, 1), 5)}s max" if cfg.l1_enabled else "")
+    )
     typer.echo(f"Reachability:  {'healthy' if healthy else 'degraded'} ({diagnostic})")
     typer.echo(f"Default TTL:   {cfg.ttl}s")
 
