@@ -320,7 +320,7 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "federation_inbox_activity_id",
         },
         "posts": {"comments_enabled", "guest_confirmation_required", "comment_moderation_mode"},
-        "users": {"comment_trusted", "locale"},
+        "users": {"comment_trusted", "locale", "webauthn_user_handle"},
         "mail_queue": {
             "recipient_kind",
             "visible_to",
@@ -405,6 +405,21 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             )
         ):
             continue
+        if error == "unique constraint mismatch for users":
+            actual_user_keys = {
+                tuple(sorted(constraint.get("column_names") or ()))
+                for constraint in inspector.get_unique_constraints("users")
+            }
+            expected_user_keys = {
+                tuple(sorted(constraint.columns.keys()))
+                for constraint in Base.metadata.tables["users"].constraints
+                if isinstance(constraint, sa.UniqueConstraint)
+            }
+            legacy_user_keys = expected_user_keys - {("webauthn_user_handle",)}
+            if actual_user_keys == legacy_user_keys:
+                # The supported pre-Alembic schema predates exactly the new
+                # unique handle key, while retaining username/email keys.
+                continue
         if error in {
             "nullability mismatch for comments.author_email",
             "enum values mismatch for comments.status",

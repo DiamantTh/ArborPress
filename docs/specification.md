@@ -81,6 +81,19 @@ Each user may register multiple credentials:
 - Required for WebAuthn login, MFA, registration, and step-up.
 - Resident keys are preferred, so username-first login remains compatible with
   non-discoverable FIDO2 credentials.
+- Each account has a separate random 64-byte `webauthn_user_handle`, stored on
+  `users` and shared by all new credentials for that account. It is not the
+  database primary key, username, email, or display name. The handle is a
+  non-secret account selector, not proof of authentication; verified
+  credential signatures and the server-side credential-to-user foreign key
+  remain authoritative.
+- Existing credentials are not rewritten by migration. Earlier ArborPress
+  registrations used the encoded database user ID; first-install enrollment
+  used a one-off random handle. Both remain valid because login is
+  username-first and resolves the account through the registered Credential ID
+  and its database owner. New registrations, including recovery enrollment,
+  use the persisted account handle. Username-less/discoverable login is not
+  currently an authentication flow.
 - Attestation defaults to `none`; ArborPress does not claim a manufacturer or
   model from an AAGUID without verified attestation.
 - The login identifier resolves the account; only that account's credential IDs

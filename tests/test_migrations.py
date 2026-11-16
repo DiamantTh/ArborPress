@@ -24,7 +24,7 @@ from arborpress.core.migrations import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pre_alembic_phase1_schema.sql"
-CURRENT_HEAD = "0017_search_indexes"
+CURRENT_HEAD = "0018_webauthn_user_handles"
 
 
 def _sqlite_engine(path: Path) -> AsyncEngine:
@@ -222,6 +222,78 @@ async def test_oauth_resource_idempotency_migration_upgrades_from_0015(tmp_path:
             assert await connection.run_sync(
                 lambda sync: sa.inspect(sync).has_table("oauth_idempotency_keys")
             )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_webauthn_user_handle_migration_preserves_credentials_and_roundtrips(
+    tmp_path: Path,
+) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from arborpress.models.user import User, WebAuthnCredential
+
+    engine = _sqlite_engine(tmp_path / "webauthn-handles.db")
+    try:
+        await upgrade_database(engine)
+        factory = async_sessionmaker(bind=engine, expire_on_commit=False)
+        async with factory() as db:
+            user = User(username="handle-migration", display_name="Handle Migration")
+            db.add(user)
+            await db.flush()
+            user_id = str(user.id)
+            credential = WebAuthnCredential(
+                user_id=user_id,
+                label="Legacy key",
+                credential_id=b"legacy-handle-migration-credential",
+                public_key=b"legacy-public-key",
+            )
+            db.add(credential)
+            await db.commit()
+
+        await downgrade_database("0017_search_indexes", engine)
+        await upgrade_database(engine)
+        async with engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    sa.text(
+                        "SELECT webauthn_user_handle FROM users WHERE id=:user_id"
+                    ),
+                    {"user_id": user_id},
+                )
+            ).one()
+            assert len(row.webauthn_user_handle) == 64
+            assert row.webauthn_user_handle != user_id.encode("utf-8")
+            credential_count = await connection.scalar(
+                sa.text("SELECT COUNT(*) FROM webauthn_credentials WHERE user_id=:user_id"),
+                {"user_id": user_id},
+            )
+            assert credential_count == 1
+
+        # Downgrade removes only the new account handle field. Existing
+        # Credential-ID-to-user mappings remain usable and survive re-upgrade.
+        await downgrade_database("0017_search_indexes", engine)
+        async with engine.connect() as connection:
+            assert await connection.scalar(
+                sa.text("SELECT COUNT(*) FROM webauthn_credentials WHERE user_id=:user_id"),
+                {"user_id": user_id},
+            ) == 1
+        await upgrade_database(engine)
+        async with engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    sa.text(
+                        "SELECT webauthn_user_handle FROM users WHERE id=:user_id"
+                    ),
+                    {"user_id": user_id},
+                )
+            ).one()
+            assert len(row.webauthn_user_handle) == 64
+            assert await connection.scalar(
+                sa.text("SELECT COUNT(*) FROM webauthn_credentials WHERE user_id=:user_id"),
+                {"user_id": user_id},
+            ) == 1
     finally:
         await engine.dispose()
 

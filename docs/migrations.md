@@ -62,6 +62,14 @@ Record the running commit and schema before upgrading. Test upgrades from
 `0012_federation_signature_summaries`, `0013_oidc_external_identities`,
 `0014_oidc_provider_lifecycle`, `0015_oauth_oidc_authorization_server`,
 `0016_oauth_resource_idempotency` and later heads with representative data.
+
+`0018_webauthn_user_handles` adds a unique, non-null 64-byte opaque handle to
+each user account. Existing users receive independently generated random
+handles. Existing credential rows are unchanged; legacy authenticator handles
+are intentionally not rewritten. Downgrade removes only the new user column
+and unique constraint, preserving credential IDs, public keys and their user
+foreign keys. Re-upgrade assigns new handles and therefore does not restore
+the exact previous opaque values, but it does not invalidate existing logins.
 Downgrade is not universally data-preserving: inspect every intervening revision
 and test a copy first. If the old application cannot safely use the installed
 schema, restore the fully verified pre-update database and filesystem backup

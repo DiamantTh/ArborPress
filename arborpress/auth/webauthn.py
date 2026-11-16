@@ -17,6 +17,7 @@ import base64
 import ipaddress
 import logging
 import re
+import secrets
 from typing import Any
 from urllib.parse import urlparse
 
@@ -34,6 +35,28 @@ from webauthn.helpers.structs import (
 log = logging.getLogger("arborpress.auth.webauthn")
 audit = logging.getLogger("arborpress.audit")
 _DEFAULT_ATTACHMENT = object()
+
+
+def new_webauthn_user_handle() -> bytes:
+    """Return a per-account opaque 64-byte WebAuthn user handle."""
+    return secrets.token_bytes(64)
+
+
+def encode_webauthn_user_handle(value: bytes) -> str:
+    """Encode a handle for short-lived JSON pending state."""
+    if not isinstance(value, bytes) or len(value) != 64:
+        raise ValueError("WebAuthn user handle must contain exactly 64 bytes")
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def decode_webauthn_user_handle(value: str) -> bytes:
+    """Decode and validate a persisted pending WebAuthn handle."""
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{86}", value):
+        raise ValueError("invalid WebAuthn user handle")
+    decoded = base64.urlsafe_b64decode(value + "==")
+    if len(decoded) != 64 or encode_webauthn_user_handle(decoded) != value:
+        raise ValueError("invalid WebAuthn user handle")
+    return decoded
 
 
 class RPIDChangeBlocked(RuntimeError):

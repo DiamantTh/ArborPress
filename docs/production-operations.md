@@ -49,6 +49,18 @@ the lock. Operator RP-ID unlock is an explicit domain recovery action, not a
 way to make old credentials valid at another origin. Break-glass is optional;
 if enabled, test it offline and keep recovery material outside the server.
 
+Each account also has a stable, random 64-byte WebAuthn user handle separate
+from its database ID. It is persisted before registration options are issued
+and reused for later credentials. The handle is not a secret or login proof.
+Migration `0018_webauthn_user_handles` assigns new handles to existing users;
+it does not rewrite authenticator data. Legacy credentials remain usable by
+Credential ID and account mapping. A downgrade removes the server-side handle
+column but leaves credentials and their account mappings intact; re-upgrade
+creates fresh handles, so already-enrolled authenticators may then contain
+older handles while future registrations use the new one. Username-first
+login remains the supported flow and does not rely on the authenticator's
+stored user handle.
+
 Keep the matching database, `web.secret_key`, provider-secret ciphertext,
 OIDC signing-key ciphertext, and `auth.actor_key_enc_key` together. Back up
 secret configuration only in encrypted full backups, with the backup recovery

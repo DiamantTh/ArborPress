@@ -223,6 +223,67 @@ async def test_login_completion_cannot_use_another_users_credential(
 
 
 @pytest.mark.asyncio
+async def test_legacy_authenticator_user_handle_still_logs_in_by_verified_credential(
+    client, test_engine, monkeypatch
+):
+    from types import SimpleNamespace
+
+    import arborpress.models  # noqa: F401
+    from arborpress.models.user import User, WebAuthnCredential
+
+    username = f"legacy-handle-{uuid.uuid4().hex[:12]}"
+    credential_id = b"legacy-credential-" + uuid.uuid4().bytes
+    factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
+    async with factory() as db:
+        user = User(username=username, display_name=username)
+        db.add(user)
+        await db.flush()
+        db.add(WebAuthnCredential(
+            user_id=str(user.id),
+            label="Legacy passkey",
+            credential_id=credential_id,
+            public_key=b"legacy-public-key",
+        ))
+        await db.commit()
+
+    async def service():
+        return WebAuthnService("localhost", "ArborPress", "http://localhost")
+
+    def parse_credential(_raw):
+        return object()
+
+    def verify_authentication(self, **_kwargs):
+        return SimpleNamespace(new_sign_count=1)
+
+    monkeypatch.setattr("arborpress.web.routes.auth._get_webauthn_async", service)
+    monkeypatch.setattr(
+        "webauthn.helpers.parse_authentication_credential_json", parse_credential
+    )
+    monkeypatch.setattr(
+        WebAuthnService, "verify_authentication", verify_authentication
+    )
+    headers = {
+        "Content-Type": "application/json",
+        "Origin": "http://localhost:8066",
+    }
+    begin = await client.post(
+        "/auth/login/begin", json={"identifier": username}, headers=headers
+    )
+    assert begin.status_code == 200
+    response = await client.post(
+        "/auth/login/complete",
+        json={
+            "id": _b64u(credential_id),
+            "rawId": _b64u(credential_id),
+            "response": {"userHandle": _b64u(b"legacy-installer-handle")},
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_public_register_begin_does_not_open_username_enrollment(client, monkeypatch):
     monkeypatch.setattr("arborpress.core.config.is_installed", lambda: True)
 

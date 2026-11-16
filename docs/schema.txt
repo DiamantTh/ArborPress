@@ -53,6 +53,8 @@ PGP MULTI-SCHLÜSSEL
 TABLE: users
 ===============================================================================
   id                    VARCHAR(36)   PK   UUID
+  webauthn_user_handle  VARBINARY(64) UK   zufälliger stabiler WebAuthn-Handle,
+                                          getrennt von users.id
   username              VARCHAR(32)   UK   einzigartiger Anmeldename
   display_name          VARCHAR(128)       Anzeigename
   email                 VARCHAR(254)  UK   optional

@@ -19,6 +19,7 @@ START_REVISIONS = (
     '0015_oauth_oidc_authorization_server',
     '0016_oauth_resource_idempotency',
     '0017_search_indexes',
+    '0018_webauthn_user_handles',
 )
 
 
@@ -30,7 +31,6 @@ async def test_sqlite_upgrade_preserves_existing_identity_and_content(
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         await upgrade_database(engine)
-        await downgrade_database(start_revision, engine)
         user_id = str(uuid.uuid4())
         post_id = str(uuid.uuid4())
         async with factory() as db:
@@ -43,11 +43,13 @@ async def test_sqlite_upgrade_preserves_existing_identity_and_content(
                 visibility=PostVisibility.PUBLIC,
             ))
             await db.commit()
+        await downgrade_database(start_revision, engine)
         assert (await upgrade_database(engine)).is_current
         async with factory() as db:
             user = await db.get(User, user_id)
             post = await db.scalar(select(Post).where(Post.id == post_id))
             assert user is not None and user.display_name == 'Original identity'
+            assert len(user.webauthn_user_handle) == 64
             assert post is not None and post.author_id == user_id
             assert post.body_md == 'Preserved body'
     finally:

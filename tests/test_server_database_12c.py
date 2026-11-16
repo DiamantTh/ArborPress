@@ -24,6 +24,7 @@ from arborpress.runtime.paths import ArborPressPaths, ensure_instance_layout
     "0012_federation_signature_summaries", "0013_oidc_external_identities",
     "0014_oidc_provider_lifecycle", "0015_oauth_oidc_authorization_server",
     "0016_oauth_resource_idempotency", "0017_search_indexes",
+    "0018_webauthn_user_handles",
 ))
 async def test_server_database_release_drill(tmp_path: Path, start_revision: str) -> None:
     database_url = os.environ.get("ARBORPRESS_TEST_DATABASE_URL")

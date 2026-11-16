@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import secrets
 from urllib.parse import urlencode
 
@@ -150,6 +152,29 @@ class TestWebInstall:
                 },
             )
             assert begin_response.status_code == 200
+            registration_options = await begin_response.get_json()
+            encoded_handle = registration_options["user"]["id"]
+            initial_handle = base64.urlsafe_b64decode(
+                encoded_handle + "=" * (-len(encoded_handle) % 4)
+            )
+            assert len(initial_handle) == 64
+            factory = async_sessionmaker(bind=db_mod._engine, expire_on_commit=False)
+            async with factory() as pending_db:
+                from sqlalchemy import select
+
+                from arborpress.models.user import AuthPending
+
+                pending = (await pending_db.execute(
+                    select(AuthPending).where(
+                        AuthPending.purpose == "install_enrollment",
+                        AuthPending.username == initial_username,
+                    )
+                )).scalar_one()
+                from arborpress.auth.webauthn import decode_webauthn_user_handle
+
+                assert decode_webauthn_user_handle(
+                    json.loads(pending.context)["webauthn_user_handle"]
+                ) == initial_handle
             assert not marker_path.exists()
             assert token_path.exists()
 
@@ -210,6 +235,8 @@ class TestWebInstall:
                     WebAuthnCredential.user_id == str(user.id)
                 )
             )).scalar_one()
+            assert user is not None
+            assert bytes(user.webauthn_user_handle) == initial_handle
         assert general["site_title"] == "ArborPress Test"
         assert user_count == 1
         assert credential_count == 1

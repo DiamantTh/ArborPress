@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import enum
+import secrets
 import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -50,6 +52,11 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
+    # Per-account opaque WebAuthn user handle. This is intentionally distinct
+    # from the database primary key and from mutable profile labels.
+    webauthn_user_handle: Mapped[bytes] = mapped_column(
+        LargeBinary(64), nullable=False, default=lambda: secrets.token_bytes(64)
+    )
     username: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(128), nullable=False)
     email: Mapped[str | None] = mapped_column(String(254), unique=True, nullable=True)
@@ -86,6 +93,14 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("webauthn_user_handle", name="uq_users_webauthn_user_handle"),
+        CheckConstraint(
+            "length(webauthn_user_handle) = 64",
+            name="ck_users_webauthn_user_handle_length",
+        ),
     )
 
     credentials: Mapped[list[WebAuthnCredential]] = relationship(

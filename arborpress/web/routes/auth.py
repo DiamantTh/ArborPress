@@ -21,7 +21,6 @@ import json
 import logging
 import secrets
 import uuid
-from base64 import urlsafe_b64encode
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -544,11 +543,23 @@ async def register_begin():
         recovery_context = {}
         planned: dict[str, str] = {}
         existing: list[bytes] = []
+        from arborpress.auth.webauthn import (
+            encode_webauthn_user_handle,
+            new_webauthn_user_handle,
+        )
+
         if session.get("user_id"):
             user_id = str(session["user_id"])
             user = await db.get(User, user_id)
             if user is None or not user.is_active:
                 abort(401)
+            if not user.webauthn_user_handle:
+                # Defensive repair for installations created before the
+                # non-null migration invariant was established.
+                user.webauthn_user_handle = new_webauthn_user_handle()
+            if len(user.webauthn_user_handle) != 64:
+                abort(500, "WebAuthn account handle is invalid")
+            await db.flush()
             if recovery_only:
                 recovery_state = await get_active_recovery_state(db, session)
                 if recovery_state is None:
@@ -612,9 +623,13 @@ async def register_begin():
         attachment = "cross-platform" if enrollment_kind == "security_key" else None
         username = user.username if user is not None else planned["username"]
         display_name = user.display_name if user is not None else planned["display_name"]
-        # Initial identity is opaque to the authenticator and not persisted yet.
-        handle_source = user_id or secrets.token_hex(16)
-        user_handle = urlsafe_b64encode(handle_source.encode()).rstrip(b"=")
+        # Keep the same opaque account handle across all credentials. For the
+        # initial installer account, persist it in the one-shot DB pending row
+        # before returning RegistrationOptions; it is copied to User on finish.
+        user_handle = (
+            user.webauthn_user_handle if user is not None else new_webauthn_user_handle()
+        )
+        encoded_user_handle = encode_webauthn_user_handle(user_handle)
         opts = wa.generate_registration_options(
             user_id=user_handle,
             user_name=username,
@@ -639,6 +654,7 @@ async def register_begin():
                 "session_id": str(session.get("session_id") or "") if recovery_only else None,
                 "recovery_id": str(session.get("recovery_id") or "") if recovery_only else None,
                 "install_nonce": (session.get("install_enrollment") or {}).get("nonce"),
+                "webauthn_user_handle": encoded_user_handle,
             },
         )
         session["register_pending_id"] = pending.id
@@ -682,6 +698,19 @@ async def register_complete():
         if user_id and str(session.get("user_id") or "") != user_id:
             abort(403)
         preview_context = json.loads(pending_preview.context or "{}")
+        from arborpress.auth.webauthn import (
+            decode_webauthn_user_handle,
+            new_webauthn_user_handle,
+        )
+
+        pending_user_handle = None
+        if preview_context.get("webauthn_user_handle"):
+            try:
+                pending_user_handle = decode_webauthn_user_handle(
+                    str(preview_context["webauthn_user_handle"])
+                )
+            except ValueError:
+                abort(400, "Enrollment state is invalid")
         if preview_context.get("recovery_only"):
             from arborpress.auth.sessions import get_active_recovery_state
 
@@ -740,6 +769,11 @@ async def register_complete():
             user = None
         if user_id and user is None:
             abort(404)
+        if user_id and user is not None and not user.is_active:
+            abort(403, "Inactive accounts cannot enroll credentials")
+        if user_id and user is not None and pending_user_handle is not None:
+            if not secrets.compare_digest(user.webauthn_user_handle, pending_user_handle):
+                abort(403, "Enrollment no longer matches the active account")
         if preview_context.get("recovery_only"):
             from arborpress.auth.sessions import get_active_recovery_state
 
@@ -776,6 +810,11 @@ async def register_complete():
                 account_type=AccountType.PUBLIC,
                 role=UserRole.ADMIN,
                 is_active=True,
+                webauthn_user_handle=(
+                    pending_user_handle
+                    if pending_user_handle is not None
+                    else new_webauthn_user_handle()
+                ),
             )
             db.add(user)
             await db.flush()
