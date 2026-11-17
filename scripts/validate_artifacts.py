@@ -37,9 +37,9 @@ with tarfile.open(next(dist.glob('*.tar.gz'))) as source:
         assert not member.name.endswith(('.db', '.sqlite', '.key', '.pem'))
 sbom_path = dist / 'SBOM.cdx.json'
 sbom = json.loads(sbom_path.read_text())
-sbom.setdefault('metadata', {}).setdefault('properties', []).append(
-    {'name': 'arborpress:build_sha', 'value': commit}
-)
+properties = sbom.setdefault('metadata', {}).setdefault('properties', [])
+properties[:] = [item for item in properties if item.get('name') != 'arborpress:build_sha']
+properties.append({'name': 'arborpress:build_sha', 'value': commit})
 sbom_path.write_text(json.dumps(sbom, indent=2) + '\n')
 metadata = {
     'commit_sha': commit,
@@ -49,34 +49,19 @@ metadata = {
 }
 (dist / 'BUILD-METADATA.json').write_text(json.dumps(metadata, indent=2) + '\n')
 (dist / 'RELEASE-NOTES.md').write_text(
-    f'# ArborPress build {commit}\n\nAlembic head: `{head}`.\n\n'
-    'Read-only production doctor, schema-aware readiness, strict lint and mypy regression '
-    'gates, disposable server database recovery drills and container smoke gates.\n\n'
-    'Before updating, create and fully verify an encrypted backup. Keep web.secret_key '
-    'and the federation encryption key with the matching database. Follow '
-    'docs/production-operations.md and docs/operational-readiness.md.\n\n'
-    '## Breaking changes and migration\n\n'
-    'No new schema revision is introduced by this operations work; upgrade to the recorded '
-    'Alembic head before serving. PostgreSQL 16+ and MariaDB 11.4+ are production backends; '
-    'SQLite remains development/demo/test only. Readiness now blocks uninstalled, stale-schema '
-    'and restore-maintenance states. Optional services block only when configured required.\n\n'
-    '## Security and identity\n\n'
-    'Locked cryptography, Pillow, certifi and pyasn1 dependencies have been updated following '
-    'advisory findings. Preserve web.secret_key, the matching database and actor-key encryption '
-    'secret. OIDC/OAuth and ActivityPub identities must not be regenerated to mask key loss. '
-    'Federation remains opt-in; no new C2S or remote vote behavior is introduced.\n\n'
-    '## API, search and cache\n\n'
-    'Existing /api/v1 public, bearer and admin contracts retain their authorization boundaries. '
-    'Search uses authoritative public DB rows and documented native/LIKE fallback. External '
-    'search adapters are not a complete remote-index implementation. Cache remains optional; '
-    'L1 consistency is bounded by five seconds and purge remains instance-scoped.\n\n'
-    '## Known limits and approval\n\n'
-    'Inherited mypy debt is fingerprint-gated, not globally eliminated. Database and filesystem '
-    'restore is not one atomic transaction. Full server-DB, Python 3.15 and container evidence '
-    'must be attached to this exact commit before production approval. Consult the operational '
-    'checklist and run production doctor on the actual deployment.\n\n'
-    'This artifact is identified by its commit. Packaging metadata is not a product version. '
-    'Artifact generation alone does not approve a deployment.\n'
+    f'# ArborPress build record\n\nCommit: `{commit}`\n\nAlembic head: `{head}`.\n\n'
+    'This file records the source identity and schema head for the inspected build. '
+    'Consult the commit history and current documentation for the exact changes, '
+    'migration instructions, security boundaries, and known limits.\n\n'
+    'Before updating, create and fully verify an encrypted backup. Follow '
+    'docs/production-operations.md, docs/backups.md, and docs/migrations.md. '
+    'Do not assume a database downgrade is safe without reviewing its data effects.\n\n'
+    'Production approval requires all mandatory checks to pass for this exact commit, '
+    'including supported server databases, backup/restore, container runtime, '
+    'dependency audit, artifact validation, and a deployment-specific production doctor. '
+    'Artifact generation alone is not approval.\n\n'
+    'The commit SHA is the build identity. Wheel metadata is an internal packaging '
+    'requirement and is not an ArborPress product version.\n'
 )
 files = sorted(p for p in dist.iterdir() if p.is_file() and p.name != 'SHA256SUMS')
 (dist / 'SHA256SUMS').write_text(''.join(
