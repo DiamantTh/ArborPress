@@ -1,6 +1,6 @@
 {% from "macros/assets.html" import vite_script with context %}
 <!DOCTYPE html>
-<html lang="{{ get_lang() }}">
+<html lang="{{ active_lang or get_lang() }}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -93,7 +93,7 @@
 
 <header class="site-header">
   <div class="container">
-    <a class="site-title" href="{{ url_for('public.index') }}">
+    <a class="site-title" href="{{ public_url('public.index') }}">
       {{ config.web.base_url | replace('https://', '') | replace('http://', '') }}
     </a>
     <nav aria-label="{{ _('Admin-Navigation') if request.endpoint and request.endpoint.startswith('admin.') else _('Hauptnavigation') }}">
@@ -101,7 +101,7 @@
       <a href="{{ url_for('notifications.inbox') }}">Benachrichtigungen</a>
       {% endif %}
       {% block nav %}
-      <a href="{{ url_for('public.index') }}">{{ _('Startseite') }}</a>
+      <a href="{{ public_url('public.index') }}">{{ _('Startseite') }}</a>
       {% if session.get('user_id') %}
         <a href="{{ url_for('admin.dashboard') }}">{{ _('Admin') }}</a>
         <form method="post" action="{{ url_for('auth.logout') }}" style="display:inline">
@@ -138,7 +138,7 @@
   <div class="container">
     <p>
       {% for page in footer_pages %}
-        <a href="{{ url_for('public.page_detail', slug=page.slug) }}">{{ page.title }}</a>
+        <a href="{{ public_url('public.page_detail', slug=page.slug, lang=page.lang) }}">{{ page.title }}</a>
       {% endfor %}
     </p>
     {# §5 Federation: rel="me" nur wenn federation aktiviert #}

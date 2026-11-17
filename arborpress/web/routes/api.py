@@ -110,6 +110,14 @@ _ADMIN_ROLES: frozenset[str] = frozenset({"admin", "editor", "author", "moderato
 
 
 def _post_summary(p) -> dict:
+    from arborpress.core.config import get_settings
+    from arborpress.core.i18n import normalize_language
+    from arborpress.web.public_urls import public_path
+
+    content_language = normalize_language(p.lang) or normalize_language(
+        get_settings().web.default_lang
+    )
+
     return {
         "id": p.short_id,
         "slug": p.slug,
@@ -117,22 +125,30 @@ def _post_summary(p) -> dict:
         "excerpt": p.excerpt,
         "published_at": p.published_at.isoformat() if p.published_at else None,
         "reading_time_min": p.reading_time_min,
-        "lang": p.lang,
+        "lang": content_language,
         "is_pinned": p.is_pinned,
         "is_featured": p.is_featured,
         "tags": [{"slug": t.slug, "label": t.label} for t in (p.tags or [])],
-        "url": f"/p/{p.slug}",
+        "url": public_path("public.post_detail", lang=content_language, slug=p.slug),
     }
 
 
 def _page_summary(pg) -> dict:
+    from arborpress.core.config import get_settings
+    from arborpress.core.i18n import normalize_language
+    from arborpress.web.public_urls import public_path
+
+    content_language = normalize_language(pg.lang) or normalize_language(
+        get_settings().web.default_lang
+    )
+
     return {
         "id": pg.id,
         "slug": pg.slug,
         "title": pg.title,
         "type": pg.page_type.value,
-        "lang": pg.lang,
-        "url": f"/page/{pg.slug}",
+        "lang": content_language,
+        "url": public_path("public.page_detail", lang=content_language, slug=pg.slug),
     }
 
 
@@ -144,13 +160,18 @@ async def _public_api_json(payload: dict[str, Any]) -> ResponseReturnValue:
 
 
 def _user_public(u, post_count: int = 0) -> dict:
+    from arborpress.core.config import get_settings
+    from arborpress.web.public_urls import public_path
+
     return {
         "username": u.username,
         "display_name": u.display_name,
         "bio": u.bio,
         "website": u.website,
         "post_count": post_count,
-        "profile_url": f"/@{u.username}",
+        "profile_url": public_path(
+            "public.author_profile", lang=get_settings().web.default_lang, handle=u.username
+        ),
     }
 
 
@@ -179,13 +200,26 @@ async def api_posts_list():
         abort(400, "page and per_page must be integers")
 
     lang = request.args.get("lang")
+    if lang:
+        from arborpress.core.i18n import language_storage_values, normalize_language
+
+        lang = normalize_language(lang)
+        if lang is None:
+            abort(400, "lang must be a supported BCP-47 language")
     tag = request.args.get("tag")
 
     async for db in get_db_session():
         # Base filter: public + published
         base = (Post.status == PostStatus.PUBLISHED) & (Post.visibility == PostVisibility.PUBLIC)
         if lang:
-            base = base & (Post.lang == lang)
+            from sqlalchemy.sql.elements import ColumnElement
+
+            language_filter: ColumnElement[bool] = Post.lang.in_(language_storage_values(lang))
+            if lang == get_settings().web.default_lang:
+                from sqlalchemy import or_
+
+                language_filter = or_(language_filter, Post.lang.is_(None))
+            base = base & language_filter
 
         if tag:
             from sqlalchemy import select as _sel
@@ -238,15 +272,25 @@ async def api_post_detail(slug: str):
     async for db in get_db_session():
         from sqlalchemy import select
 
-        post = (
-            await db.execute(
+        matches = (
+            await db.scalars(
                 select(Post).where(
                     Post.slug == slug,
                     Post.status == PostStatus.PUBLISHED,
                     Post.visibility != PostVisibility.PRIVATE,
                 )
             )
-        ).scalar_one_or_none()
+        ).all()
+        if len(matches) == 1:
+            post: Post | None = matches[0]
+        else:
+            from arborpress.core.i18n import normalize_language
+
+            default_language = normalize_language(get_settings().web.default_lang)
+            preferred = [
+                item for item in matches if normalize_language(item.lang) == default_language
+            ]
+            post = preferred[0] if len(preferred) == 1 else None
 
         if post is None:
             # Check old slug → 301
@@ -276,15 +320,27 @@ async def api_page_detail(slug: str):
     async for db in get_db_session():
         from sqlalchemy import select
 
-        page = (
-            await db.execute(
+        matches = (
+            await db.scalars(
                 select(Page).where(
                     Page.slug == slug,
                     Page.is_published == True,  # noqa: E712
                     Page.visibility != PostVisibility.PRIVATE,
                 )
             )
-        ).scalar_one_or_none()
+        ).all()
+        if len(matches) == 1:
+            from arborpress.models.content import Page
+
+            page: Page | None = matches[0]
+        else:
+            from arborpress.core.i18n import normalize_language
+
+            default_language = normalize_language(get_settings().web.default_lang)
+            preferred = [
+                item for item in matches if normalize_language(item.lang) == default_language
+            ]
+            page = preferred[0] if len(preferred) == 1 else None
 
         if page is None:
             abort(404)
@@ -305,6 +361,7 @@ async def api_tags_list():
     from arborpress.core.db import get_db_session
     from arborpress.models.content import Post, PostStatus, PostVisibility, Tag
     from arborpress.models.content import post_tags as _pt
+    from arborpress.web.public_urls import public_path
 
     async for db in get_db_session():
         # Count published+public posts per tag
@@ -332,7 +389,7 @@ async def api_tags_list():
                 "label": t.label,
                 "lang": t.lang,
                 "post_count": cnt or 0,
-                "url": f"/tag/{t.slug}",
+                "url": public_path("public.tag_archive", lang=t.lang, tag=t.slug),
             }
             for t, cnt in rows
         ]
@@ -409,6 +466,7 @@ async def api_search():
                 page=page,
                 per_page=per_page,
                 language=request.args.get("lang"),
+                default_language=get_settings().web.default_lang,
                 configured_provider=settings.get("provider", "auto"),
             )
         except ValueError as exc:
@@ -606,7 +664,6 @@ async def admin_api_post_create():
     body_html = await render_md_async(body)
     short_id = _sec.token_urlsafe(6)[:8]  # 8-char URL-safe short ID
 
-
     now = datetime.now(UTC)
 
     post = Post(
@@ -620,7 +677,7 @@ async def admin_api_post_create():
         excerpt=strip_control_chars(str(data.get("excerpt") or "")).strip()[:400] or None,
         status=status,
         visibility=visibility,
-        lang=data.get("lang"),
+        lang=data.get("lang") or get_settings().web.default_lang,
         is_pinned=bool(data.get("is_pinned", False)),
         is_featured=bool(data.get("is_featured", False)),
         noindex=bool(data.get("noindex", False)),
@@ -637,6 +694,28 @@ async def admin_api_post_create():
         exists = (await db.execute(select(Post.id).where(Post.slug == slug))).scalar_one_or_none()
         if exists:
             abort(409, f"A post with slug {slug!r} already exists")
+        from arborpress.content.public_identity import historic_slug_owner
+
+        if await historic_slug_owner(db, kind="post", slug=slug):
+            abort(409, "That slug is reserved by a previous public URL")
+
+        from arborpress.content.public_identity import set_translation_group
+        from arborpress.core.i18n import normalize_language
+
+        if post.lang is not None:
+            normalized_lang = normalize_language(str(post.lang))
+            if normalized_lang is None:
+                abort(400, "lang must be a supported BCP-47 language")
+            post.lang = normalized_lang
+        try:
+            post.translation_group_id = await set_translation_group(
+                db,
+                content_kind="post",
+                lang=post.lang,
+                group_id=str(data.get("translation_group_id") or "") or None,
+            )
+        except ValueError as exc:
+            abort(400, str(exc))
 
         db.add(post)
         await db.flush()
@@ -714,7 +793,38 @@ async def admin_api_post_update(slug: str):
             if flag in data:
                 setattr(post, flag, bool(data[flag]))
         if "lang" in data:
-            post.lang = data["lang"]
+            from arborpress.core.i18n import normalize_language
+
+            normalized_lang = normalize_language(str(data["lang"]))
+            if normalized_lang is None:
+                abort(400, "lang must be a supported BCP-47 language")
+            if normalized_lang != post.lang:
+                from arborpress.content.public_identity import remember_old_slugs
+
+                try:
+                    await remember_old_slugs(
+                        db,
+                        kind="post",
+                        content_id=str(post.id),
+                        language=post.lang,
+                        slugs=(post.slug,),
+                    )
+                except ValueError:
+                    abort(409, "The previous language route is already assigned elsewhere")
+            post.lang = normalized_lang
+        if "translation_group_id" in data:
+            from arborpress.content.public_identity import set_translation_group
+
+            try:
+                post.translation_group_id = await set_translation_group(
+                    db,
+                    content_kind="post",
+                    lang=post.lang,
+                    group_id=str(data.get("translation_group_id") or "") or None,
+                    content_id=str(post.id),
+                )
+            except ValueError as exc:
+                abort(400, str(exc))
 
         db.add(post)
         await db.commit()

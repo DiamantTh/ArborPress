@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import String, cast, func, literal, select, text, union_all
+from sqlalchemy import String, cast, func, literal, or_, select, text, union_all
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from arborpress.core.db_capabilities import DBCapabilities, get_capabilities
@@ -101,9 +101,7 @@ def search_diagnostics(configured: str = "auto") -> dict[str, Any]:
         "diagnostic": diagnostic,
         "database": caps.engine_name if caps else "unknown",
         "index_mode": (
-            "database_index"
-            if provider in {"pg_fts", "mariadb_fulltext"}
-            else "parameterized_like"
+            "database_index" if provider in {"pg_fts", "mariadb_fulltext"} else "parameterized_like"
         ),
     }
 
@@ -120,9 +118,7 @@ async def search_health(engine: AsyncEngine, configured: str = "auto") -> dict[s
         "diagnostic": diagnostic,
         "database": dialect,
         "index_mode": (
-            "database_index"
-            if provider in {"pg_fts", "mariadb_fulltext"}
-            else "parameterized_like"
+            "database_index" if provider in {"pg_fts", "mariadb_fulltext"} else "parameterized_like"
         ),
     }
     index_healthy: bool | None = None
@@ -173,8 +169,7 @@ def _condition(model: type[Post] | type[Page], provider: str, query: str) -> Any
     if provider == "mariadb_fulltext":
         table = "posts" if model is Post else "pages"
         return text(
-            f"MATCH({table}.title, {table}.body_md) "
-            "AGAINST(:search_query IN NATURAL LANGUAGE MODE)"
+            f"MATCH({table}.title, {table}.body_md) AGAINST(:search_query IN NATURAL LANGUAGE MODE)"
         ).bindparams(search_query=query)
     return model.title.contains(query, autoescape=True) | model.body_md.contains(
         query, autoescape=True
@@ -195,12 +190,27 @@ def _base(model: type[Post] | type[Page]) -> tuple[Any, ...]:
     )
 
 
-def _union(query: str, provider: str, language: str | None) -> Any:
+def _union(
+    query: str,
+    provider: str,
+    language: str | None,
+    default_language: str | None,
+) -> Any:
     post_filters = [*_base(Post), _condition(Post, provider, query)]
     page_filters = [*_base(Page), _condition(Page, provider, query)]
     if language:
-        post_filters.append(Post.lang == language)
-        page_filters.append(Page.lang == language)
+        from arborpress.core.i18n import language_storage_values
+
+        if language == default_language:
+            post_filters.append(
+                or_(Post.lang.in_(language_storage_values(language)), Post.lang.is_(None))
+            )
+            page_filters.append(
+                or_(Page.lang.in_(language_storage_values(language)), Page.lang.is_(None))
+            )
+        else:
+            post_filters.append(Post.lang.in_(language_storage_values(language)))
+            page_filters.append(Page.lang.in_(language_storage_values(language)))
     post_select = select(
         literal("post").label("kind"),
         cast(Post.id, String).label("object_id"),
@@ -229,6 +239,7 @@ async def search_public_content(
     page: int = 1,
     per_page: int = DEFAULT_PER_PAGE,
     language: str | None = None,
+    default_language: str | None = None,
     configured_provider: str = "auto",
     capabilities: DBCapabilities | None = None,
 ) -> SearchResult:
@@ -239,6 +250,16 @@ async def search_public_content(
         language = language.strip()
         if not language or len(language) > 8:
             raise ValueError("lang must contain between 1 and 8 characters")
+        from arborpress.core.i18n import normalize_language
+
+        normalized_language = normalize_language(language)
+        if normalized_language is None:
+            raise ValueError("lang must be a supported BCP-47 language")
+        language = normalized_language
+    if default_language is not None:
+        from arborpress.core.i18n import normalize_language
+
+        default_language = normalize_language(default_language)
     if not normalized:
         provider, degraded, diagnostic = _provider(capabilities, configured_provider)
         return SearchResult(normalized, [], page, per_page, 0, provider, degraded, diagnostic)
@@ -251,7 +272,7 @@ async def search_public_content(
     provider, degraded, diagnostic = _provider(capabilities, configured_provider)
 
     async def run(selected: str) -> tuple[list[SearchHit], int]:
-        documents = _union(normalized, selected, language)
+        documents = _union(normalized, selected, language, default_language)
         total = int((await db.execute(select(func.count()).select_from(documents))).scalar_one())
         rows = (
             await db.execute(

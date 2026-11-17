@@ -319,7 +319,13 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "remote_object_uri",
             "federation_inbox_activity_id",
         },
-        "posts": {"comments_enabled", "guest_confirmation_required", "comment_moderation_mode"},
+        "posts": {
+            "comments_enabled",
+            "guest_confirmation_required",
+            "comment_moderation_mode",
+            "translation_group_id",
+        },
+        "pages": {"translation_group_id"},
         "users": {"comment_trusted", "locale", "webauthn_user_handle"},
         "mail_queue": {
             "recipient_kind",
@@ -388,6 +394,8 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "missing table oidc_signing_keys",
             "missing table oauth_idempotency_keys",
             "missing table portable_import_receipts",
+            "missing table content_translation_groups",
+            "missing table content_slug_history",
         }:
             continue
         if error == "unexpected column comments.confirmation_token":
@@ -420,6 +428,46 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             if actual_user_keys == legacy_user_keys:
                 # The supported pre-Alembic schema predates exactly the new
                 # unique handle key, while retaining username/email keys.
+                continue
+        if error in {
+            "unique constraint mismatch for posts",
+            "unique constraint mismatch for pages",
+        }:
+            table_name = error.rsplit(" ", 1)[-1]
+            actual_keys = {
+                tuple(sorted(constraint.get("column_names") or ()))
+                for constraint in inspector.get_unique_constraints(table_name)
+            }
+            expected_keys = {
+                tuple(sorted(constraint.columns.keys()))
+                for constraint in Base.metadata.tables[table_name].constraints
+                if isinstance(constraint, sa.UniqueConstraint)
+            }
+            legacy_keys = expected_keys - {("lang", "translation_group_id")}
+            if actual_keys == legacy_keys:
+                continue
+        if error in {"foreign key mismatch for posts", "foreign key mismatch for pages"}:
+            table_name = error.rsplit(" ", 1)[-1]
+            actual_fks = {
+                (
+                    tuple(fk.get("constrained_columns") or ()),
+                    fk.get("referred_table"),
+                    tuple(fk.get("referred_columns") or ()),
+                    str((fk.get("options") or {}).get("ondelete") or "").upper(),
+                )
+                for fk in inspector.get_foreign_keys(table_name)
+            }
+            expected_fks = {
+                (
+                    tuple(col.name for col in constraint.columns),
+                    next(iter(constraint.elements)).column.table.name,
+                    tuple(element.column.name for element in constraint.elements),
+                    str(next(iter(constraint.elements)).ondelete or "").upper(),
+                )
+                for constraint in Base.metadata.tables[table_name].foreign_key_constraints
+            }
+            legacy_fks = {item for item in expected_fks if item[0] != ("translation_group_id",)}
+            if actual_fks == legacy_fks:
                 continue
         if error in {
             "nullability mismatch for comments.author_email",

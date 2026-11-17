@@ -25,6 +25,12 @@ replacing the output file. Import verifies the whole archive before mutation,
 including member paths, file types, sizes, compression ratios, record limits,
 references and hashes. Import does not extract arbitrary archive paths.
 
+Explicit post/page translation groups are represented by stable, bundle-local
+group references. Import maps those references to new target-local group IDs;
+source database IDs are never reused. Group membership is restored only when
+the package contains the corresponding content records, and no translation is
+inferred from matching slugs or text.
+
 ## Data scope and privacy
 
 By default, export includes public published posts, public published custom

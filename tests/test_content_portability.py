@@ -38,6 +38,7 @@ async def test_export_import_roundtrip_is_safe_and_repeatable(tmp_path: Path, mo
     from arborpress.models.content import (
         Comment,
         CommentStatus,
+        ContentTranslationGroup,
         Media,
         Page,
         PageType,
@@ -57,8 +58,12 @@ async def test_export_import_roundtrip_is_safe_and_repeatable(tmp_path: Path, mo
     stored_image = source_root / "2025/03/source.png"
     stored_image.parent.mkdir(parents=True)
     stored_image.write_bytes(_png())
-    source_settings = SimpleNamespace(web=SimpleNamespace(media_dir=source_root))
-    target_settings = SimpleNamespace(web=SimpleNamespace(media_dir=target_root))
+    source_settings = SimpleNamespace(
+        web=SimpleNamespace(media_dir=source_root, default_lang="de-DE")
+    )
+    target_settings = SimpleNamespace(
+        web=SimpleNamespace(media_dir=target_root, default_lang="de-DE")
+    )
     monkeypatch.setattr("arborpress.content.portability.get_settings", lambda: source_settings)
     monkeypatch.setattr("arborpress.media.service.get_settings", lambda: target_settings)
 
@@ -72,6 +77,7 @@ async def test_export_import_roundtrip_is_safe_and_repeatable(tmp_path: Path, mo
     target_factory = async_sessionmaker(target_engine, expire_on_commit=False)
 
     source_user_id = str(uuid.uuid4())
+    source_translation_group_id = str(uuid.uuid4())
     async with source_factory() as db:
         source_user = User(
             id=source_user_id,
@@ -84,7 +90,14 @@ async def test_export_import_roundtrip_is_safe_and_repeatable(tmp_path: Path, mo
         )
         tag = Tag(slug="portable-tag", label="Portable", lang="en")
         private_tag = Tag(slug="private-tag", label="Private", lang="en")
-        db.add_all([source_user, tag, private_tag])
+        db.add_all(
+            [
+                source_user,
+                tag,
+                private_tag,
+                ContentTranslationGroup(id=source_translation_group_id, content_kind="post"),
+            ]
+        )
         await db.flush()
         post = Post(
             id=str(uuid.uuid4()),
@@ -96,6 +109,8 @@ async def test_export_import_roundtrip_is_safe_and_repeatable(tmp_path: Path, mo
             body_html="<p>A body</p>",
             status=PostStatus.PUBLISHED,
             visibility=PostVisibility.PUBLIC,
+            lang="en-GB",
+            translation_group_id=source_translation_group_id,
             reading_time_min=1,
         )
         post.tags.append(tag)
@@ -300,6 +315,10 @@ async def test_export_import_roundtrip_is_safe_and_repeatable(tmp_path: Path, mo
         imported_post = await db.scalar(select(Post))
         assert imported_post is not None
         assert imported_post.author_id == target_user_id
+        assert imported_post.translation_group_id
+        assert imported_post.translation_group_id != source_translation_group_id
+        imported_group = await db.get(ContentTranslationGroup, imported_post.translation_group_id)
+        assert imported_group is not None and imported_group.content_kind == "post"
         assert '<a href="/media/' in imported_post.body_html
         assert "source.png" not in imported_post.body_md
         assert "/media/" in imported_post.body_md

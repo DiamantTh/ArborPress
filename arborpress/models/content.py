@@ -76,6 +76,33 @@ class PostVisibility(enum.StrEnum):
     PRIVATE = "private"
 
 
+class ContentTranslationGroup(Base):
+    """Explicit translation set; membership is never inferred from slugs."""
+
+    __tablename__ = "content_translation_groups"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    content_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ContentSlugHistory(Base):
+    """Previously public slugs retained for permanent, language-aware redirects."""
+
+    __tablename__ = "content_slug_history"
+    __table_args__ = (
+        UniqueConstraint("content_kind", "language", "slug", name="uq_content_slug_history_route"),
+        Index("ix_content_slug_history_object", "content_kind", "content_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    content_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    content_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    language: Mapped[str] = mapped_column(String(8), nullable=False, default="")
+    slug: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Post(Base):
     """Blog post (§1, URL §6 /p/{slug} or /@{handle}/p/{slug}).
 
@@ -84,6 +111,9 @@ class Post(Base):
     """
 
     __tablename__ = "posts"
+    __table_args__ = (
+        UniqueConstraint("translation_group_id", "lang", name="uq_posts_translation_lang"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     # §6 stable short-ID for /o/{id}
@@ -113,6 +143,13 @@ class Post(Base):
     )
     # §7 language
     lang: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    translation_group_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "content_translation_groups.id", ondelete="SET NULL", name="fk_posts_translation_group"
+        ),
+        nullable=True,
+    )
     # §5 ActivityPub object ID (set when federated)
     ap_object_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
@@ -272,6 +309,9 @@ class Page(Base):
     """
 
     __tablename__ = "pages"
+    __table_args__ = (
+        UniqueConstraint("translation_group_id", "lang", name="uq_pages_translation_lang"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     slug: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -283,6 +323,13 @@ class Page(Base):
         Enum(PageType), nullable=False, default=PageType.CUSTOM
     )
     lang: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    translation_group_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "content_translation_groups.id", ondelete="SET NULL", name="fk_pages_translation_group"
+        ),
+        nullable=True,
+    )
     is_published: Mapped[bool] = mapped_column(Boolean, default=False)
     # Visibility in lists
     visibility: Mapped[PostVisibility] = mapped_column(

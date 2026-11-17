@@ -37,6 +37,7 @@ def _md_to_html(md: str) -> str:
     """Simple Markdown→HTML without an external library (fallback)."""
     try:
         import markdown  # type: ignore
+
         return markdown.markdown(md, extensions=["fenced_code", "tables", "toc"])
     except ImportError:
         # Minimal fallback: paragraphs
@@ -288,9 +289,9 @@ async def seed_database(db: AsyncSession, *, force: bool = False) -> dict[str, i
     existing_tags = (await db.execute(select(Tag))).scalars().all()
     tag_slugs = {t.slug for t in existing_tags}
     seed_tags = [
-        Tag(slug="news",     label="News",     lang="en"),
+        Tag(slug="news", label="News", lang="en"),
         Tag(slug="tutorial", label="Tutorial", lang="en"),
-        Tag(slug="meta",     label="Meta",     lang="en"),
+        Tag(slug="meta", label="Meta", lang="en"),
     ]
     created_tags: dict[str, Tag] = {}
     for tag in seed_tags:
@@ -317,9 +318,9 @@ async def seed_database(db: AsyncSession, *, force: bool = False) -> dict[str, i
             body_md=_POST_1_MD,
             body_html=_md_to_html(_POST_1_MD),
             excerpt="Discover ArborPress – a self-hosted blogging platform "
-                    "with WebAuthn login, ActivityPub, and full control over your data.",
+            "with WebAuthn login, ActivityPub, and full control over your data.",
             status=PostStatus.PUBLISHED,
-            lang="en",
+            lang="en-GB",
             published_at=_now(),
         )
         tags_for_post1 = [created_tags[s] for s in ("news", "meta") if s in created_tags]
@@ -337,9 +338,9 @@ async def seed_database(db: AsyncSession, *, force: bool = False) -> dict[str, i
             body_md=_POST_2_MD,
             body_html=_md_to_html(_POST_2_MD),
             excerpt="All supported formatting options at a glance: "
-                    "headings, lists, code blocks, tables, and more.",
+            "headings, lists, code blocks, tables, and more.",
             status=PostStatus.PUBLISHED,
-            lang="en",
+            lang="en-GB",
             published_at=_now(),
         )
         tags_for_post2 = [created_tags[s] for s in ("tutorial", "meta") if s in created_tags]
@@ -367,7 +368,7 @@ async def seed_database(db: AsyncSession, *, force: bool = False) -> dict[str, i
                 body_md=md_rendered,
                 body_html=_md_to_html(md_rendered),
                 page_type=ptype,
-                lang="en",
+                lang="en-GB",
                 is_published=True,
                 show_in_footer=True,
                 noindex=(ptype == PageType.IMPRESSUM),
@@ -376,10 +377,16 @@ async def seed_database(db: AsyncSession, *, force: bool = False) -> dict[str, i
             inserted["pages"] += 1
 
     await _upsert_page(
-        _IMPRESSUM_SLUG, _IMPRESSUM_TITLE, _IMPRESSUM_MD, PageType.IMPRESSUM  # /page/imprint
+        _IMPRESSUM_SLUG,
+        _IMPRESSUM_TITLE,
+        _IMPRESSUM_MD,
+        PageType.IMPRESSUM,  # /page/imprint
     )
     await _upsert_page(
-        _PRIVACY_SLUG, _PRIVACY_TITLE, _PRIVACY_MD, PageType.PRIVACY  # /page/privacy
+        _PRIVACY_SLUG,
+        _PRIVACY_TITLE,
+        _PRIVACY_MD,
+        PageType.PRIVACY,  # /page/privacy
     )
 
     await db.commit()

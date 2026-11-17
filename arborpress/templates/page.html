@@ -1,6 +1,16 @@
 {% extends "base.html" %}
 {% block title %}{{ page.title }}{% endblock %}
-{% if page.noindex %}{% set noindex = true %}{% endif %}
+{% if page.noindex or page.visibility.value != 'public' %}{% set noindex = true %}{% endif %}
+
+{% block head %}
+<link rel="canonical" href="{{ canonical_url(canonical_endpoint, lang=active_lang, **canonical_values) }}">
+{% if config.web.i18n_mode == 'prefix' and page.translation_group_id and not page.noindex and page.visibility.value == 'public' %}
+<link rel="alternate" hreflang="{{ active_lang }}" href="{{ canonical_url(canonical_endpoint, lang=active_lang, **canonical_values) }}">
+{% for alternate_lang, alternate_slug in translation_alternates %}
+<link rel="alternate" hreflang="{{ alternate_lang }}" href="{{ canonical_url(canonical_endpoint, lang=alternate_lang, slug=alternate_slug) }}">
+{% endfor %}
+{% endif %}
+{% endblock %}
 
 {% block content %}
 <article class="page">

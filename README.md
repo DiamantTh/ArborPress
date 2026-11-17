@@ -9,6 +9,7 @@ Security-focused blogging platform and mini-CMS.
 - **WebAuthn/FIDO2-first** – Legacy password only as break-glass option (§2)
 - **Clean identity separation** – PUBLIC accounts (federated) vs. OPERATIONAL accounts (admin, never federated) (§4)
 - **Stable URL scheme** – Slugs canonicalized, media paths immutable, short IDs for ActivityPub (§6)
+- **Optional locale URL prefixes** – Explicit translation groups, configured-origin canonicals and hreflang; single-language URLs remain the default (§7, [I18N URL contract](docs/specification.md#7-internationalization-i18n))
 - **Minimal core, extensions via plugins** – declared capabilities, no auto-update (§15)
 - **No external runtime dependencies** – no CDN, no remote HTML includes (§10)
 - **ActivityPub-optional** – federation toggled per configuration (§5)

@@ -65,10 +65,7 @@ def _resource_error(code: str, status: int, message: str | None = None) -> Respo
 
 @oauth_provider_bp.errorhandler(HTTPException)
 def _oauth_protocol_http_error(error: HTTPException) -> ResponseReturnValue | HTTPException:
-    if not (
-        request.path.startswith("/api/v1/oauth/")
-        or request.path.startswith("/oauth/")
-    ):
+    if not (request.path.startswith("/api/v1/oauth/") or request.path.startswith("/oauth/")):
         return error
     status = error.code or 500
     code = "rate_limited" if status == 429 else "invalid_request"
@@ -115,6 +112,14 @@ def _resource_page() -> tuple[int, int] | None:
 
 
 def _api_post(post: Post, *, detail: bool = False) -> dict[str, Any]:
+    from arborpress.core.config import get_settings
+    from arborpress.core.i18n import normalize_language
+    from arborpress.web.public_urls import public_path
+
+    content_language = normalize_language(post.lang) or normalize_language(
+        get_settings().web.default_lang
+    )
+
     item: dict[str, Any] = {
         "id": post.short_id,
         "slug": post.slug,
@@ -123,7 +128,8 @@ def _api_post(post: Post, *, detail: bool = False) -> dict[str, Any]:
         "status": post.status.value,
         "visibility": post.visibility.value,
         "published_at": post.published_at.isoformat() if post.published_at else None,
-        "url": f"/p/{post.slug}",
+        "lang": content_language,
+        "url": public_path("public.post_detail", lang=content_language, slug=post.slug),
     }
     if detail:
         item.update(body_markdown=post.body_md, body_html=post.body_html)
@@ -144,9 +150,7 @@ async def _idempotency_record(
     if not _IDEMPOTENCY_KEY_RE.fullmatch(raw_key):
         return None, "invalid_idempotency_key"
     now = datetime.now(UTC).replace(tzinfo=None)
-    await db.execute(
-        delete(OAuthIdempotencyKey).where(OAuthIdempotencyKey.expires_at <= now)
-    )
+    await db.execute(delete(OAuthIdempotencyKey).where(OAuthIdempotencyKey.expires_at <= now))
     key_hash = digest(raw_key)
     existing = await db.scalar(
         select(OAuthIdempotencyKey)
@@ -531,14 +535,17 @@ async def token() -> ResponseReturnValue:
                     verifier, row.code_challenge
                 ):
                     raise OAuthError("invalid_grant")
-                matched = cast(CursorResult[Any], await db.execute(
-                    update(OAuthAuthorizationCode)
-                    .where(
-                        OAuthAuthorizationCode.id == row.id,
-                        OAuthAuthorizationCode.consumed_at.is_(None),
-                    )
-                    .values(consumed_at=datetime.now(UTC).replace(tzinfo=None))
-                ))
+                matched = cast(
+                    CursorResult[Any],
+                    await db.execute(
+                        update(OAuthAuthorizationCode)
+                        .where(
+                            OAuthAuthorizationCode.id == row.id,
+                            OAuthAuthorizationCode.consumed_at.is_(None),
+                        )
+                        .values(consumed_at=datetime.now(UTC).replace(tzinfo=None))
+                    ),
+                )
                 if matched.rowcount != 1:
                     raise OAuthError("invalid_grant")
                 grant = await db.get(OAuthGrant, row.grant_id)
@@ -695,13 +702,15 @@ async def oauth_posts() -> ResponseReturnValue:
                 )
             ).all()
         )
-        response = jsonify({
-            "items": [_api_post(post) for post in posts],
-            "page": page,
-            "per_page": per_page,
-            "total": total,
-            "pages": max(1, (total + per_page - 1) // per_page),
-        })
+        response = jsonify(
+            {
+                "items": [_api_post(post) for post in posts],
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "pages": max(1, (total + per_page - 1) // per_page),
+            }
+        )
         response.headers["Cache-Control"] = "no-store"
         return response
     return _resource_error("server_error", 500)
@@ -781,6 +790,10 @@ async def oauth_post_create() -> ResponseReturnValue:
                 return jsonify(_api_post(existing, detail=True)), 200
         if await db.scalar(select(Post.id).where(Post.slug == slug)):
             return _resource_error("slug_conflict", 409)
+        from arborpress.content.public_identity import historic_slug_owner
+
+        if await historic_slug_owner(db, kind="post", slug=slug):
+            return _resource_error("slug_reserved", 409)
         post = Post(
             id=str(uuid.uuid4()),
             short_id=secrets.token_urlsafe(8)[:10],
@@ -800,9 +813,7 @@ async def oauth_post_create() -> ResponseReturnValue:
 
         db.add(post)
         await db.flush()
-        await ensure_primary_author(
-            db, post=post, user_id=str(user.id), actor_user_id=str(user.id)
-        )
+        await ensure_primary_author(db, post=post, user_id=str(user.id), actor_user_id=str(user.id))
         if receipt is not None:
             receipt.resource_id = str(post.id)
             db.add(receipt)
@@ -979,9 +990,7 @@ async def oauth_comments_list() -> ResponseReturnValue:
             }
             for comment, slug in rows
         ]
-        return _resource_json(
-            {"items": items, "page": page, "per_page": per_page, "total": total}
-        )
+        return _resource_json({"items": items, "page": page, "per_page": per_page, "total": total})
     return _resource_error("server_error", 500)
 
 

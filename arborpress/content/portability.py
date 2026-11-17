@@ -33,6 +33,8 @@ from arborpress.core.config import get_settings
 from arborpress.models.content import (
     Comment,
     CommentStatus,
+    ContentSlugHistory,
+    ContentTranslationGroup,
     Media,
     Page,
     PageType,
@@ -82,6 +84,20 @@ def _json_bytes(value: object) -> bytes:
         separators=(",", ":"),
         allow_nan=False,
     ).encode("utf-8")
+
+
+def _portable_language(value: object, *, name: str) -> str | None:
+    """Validate and normalize an optional ArborPress-supported BCP-47 tag."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not _LANG_RE.fullmatch(value):
+        raise PortabilityError(f"Invalid {name} language.")
+    from arborpress.core.i18n import normalize_language
+
+    normalized = normalize_language(value)
+    if normalized is None:
+        raise PortabilityError(f"Unsupported {name} language.")
+    return normalized
 
 
 def _json_loads(value: str | bytes) -> Any:
@@ -192,9 +208,7 @@ async def export_portable(
                 relation_statement = select(PostAuthorRelation.user_id).join(
                     Post, Post.id == PostAuthorRelation.post_id
                 )
-                legacy_author_statement = select(Post.author_id).where(
-                    Post.author_id.is_not(None)
-                )
+                legacy_author_statement = select(Post.author_id).where(Post.author_id.is_not(None))
                 if not include_non_public:
                     relation_statement = relation_statement.where(
                         Post.status == PostStatus.PUBLISHED,
@@ -222,9 +236,7 @@ async def export_portable(
                     author_sources.append(comments_query)
                 author_ids = sa_union(*author_sources).subquery()
                 statement = (
-                    select(User)
-                    .join(author_ids, author_ids.c.user_id == User.id)
-                    .order_by(User.id)
+                    select(User).join(author_ids, author_ids.c.user_id == User.id).order_by(User.id)
                 )
                 async for batch in _chunks(db, statement):
                     for user in batch:
@@ -304,6 +316,13 @@ async def export_portable(
                             "source_status": item.status.value,
                             "visibility": item.visibility.value,
                             "lang": item.lang,
+                            "translation_group_id": (
+                                _portable_id(
+                                    namespace, "post_translation_group", item.translation_group_id
+                                )
+                                if item.translation_group_id
+                                else None
+                            ),
                             "published_at": item.published_at.isoformat()
                             if item.published_at
                             else None,
@@ -329,6 +348,13 @@ async def export_portable(
                             "slug": item.slug,
                             "body_md": item.body_md or "",
                             "lang": item.lang,
+                            "translation_group_id": (
+                                _portable_id(
+                                    namespace, "page_translation_group", item.translation_group_id
+                                )
+                                if item.translation_group_id
+                                else None
+                            ),
                             "source_is_published": bool(item.is_published),
                             "visibility": item.visibility.value,
                             "noindex": bool(item.noindex),
@@ -504,7 +530,7 @@ async def export_portable(
                         r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}", configured_theme
                     ):
                         theme_reference = configured_theme
-                except (ValueError, TypeError, AttributeError):
+                except ValueError, TypeError, AttributeError:
                     pass
             canonical_entries = {name: record["sha256"] for name, record in sorted(files.items())}
             record_counts = {key: counts.get(key, 0) for key in _ENTITY_FILES}
@@ -612,9 +638,10 @@ def _read_manifest(archive: zipfile.ZipFile) -> dict[str, Any]:
         raise PortabilityError("Portable packages must explicitly exclude security data.")
     if not isinstance(value.get("source_build_sha"), str) or len(value["source_build_sha"]) > 64:
         raise PortabilityError("Manifest source build identity is invalid.")
-    if not isinstance(value.get("source_alembic_head"), str) or len(
-        value["source_alembic_head"]
-    ) > 128:
+    if (
+        not isinstance(value.get("source_alembic_head"), str)
+        or len(value["source_alembic_head"]) > 128
+    ):
         raise PortabilityError("Manifest source schema identity is invalid.")
     if not isinstance(value.get("exported_at"), str):
         raise PortabilityError("Manifest export timestamp is invalid.")
@@ -749,6 +776,7 @@ def _validate_archive_structure(
             row.get("display_name"), name="author display name", limit=160, allow_empty=False
         )
     tag_slugs: set[str] = set()
+    translation_members: dict[tuple[str, str], set[str]] = {}
     for row in entities["tags"]:
         slug = _valid_text(row.get("slug"), name="tag slug", limit=128, allow_empty=False)
         if not _SLUG_RE.fullmatch(slug) or slug in tag_slugs:
@@ -775,10 +803,16 @@ def _validate_archive_structure(
             raise PortabilityError("Unsupported post visibility.")
         if row.get("source_status") not in {value.value for value in PostStatus}:
             raise PortabilityError("Unsupported source post status.")
-        if row.get("lang") is not None and (
-            not isinstance(row["lang"], str) or not _LANG_RE.fullmatch(row["lang"])
-        ):
-            raise PortabilityError("Invalid post language.")
+        row["lang"] = _portable_language(row.get("lang"), name="post")
+        group_id = row.get("translation_group_id")
+        if group_id is not None:
+            if not isinstance(group_id, str) or not _UUID_RE.fullmatch(group_id):
+                raise PortabilityError("Invalid post translation group reference.")
+            language = str(row.get("lang") or "")
+            members = translation_members.setdefault(("post", group_id), set())
+            if not language or language in members:
+                raise PortabilityError("A translation group needs one member per language.")
+            members.add(language)
         tag_ids = row.get("tag_ids")
         if not isinstance(tag_ids, list) or len(tag_ids) > MAX_RECORDS:
             raise PortabilityError("Post tag references are invalid.")
@@ -823,10 +857,16 @@ def _validate_archive_structure(
         _valid_text(row.get("body_md"), name="page body", limit=MAX_CONTENT_CHARS)
         if row.get("visibility") not in {value.value for value in PostVisibility}:
             raise PortabilityError("Unsupported page visibility.")
-        if row.get("lang") is not None and (
-            not isinstance(row["lang"], str) or not _LANG_RE.fullmatch(row["lang"])
-        ):
-            raise PortabilityError("Invalid page language.")
+        row["lang"] = _portable_language(row.get("lang"), name="page")
+        group_id = row.get("translation_group_id")
+        if group_id is not None:
+            if not isinstance(group_id, str) or not _UUID_RE.fullmatch(group_id):
+                raise PortabilityError("Invalid page translation group reference.")
+            language = str(row.get("lang") or "")
+            members = translation_members.setdefault(("page", group_id), set())
+            if not language or language in members:
+                raise PortabilityError("A translation group needs one member per language.")
+            members.add(language)
         if not isinstance(row.get("noindex", False), bool) or not isinstance(
             row.get("show_in_footer", False), bool
         ):
@@ -871,10 +911,7 @@ def _validate_archive_structure(
         if path in source_media_paths:
             raise PortabilityError("Media source path is duplicated.")
         source_media_paths.add(path)
-        if (
-            not isinstance(row.get("size"), int)
-            or isinstance(row.get("size"), bool)
-        ):
+        if not isinstance(row.get("size"), int) or isinstance(row.get("size"), bool):
             raise PortabilityError("Media metadata is invalid.")
         if name not in manifest["files"] or manifest["files"][name]["size"] > MAX_MEDIA_BYTES:
             raise PortabilityError("Media file is missing or too large.")
@@ -1029,6 +1066,17 @@ async def inspect_portable(
         if entities["posts"]
         else set()
     )
+    if entities["posts"]:
+        existing_post_slugs.update(
+            (
+                await db.scalars(
+                    select(ContentSlugHistory.slug).where(
+                        ContentSlugHistory.content_kind == "post",
+                        ContentSlugHistory.slug.in_([row["slug"] for row in entities["posts"]]),
+                    )
+                )
+            ).all()
+        )
     existing_page_slugs = (
         set(
             (
@@ -1042,6 +1090,17 @@ async def inspect_portable(
         if entities["pages"]
         else set()
     )
+    if entities["pages"]:
+        existing_page_slugs.update(
+            (
+                await db.scalars(
+                    select(ContentSlugHistory.slug).where(
+                        ContentSlugHistory.content_kind == "page",
+                        ContentSlugHistory.slug.in_([row["slug"] for row in entities["pages"]]),
+                    )
+                )
+            ).all()
+        )
     existing_tag_slugs = (
         set(
             (
@@ -1217,11 +1276,30 @@ async def import_portable(
                     return {**plan, "already_imported": True}
                 occupied_post = set((await db.scalars(select(Post.slug))).all())
                 occupied_page = set((await db.scalars(select(Page.slug))).all())
+                occupied_post.update(
+                    (
+                        await db.scalars(
+                            select(ContentSlugHistory.slug).where(
+                                ContentSlugHistory.content_kind == "post"
+                            )
+                        )
+                    ).all()
+                )
+                occupied_page.update(
+                    (
+                        await db.scalars(
+                            select(ContentSlugHistory.slug).where(
+                                ContentSlugHistory.content_kind == "page"
+                            )
+                        )
+                    ).all()
+                )
                 occupied_tag = set((await db.scalars(select(Tag.slug))).all())
                 tag_map: dict[str, int] = {}
                 post_map: dict[str, str] = {}
                 comment_map: dict[str, str] = {}
                 media_path_map: dict[str, str] = {}
+                translation_group_map: dict[tuple[str, str], str] = {}
                 counts: Counter[str] = Counter()
                 conflict_rows = {item["portable_id"] for item in plan["conflicts"]}
 
@@ -1231,6 +1309,17 @@ async def import_portable(
                 from arborpress.media.service import MediaUploadError, store_media_upload
                 from arborpress.models.content import PostRevision
                 from arborpress.models.user import AccountType, User, UserRole
+
+                async def local_translation_group(kind: str, portable_id: str | None) -> str | None:
+                    if portable_id is None:
+                        return None
+                    key = (kind, portable_id)
+                    if key not in translation_group_map:
+                        group_id = str(uuid.uuid4())
+                        db.add(ContentTranslationGroup(id=group_id, content_kind=kind))
+                        await db.flush()
+                        translation_group_map[key] = group_id
+                    return translation_group_map[key]
 
                 actor = await db.get(User, actor_user_id)
                 if (
@@ -1318,7 +1407,10 @@ async def import_portable(
                         excerpt=row.get("excerpt"),
                         status=PostStatus.DRAFT,
                         visibility=PostVisibility(row["visibility"]),
-                        lang=row.get("lang"),
+                        lang=row.get("lang") or get_settings().web.default_lang,
+                        translation_group_id=await local_translation_group(
+                            "post", row.get("translation_group_id")
+                        ),
                         reading_time_min=Post.calc_reading_time(body_md),
                         published_at=None,
                     )
@@ -1384,7 +1476,10 @@ async def import_portable(
                             body_md=body_md,
                             body_html=render_md(body_md),
                             page_type=PageType.CUSTOM,
-                            lang=row.get("lang"),
+                            lang=row.get("lang") or get_settings().web.default_lang,
+                            translation_group_id=await local_translation_group(
+                                "page", row.get("translation_group_id")
+                            ),
                             is_published=False,
                             visibility=PostVisibility(row["visibility"]),
                             noindex=bool(row.get("noindex", False)),

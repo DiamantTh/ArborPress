@@ -37,6 +37,40 @@ _SUPPORTED: set[str] = {
     "pl-PL",  # Polski
 }
 
+
+def normalize_language(value: str | None) -> str | None:
+    """Return the configured BCP-47 tag for a supported language spelling."""
+    if not value:
+        return None
+    folded = value.replace("_", "-").casefold()
+    exact = next((item for item in _SUPPORTED if item.casefold() == folded), None)
+    if exact:
+        return exact
+    if "-" not in folded:
+        base_matches = [item for item in _SUPPORTED if item.split("-", 1)[0].casefold() == folded]
+        if len(base_matches) == 1:
+            return base_matches[0]
+    return None
+
+
+def supported_languages() -> tuple[str, ...]:
+    """Stable, sorted list of languages accepted by public prefix routes."""
+    return tuple(sorted(_SUPPORTED))
+
+
+def language_storage_values(value: str) -> tuple[str, ...]:
+    """Return canonical locale plus unambiguous legacy base-language values."""
+    normalized = normalize_language(value)
+    if normalized is None:
+        return ()
+    aliases = tuple(
+        item.split("-", 1)[0]
+        for item in supported_languages()
+        if item.split("-", 1)[0] != item and normalize_language(item.split("-", 1)[0]) == normalized
+    )
+    return (normalized, *aliases)
+
+
 # Root directory for .mo files
 _TRANSLATIONS_DIR = Path(__file__).parent.parent / "translations"
 
@@ -65,20 +99,23 @@ def detect_language(default: str = "de-DE") -> str:
     if cfg.web.i18n_mode == "prefix":
         path = request.path
         parts = path.lstrip("/").split("/", 1)
-        if parts and parts[0] in _SUPPORTED:
-            return parts[0]
+        if parts:
+            language = normalize_language(parts[0])
+            if language:
+                return language
 
     # 2. Cookie
     lang_cookie = request.cookies.get("_lang", "")
-    if lang_cookie in _SUPPORTED:
-        return lang_cookie
+    normalized_cookie = normalize_language(lang_cookie)
+    if normalized_cookie:
+        return normalized_cookie
 
     # 3. Accept-Language – Werkzeug best_match vergleicht BCP 47 nativ
     best = request.accept_languages.best_match(list(_SUPPORTED))
     if best:
-        return best
+        return normalize_language(best) or best
 
-    return default
+    return normalize_language(default) or "de-DE"
 
 
 def get_lang() -> str:
@@ -170,11 +207,10 @@ __ = cli_gettext
 
 
 def url_for_lang(lang: str, endpoint: str, **values: object) -> str:
-    """Build a URL in prefix mode (§7)."""
-    from quart import url_for as _url_for
+    """Build a language-aware public route without prefixing protocols."""
+    from arborpress.web.public_urls import public_path
 
-    url = _url_for(endpoint, **values)
-    return f"/{lang}{url}"
+    return public_path(endpoint, lang=lang, **values)
 
 
 def register_i18n(app: object) -> None:

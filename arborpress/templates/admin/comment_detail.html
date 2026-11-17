@@ -11,7 +11,7 @@
   <dt>Inbox activity</dt><dd>{% if federation_intake %}<a href="{{ url_for('admin.federation_inbox_detail', intake_id=federation_intake.id) }}">{{ federation_intake.activity_type }} · {{ federation_intake.activity_uri }}</a>{% else %}unavailable{% endif %}</dd>
   {% endif %}
   <dt>Status</dt><dd>{{ comment.status.value }}</dd>
-  <dt>Artikel</dt><dd><a href="{{ url_for('public.post_detail', slug=comment.post.slug) }}">{{ comment.post.title }}</a></dd>
+  <dt>Artikel</dt><dd><a href="{{ public_url('public.post_detail', lang=comment.post.lang, slug=comment.post.slug) }}">{{ comment.post.title }}</a></dd>
   <dt>Thread</dt><dd>{% if comment.parent_id %}<a href="{{ url_for('admin.comment_detail', comment_id=comment.parent_id) }}">Parent {{ comment.parent_id }}</a>{% else %}Root{% endif %}</dd>
   <dt>Zitat</dt><dd>{% if comment.quote_of_id %}<a href="{{ url_for('admin.comment_detail', comment_id=comment.quote_of_id) }}">{{ comment.quote_of_id }}</a>{% else %}Keines{% endif %}</dd>
   <dt>Erstellt</dt><dd>{{ comment.created_at.isoformat() }}</dd>

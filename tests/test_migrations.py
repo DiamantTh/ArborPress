@@ -24,7 +24,40 @@ from arborpress.core.migrations import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pre_alembic_phase1_schema.sql"
-CURRENT_HEAD = "0019_portable_import_receipts"
+CURRENT_HEAD = "0021_content_slug_history"
+
+
+@pytest.mark.asyncio
+async def test_content_i18n_migrations_upgrade_from_0019_and_downgrade_cleanly(
+    tmp_path: Path,
+) -> None:
+    engine = _sqlite_engine(tmp_path / "content-i18n.db")
+    try:
+        await upgrade_database(engine)
+        await downgrade_database("0019_portable_import_receipts", engine)
+        async with engine.connect() as connection:
+            assert not await connection.run_sync(
+                lambda sync: sa.inspect(sync).has_table("content_translation_groups")
+            )
+            assert not await connection.run_sync(
+                lambda sync: sa.inspect(sync).has_table("content_slug_history")
+            )
+        await upgrade_database(engine)
+        async with engine.connect() as connection:
+            tables_and_columns = await connection.run_sync(
+                lambda sync: (
+                    sa.inspect(sync).has_table("content_translation_groups"),
+                    sa.inspect(sync).has_table("content_slug_history"),
+                    {column["name"] for column in sa.inspect(sync).get_columns("posts")},
+                    {column["name"] for column in sa.inspect(sync).get_columns("pages")},
+                )
+            )
+            assert tables_and_columns[0]
+            assert tables_and_columns[1]
+            assert "translation_group_id" in tables_and_columns[2]
+            assert "translation_group_id" in tables_and_columns[3]
+    finally:
+        await engine.dispose()
 
 
 def _sqlite_engine(path: Path) -> AsyncEngine:
@@ -149,7 +182,7 @@ async def test_empty_database_upgrade_noop_and_repeated_install(tmp_path: Path) 
         assert status.is_current
         assert status.current_revisions == (CURRENT_HEAD,)
         before = await _schema_snapshot(engine)
-        assert len(before) == 65
+        assert len(before) == 67
         assert "oauth_idempotency_keys" in before
         assert "webauthn_credentials" in before
 

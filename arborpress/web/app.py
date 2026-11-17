@@ -158,6 +158,8 @@ def create_app() -> Quart:
         "web": {
             "base_url": cfg.web.base_url,
             "admin_editor": cfg.web.admin_editor,
+            "i18n_mode": cfg.web.i18n_mode,
+            "default_lang": cfg.web.default_lang,
         },
         "auth": {
             "legacy_password_enabled": cfg.auth.legacy_password_enabled,
@@ -428,6 +430,11 @@ def create_app() -> Quart:
 
     # §1 / §6 Public routes
     app.register_blueprint(public_bp)
+    from arborpress.web.public_urls import register_public_url_helper
+    from arborpress.web.routes.public import register_language_routes
+
+    register_language_routes(app)
+    register_public_url_helper(app)
     app.register_blueprint(notifications_bp)
 
     # §2 / §11 Auth + SSO

@@ -61,6 +61,10 @@ secret_key      = "AENDERN_IM_PRODUKTIVBETRIEB_langer_zufaelliger_string"
 # stillen Wechsel ueber rp_id_locked und verlangt eine Bestaetigung in
 # /admin/webauthn (oder per CLI: arborpress webauthn unlock-rp-id).
 base_url        = "https://blog.example.com"
+# Public content URLs are unprefixed by default. Set i18n_mode to "prefix"
+# to use supported BCP-47 locale prefixes for public content routes.
+default_lang    = "de-DE"
+i18n_mode       = "single"  # single | prefix
 # Anzahl vertrauter Reverse-Proxy-Hops (0 = kein Proxy)
 trusted_proxies = 1
 # Pfad des Admin-Bereichs – konfigurierbar fuer Security-by-Obscurity

@@ -596,7 +596,6 @@ async def oauth_signing_key_rotate() -> ResponseReturnValue:
     abort(500)
 
 
-
 @admin_bp.get("/oidc/providers")
 async def oidc_providers() -> ResponseReturnValue:
     _require_session()
@@ -642,8 +641,11 @@ async def oidc_provider_save() -> ResponseReturnValue:
             await db.rollback()
             abort(409, str(exc))
         await write_audit_event(
-            event_type="oidc_provider_saved", outcome="success", actor_id=actor_id,
-            detail=f"provider_id={row.id}; secret excluded", db=db,
+            event_type="oidc_provider_saved",
+            outcome="success",
+            actor_id=actor_id,
+            detail=f"provider_id={row.id}; secret excluded",
+            db=db,
         )
         await db.commit()
         return redirect(url_for("admin.oidc_providers"))
@@ -664,8 +666,10 @@ async def oidc_provider_enabled(provider_id: str) -> ResponseReturnValue:
             abort(404)
         await write_audit_event(
             event_type="oidc_provider_enabled" if enabled else "oidc_provider_disabled",
-            outcome="success", actor_id=actor_id,
-            detail=f"provider_id={provider_id}; enabled={enabled}", db=db,
+            outcome="success",
+            actor_id=actor_id,
+            detail=f"provider_id={provider_id}; enabled={enabled}",
+            db=db,
         )
         await db.commit()
         return redirect(url_for("admin.oidc_providers"))
@@ -686,9 +690,11 @@ async def oidc_provider_secret_rotate(provider_id: str) -> ResponseReturnValue:
             await db.rollback()
             abort(400, str(exc))
         await write_audit_event(
-            event_type="oidc_provider_secret_rotated", outcome="success",
+            event_type="oidc_provider_secret_rotated",
+            outcome="success",
             actor_id=actor_id,
-            detail=f"provider_id={provider_id}; client secret rotated; value omitted", db=db,
+            detail=f"provider_id={provider_id}; client secret rotated; value omitted",
+            db=db,
         )
         await db.commit()
         return redirect(url_for("admin.oidc_providers"))
@@ -731,7 +737,8 @@ async def oidc_provider_check(provider_id: str) -> ResponseReturnValue:
             detail=(
                 f"provider_id={provider_id}; discovery={row.discovery_status};"
                 f"jwks={row.jwks_status}"
-            ), db=db,
+            ),
+            db=db,
         )
         await db.commit()
         return redirect(url_for("admin.oidc_providers"))
@@ -908,9 +915,14 @@ async def federation_deliveries_page() -> ResponseReturnValue:
     async for db in get_db_session():
         rows = (await db.execute(stmt)).all()
     return await render_template(
-        "admin/federation_deliveries.html", rows=rows, status=status,
-        activity_type=activity_type, domain=domain, since=request.args.get("since", ""),
-        until=request.args.get("until", ""), noindex=True
+        "admin/federation_deliveries.html",
+        rows=rows,
+        status=status,
+        activity_type=activity_type,
+        domain=domain,
+        since=request.args.get("since", ""),
+        until=request.args.get("until", ""),
+        noindex=True,
     )
 
 
@@ -927,8 +939,12 @@ async def federation_delivery_retry(delivery_id: str) -> ResponseReturnValue:
         except ValueError as exc:
             abort(409, description=str(exc))
         await write_audit_event(
-            event_type="federation.delivery.retried", outcome="success", actor_id=actor_id,
-            target_id=delivery.id, detail="same activity requeued after policy validation", db=db
+            event_type="federation.delivery.retried",
+            outcome="success",
+            actor_id=actor_id,
+            target_id=delivery.id,
+            detail="same activity requeued after policy validation",
+            db=db,
         )
         await db.commit()
     return redirect(url_for("admin.federation_deliveries_page"))
@@ -947,8 +963,11 @@ async def federation_delivery_cancel(delivery_id: str) -> ResponseReturnValue:
         except ValueError as exc:
             abort(409, description=str(exc))
         await write_audit_event(
-            event_type="federation.delivery.cancelled", outcome="success", actor_id=actor_id,
-            target_id=delivery.id, db=db
+            event_type="federation.delivery.cancelled",
+            outcome="success",
+            actor_id=actor_id,
+            target_id=delivery.id,
+            db=db,
         )
         await db.commit()
     return redirect(url_for("admin.federation_deliveries_page"))
@@ -980,9 +999,14 @@ async def federation_inbox_page() -> ResponseReturnValue:
     async for db in get_db_session():
         rows = (await db.scalars(stmt)).all()
     return await render_template(
-        "admin/federation_inbox.html", rows=rows, state=state,
-        activity_type=activity_type, domain=domain, since=request.args.get("since", ""),
-        until=request.args.get("until", ""), noindex=True
+        "admin/federation_inbox.html",
+        rows=rows,
+        state=state,
+        activity_type=activity_type,
+        domain=domain,
+        since=request.args.get("since", ""),
+        until=request.args.get("until", ""),
+        noindex=True,
     )
 
 
@@ -1022,7 +1046,8 @@ async def federation_remote_actor_detail(actor_id: str) -> ResponseReturnValue:
         comment_count = int(
             await db.scalar(
                 select(func.count(Comment.id)).where(Comment.remote_actor_id == actor.id)
-            ) or 0
+            )
+            or 0
         )
         follows = (
             await db.scalars(
@@ -1031,13 +1056,19 @@ async def federation_remote_actor_detail(actor_id: str) -> ResponseReturnValue:
         ).all()
         local_actors = (
             await db.scalars(
-                select(LocalFederationActor).where(LocalFederationActor.enabled.is_(True))
+                select(LocalFederationActor)
+                .where(LocalFederationActor.enabled.is_(True))
                 .order_by(LocalFederationActor.preferred_username)
             )
         ).all()
     return await render_template(
-        "admin/federation_remote_actor.html", actor=actor, keys=keys,
-        comment_count=comment_count, follows=follows, local_actors=local_actors, noindex=True
+        "admin/federation_remote_actor.html",
+        actor=actor,
+        keys=keys,
+        comment_count=comment_count,
+        follows=follows,
+        local_actors=local_actors,
+        noindex=True,
     )
 
 
@@ -1054,8 +1085,12 @@ async def federation_inbox_reprocess(intake_id: str) -> ResponseReturnValue:
         except ValueError as exc:
             abort(409, description=str(exc))
         await write_audit_event(
-            event_type="federation.inbox.reprocessed", outcome="success", actor_id=actor_id,
-            target_id=item.id, detail="previously verified transient failure", db=db
+            event_type="federation.inbox.reprocessed",
+            outcome="success",
+            actor_id=actor_id,
+            target_id=item.id,
+            detail="previously verified transient failure",
+            db=db,
         )
         await db.commit()
     return redirect(url_for("admin.federation_inbox_page"))
@@ -1104,8 +1139,11 @@ async def federation_domain_rule_save() -> ResponseReturnValue:
         elif existing is None:
             db.add(
                 FederationDomainRule(
-                    domain=domain, rule=rule, include_subdomains=include_subdomains,
-                    note=note, created_by=actor_id
+                    domain=domain,
+                    rule=rule,
+                    include_subdomains=include_subdomains,
+                    note=note,
+                    created_by=actor_id,
                 )
             )
         else:
@@ -1114,9 +1152,12 @@ async def federation_domain_rule_save() -> ResponseReturnValue:
             existing.note = note
             existing.created_by = actor_id
         await write_audit_event(
-            event_type="federation.domain_rule.changed", outcome="success", actor_id=actor_id,
+            event_type="federation.domain_rule.changed",
+            outcome="success",
+            actor_id=actor_id,
             target_id=hashlib.sha256(domain.encode()).hexdigest()[:36],
-            detail=f"rule={rule};include_subdomains={include_subdomains}", db=db
+            detail=f"rule={rule};include_subdomains={include_subdomains}",
+            db=db,
         )
         await db.commit()
     return redirect(url_for("admin.federation_diagnostics"))
@@ -1133,16 +1174,18 @@ async def federation_remote_actor_refresh(actor_id: str) -> ResponseReturnValue:
     signing_actor_id = (form.get("signing_actor_id") or "").strip() or None
     async for db in get_db_session():
         try:
-            actor = await refresh_remote_actor(
-                db, actor_id, signing_actor_id=signing_actor_id
-            )
+            actor = await refresh_remote_actor(db, actor_id, signing_actor_id=signing_actor_id)
         except ValueError as exc:
             abort(404, description=str(exc))
         except Exception as exc:  # sanitized HTTP-facing diagnostic
             abort(400, description=f"Remote refresh rejected: {type(exc).__name__}")
         await write_audit_event(
-            event_type="federation.remote_actor.refreshed", outcome="success", actor_id=user_id,
-            target_id=actor.id, detail=f"domain={actor.domain}", db=db
+            event_type="federation.remote_actor.refreshed",
+            outcome="success",
+            actor_id=user_id,
+            target_id=actor.id,
+            detail=f"domain={actor.domain}",
+            db=db,
         )
         await db.commit()
     return redirect(url_for("admin.federation_diagnostics"))
@@ -1158,8 +1201,11 @@ async def federation_retention_run() -> ResponseReturnValue:
 
         result = await cleanup_transport_metadata(db)
         await write_audit_event(
-            event_type="federation.transport.retention", outcome="success", actor_id=actor_id,
-            detail=" ".join(f"{key}={value}" for key, value in result.items()), db=db
+            event_type="federation.transport.retention",
+            outcome="success",
+            actor_id=actor_id,
+            detail=" ".join(f"{key}={value}" for key, value in result.items()),
+            db=db,
         )
         await db.commit()
     return redirect(url_for("admin.federation_diagnostics"))
@@ -1261,6 +1307,7 @@ async def post_new():
         noindex=True,
         captcha_types=list(CaptchaType),
         visibility_options=list(PostVisibility),
+        default_language=get_settings().web.default_lang,
     )
 
 
@@ -1310,6 +1357,26 @@ async def post_new_save():
 
     async for db in get_db_session():
         body_md, body_html, body_json = await _resolve_body(form, db)
+        from arborpress.content.public_identity import historic_slug_owner
+
+        if await historic_slug_owner(db, kind="post", slug=slug):
+            abort(409, "That slug is reserved by a previous public URL")
+        from arborpress.content.public_identity import set_translation_group
+        from arborpress.core.config import get_settings
+        from arborpress.core.i18n import normalize_language
+
+        language = normalize_language((form.get("lang") or "").strip())
+        if language is None:
+            language = normalize_language(get_settings().web.default_lang)
+        if language is None:
+            abort(400, "Configured default language is not supported")
+        group_id = (form.get("translation_group_id") or "").strip() or None
+        try:
+            group_id = await set_translation_group(
+                db, content_kind="post", lang=language, group_id=group_id
+            )
+        except ValueError as exc:
+            abort(400, str(exc))
         post = Post(
             id=str(_uuid.uuid4()),
             short_id=short_id,
@@ -1327,6 +1394,8 @@ async def post_new_save():
                 else PostVisibility.PUBLIC
             ),
             captcha_type=captcha_type,
+            lang=language,
+            translation_group_id=group_id,
             reading_time_min=Post.calc_reading_time(body_md, body_json),
             published_at=published_at,
         )
@@ -1429,6 +1498,7 @@ async def post_edit(slug: str):
         noindex=True,
         captcha_types=list(CaptchaType),
         visibility_options=list(PostVisibility),
+        default_language=get_settings().web.default_lang,
         author_rows=author_rows,
         primary_author_id=next(
             (row.user_id for row in author_rows if row.role.value == "primary"),
@@ -1513,9 +1583,73 @@ async def post_edit_save(slug: str):
 
         if title:
             post.title = title
+        language_input = (form.get("lang") or "").strip()
+        next_language = post.lang
+        if language_input:
+            from arborpress.core.i18n import normalize_language
+
+            next_language = normalize_language(language_input)
+            if next_language is None:
+                abort(400, "Unsupported BCP-47 content language")
         if new_slug != slug:
+            collision = (
+                await db.execute(
+                    select(Post.id).where(
+                        Post.slug == new_slug,
+                        Post.lang == next_language,
+                        Post.id != post.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if collision is not None:
+                abort(409, "That slug is already used by content in the same language")
+            from arborpress.content.public_identity import historic_slug_owner, remember_old_slugs
+
+            if await historic_slug_owner(
+                db, kind="post", slug=new_slug, except_content_id=str(post.id)
+            ):
+                abort(409, "The requested slug is reserved by a previous public URL")
+
+            try:
+                await remember_old_slugs(
+                    db,
+                    kind="post",
+                    content_id=str(post.id),
+                    language=post.lang,
+                    slugs=(post.slug_old, slug),
+                )
+            except ValueError:
+                abort(409, "The previous slug is already assigned to another content item")
             post.slug_old = slug
             post.slug = new_slug
+        if next_language != post.lang:
+            if new_slug == slug and next_language is not None:
+                from arborpress.content.public_identity import remember_old_slugs
+
+                try:
+                    await remember_old_slugs(
+                        db,
+                        kind="post",
+                        content_id=str(post.id),
+                        language=post.lang,
+                        slugs=(post.slug,),
+                    )
+                except ValueError:
+                    abort(409, "The previous language route is already assigned elsewhere")
+            post.lang = next_language
+        if "translation_group_id" in form:
+            from arborpress.content.public_identity import set_translation_group
+
+            try:
+                post.translation_group_id = await set_translation_group(
+                    db,
+                    content_kind="post",
+                    lang=post.lang,
+                    group_id=(form.get("translation_group_id") or "").strip() or None,
+                    content_id=str(post.id),
+                )
+            except ValueError as exc:
+                abort(400, str(exc))
         post.body_md = body_md
         post.body_html = body_html
         post.body_json = body_json
@@ -3182,7 +3316,8 @@ async def comment_detail(comment_id: str) -> ResponseReturnValue:
             )
         intake = (
             await db.get(FederationInboxActivity, comment.federation_inbox_activity_id)
-            if comment.federation_inbox_activity_id else None
+            if comment.federation_inbox_activity_id
+            else None
         )
     return await render_template(
         "admin/comment_detail.html",
@@ -3953,15 +4088,22 @@ async def site_settings_save():
                 from arborpress.models.user import ActorKeypair
 
                 active_actors = (
-                    await db.execute(
-                        select(LocalFederationActor).where(LocalFederationActor.enabled.is_(True))
+                    (
+                        await db.execute(
+                            select(LocalFederationActor).where(
+                                LocalFederationActor.enabled.is_(True)
+                            )
+                        )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 if active_actors:
                     for actor in active_actors:
                         key = (
                             await db.get(ActorKeypair, actor.current_keypair_id)
-                            if actor.current_keypair_id else None
+                            if actor.current_keypair_id
+                            else None
                         )
                         if key is None or key.algorithm != "rsa-sha256":
                             abort(

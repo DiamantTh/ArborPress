@@ -372,6 +372,19 @@ B) Language prefix:
 - `hreflang` tags required for multi-language content.
 - root path may redirect to default language
 
+### Implemented public URL contract
+- `single` is the default mode. Public content has no locale prefix; content language is metadata and UI language selection remains independent.
+- `prefix` uses the configured supported BCP-47 tags (currently `de-DE`, `en-GB`, `es-ES`, `fr-FR`, `it-IT`, `nl-NL`, `pl-PL`) for `/{lang}/p/{slug}`, `/{lang}/page/{slug}`, `/{lang}/tag/{tag}`, `/{lang}/search`, and public author routes. The root redirects deterministically to `/{default_lang}/`; it never negotiates a canonical destination from `Accept-Language`.
+- In prefix mode, a prefixed content route only resolves matching language content. Legacy unprefixed content URLs redirect to the resolved object's actual canonical locale; ambiguous duplicate slugs prefer the configured default language and otherwise return 404. Unsupported locale segments are 404. Legacy NULL-language rows resolve as the configured default language, and unambiguous base tags such as `en` normalize to their one supported regional locale.
+- Auth, dynamic admin, API, ActivityPub, WebFinger/NodeInfo, health/readiness, media, and feed endpoints remain unprefixed.
+- Absolute canonical URLs use only `[web].base_url` and validated route values. Host and forwarded headers do not define SEO identity.
+- Translation alternates require an explicit `ContentTranslationGroup`; same slugs are never treated as translation evidence. A group is either `post` or `page` and permits at most one member per language. Only published, public, indexable members produce `hreflang` links or sitemap alternates. No translation is generated automatically.
+- Every saved post language and portable page language must be a supported BCP-47 locale; new SSR/API posts and imported content default to `[web].default_lang`. Existing rows are not rewritten; NULL rows resolve to the configured default, while unsupported legacy locale values are omitted from prefixed sitemap and alternate output until corrected.
+- Slug changes through the SSR editor retain language-scoped history and issue 301 redirects to the current canonical public URL. The legacy `slug_old` field remains a fallback for rows created before the history table. Private, hidden, draft and unpublished targets never receive historic public redirects.
+- `/o/{short_id}` remains stable and redirects only for published public posts. It does not reveal hidden or unpublished targets.
+- `sitemap.xml` emits a sitemap index when public indexable content exceeds the configured per-document limit, with bounded child documents and explicit language alternates. RSS and Atom remain combined feeds; item URLs point to the canonical URL for each item's language.
+- `noindex` is emitted in SSR HTML and excludes content from sitemap, public search, RSS/Atom and indexable alternate sets. It is not an access-control boundary.
+
 ### Practical model preference
 - languages can be represented as tags/categories for content organization
 - system pages like Impressum/Privacy can exist once per language as separate pages

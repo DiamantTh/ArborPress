@@ -29,7 +29,7 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, PrivateAttr, SecretStr, model_validator
+from pydantic import Field, PrivateAttr, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -73,10 +73,7 @@ def _load_toml_file(path: Path) -> dict:
     for inc in includes:
         inc_path = Path(inc) if Path(inc).is_absolute() else base_dir / inc
         if not inc_path.exists():
-            raise FileNotFoundError(
-                f"Config include not found: {inc_path}"
-                f" (referenced in {path})"
-            )
+            raise FileNotFoundError(f"Config include not found: {inc_path} (referenced in {path})")
         data = _deep_merge(data, _load_toml_file(inc_path))
 
     return data
@@ -92,9 +89,7 @@ def _load_config_dir(directory: Path) -> tuple[dict, Path]:
     directory = directory.expanduser().resolve()
     main = directory / "config.toml"
     if not main.exists():
-        raise FileNotFoundError(
-            f"No config.toml found in configuration directory: {directory}"
-        )
+        raise FileNotFoundError(f"No config.toml found in configuration directory: {directory}")
     data = _load_toml_file(main)
     return data, main.resolve()
 
@@ -108,6 +103,7 @@ class DatabaseSettings(BaseSettings):
       sqlite+aiosqlite:///...    – SQLite (dev/test; no pool_size)
       sqlite+aiosqlite:///:memory:  – in-memory SQLite (tests only)
     """
+
     url: str = "postgresql+asyncpg://arborpress:changeme@localhost/arborpress"
     pool_size: int = 10
     echo: bool = False
@@ -126,6 +122,17 @@ class WebSettings(BaseSettings):
     admin_path: str = "/admin"
     default_lang: str = "de-DE"
     i18n_mode: Literal["single", "prefix"] = "single"
+
+    @field_validator("default_lang")
+    @classmethod
+    def _supported_default_language(cls, value: str) -> str:
+        from arborpress.core.i18n import normalize_language
+
+        normalized = normalize_language(value)
+        if normalized is None:
+            raise ValueError("web.default_lang must be a supported BCP-47 language")
+        return normalized
+
     # Media storage
     media_dir: Path = Path("media")
     # Admin Markdown editor. Only statically bundled ArborPress entries are
@@ -153,8 +160,8 @@ class AuthSettings(BaseSettings):
     auth_rate_limit: str = "10/minute"
     # §2 Account lockout – credential-stuffing protection
     # Operator-tunable; set lockout_threshold=0 to disable.
-    lockout_threshold: int = 5      # failed attempts before temporary lock
-    lockout_duration: int = 900     # lock duration in seconds (default: 15 min)
+    lockout_threshold: int = 5  # failed attempts before temporary lock
+    lockout_duration: int = 900  # lock duration in seconds (default: 15 min)
     # Dedicated key-encryption key for actor keypairs (§5).
     # Separate from web.secret_key so that session key rotation does
     # NOT invalidate AP keys.
@@ -196,16 +203,17 @@ class CacheSettings(BaseSettings):
     file:       JSON-Dateien auf Disk – Cache überlebt Neustarts.
     none:       Cache deaktiviert (immer Cache-Miss).
     """
+
     backend: Literal["memory", "redis", "valkey", "memcached", "file", "none"] = "memory"
     # Optional by default. Readiness gates it only when an operator explicitly
     # marks the cache as required for this deployment.
     required: bool = False
-    ttl: int = 300           # default TTL in seconds
-    prefix: str = "ap:"      # key prefix
+    ttl: int = 300  # default TTL in seconds
+    prefix: str = "ap:"  # key prefix
     # L1-Cache (in-process, vor externem Backend)
     # Nur wirksam wenn backend in {redis, valkey, memcached, file}
     l1_enabled: bool = False  # Zwei-Ebenen-Cache aktivieren
-    l1_ttl: int = 30          # L1-TTL in Sekunden (kurz, damit L2-Updates zeitnah wirken)
+    l1_ttl: int = 30  # L1-TTL in Sekunden (kurz, damit L2-Updates zeitnah wirken)
     # Redis
     redis_url: str = "redis://localhost:6379/0"
     # Valkey (FOSS Redis-Fork, gleiche URL-Syntax)
@@ -227,10 +235,7 @@ class PluginSettings(BaseSettings):
         directory (not relative to cwd).
         """
         base = config_file.parent
-        return [
-            d if d.is_absolute() else (base / d).resolve()
-            for d in self.dirs
-        ]
+        return [d if d.is_absolute() else (base / d).resolve() for d in self.dirs]
 
 
 class NotificationSettings(BaseSettings):
@@ -251,13 +256,13 @@ class Settings(BaseSettings):
     )
     _config_file: Path | None = PrivateAttr(default=None)
 
-    db:      DatabaseSettings = Field(default_factory=DatabaseSettings)
-    web:     WebSettings      = Field(default_factory=WebSettings)
-    auth:    AuthSettings     = Field(default_factory=AuthSettings)
-    logging: LoggingSettings  = Field(default_factory=LoggingSettings)
-    plugins: PluginSettings   = Field(default_factory=PluginSettings)
+    db: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    web: WebSettings = Field(default_factory=WebSettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
+    logging: LoggingSettings = Field(default_factory=LoggingSettings)
+    plugins: PluginSettings = Field(default_factory=PluginSettings)
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
-    cache:   CacheSettings    = Field(default_factory=CacheSettings)
+    cache: CacheSettings = Field(default_factory=CacheSettings)
 
     @classmethod
     def from_path(cls, path: Path) -> Settings:
@@ -277,9 +282,7 @@ class Settings(BaseSettings):
         # source abstraction; never copy this value into the file itself.
         env_vapid_key = "ARBORPRESS_NOTIFICATIONS__VAPID_PRIVATE_KEY"
         if env_vapid_key in os.environ:
-            data.setdefault("notifications", {})["vapid_private_key"] = os.environ[
-                env_vapid_key
-            ]
+            data.setdefault("notifications", {})["vapid_private_key"] = os.environ[env_vapid_key]
         obj = cls.model_validate(data)
         obj._config_file = anchor
         return obj
@@ -353,9 +356,7 @@ def get_settings(config_path: Path | None = None) -> Settings:
     ):
         return _settings
     resolved_config = (
-        paths.config_file
-        if config_path is None
-        else Path(config_path).expanduser().resolve()
+        paths.config_file if config_path is None else Path(config_path).expanduser().resolve()
     )
     key = (paths.prefix, resolved_config)
     if _settings is None or _settings_key != key:
@@ -401,12 +402,8 @@ def _resolve_instance_paths(settings: Settings, paths: ArborPressPaths) -> None:
         data_root = paths.data.resolve(strict=False)
         database_path = (data_root / Path(database)).resolve(strict=False)
         if not database_path.is_relative_to(data_root):
-            raise ValueError(
-                "Relative SQLite database paths must remain inside instance/data"
-            )
-        settings.db.url = url.set(database=str(database_path)).render_as_string(
-            hide_password=False
-        )
+            raise ValueError("Relative SQLite database paths must remain inside instance/data")
+        settings.db.url = url.set(database=str(database_path)).render_as_string(hide_password=False)
 
 
 def _resolve_relative_instance_path(base: Path, value: Path, label: str) -> Path:

@@ -26,6 +26,7 @@ from quart import (
     Blueprint,
     Response,
     abort,
+    g,
     redirect,
     render_template,
     request,
@@ -47,6 +48,121 @@ log = logging.getLogger("arborpress.web.public")
 public_bp = Blueprint("public", __name__)
 
 _PER_PAGE = 20
+
+
+def register_language_routes(app: Any) -> None:
+    """Register public-only aliases for configured language-prefix mode.
+
+    Protocol, account, media, API, admin and discovery routes are deliberately
+    absent from this map.
+    """
+    from quart import Quart
+
+    if not isinstance(app, Quart):
+        return
+    aliases = (
+        ("/<lang>", "public_lang.index", index),
+        ("/<lang>/p/<slug>", "public_lang.post_detail", post_detail),
+        ("/<lang>/page/<slug>", "public_lang.page_detail", page_detail),
+        ("/<lang>/tag/<tag>", "public_lang.tag_archive", tag_archive),
+        ("/<lang>/search", "public_lang.search", search),
+        ("/<lang>/@<handle>", "public_lang.author_profile", author_profile),
+        ("/<lang>/@<handle>/p/<slug>", "public_lang.author_post", author_post),
+    )
+
+    for rule, endpoint, handler in aliases:
+
+        async def dispatch(
+            lang: str,
+            _handler: Any = handler,
+            **values: str,
+        ) -> Any:
+            from arborpress.core.config import get_settings
+            from arborpress.core.i18n import normalize_language
+
+            normalized = normalize_language(lang)
+            if get_settings().web.i18n_mode != "prefix" or normalized is None:
+                abort(404)
+            g.lang = normalized
+            return await _handler(**values)
+
+        app.add_url_rule(rule, endpoint=endpoint, view_func=dispatch, strict_slashes=False)
+
+
+def _prefix_mode() -> bool:
+    return get_settings().web.i18n_mode == "prefix"
+
+
+def _content_language(value: str | None) -> str | None:
+    from arborpress.core.i18n import normalize_language
+
+    return normalize_language(value) or normalize_language(get_settings().web.default_lang)
+
+
+def _language_content_filter(column: Any, language: str) -> Any:
+    """Treat legacy NULL language as the configured default locale only."""
+    from arborpress.core.i18n import language_storage_values
+
+    filters = [column.in_(language_storage_values(language))]
+    if language == _content_language(get_settings().web.default_lang):
+        filters.append(column.is_(None))
+    return or_(*filters)
+
+
+def _canonical_content_path(endpoint: str, *, lang: str | None = None, **values: str) -> str:
+    from arborpress.web.public_urls import public_path
+
+    return public_path(endpoint, lang=lang, **values)
+
+
+async def _old_content_slug(db: Any, kind: str, slug: str, language: str | None) -> Any:
+    """Resolve a prior slug without allowing it to point at another locale."""
+    from arborpress.models.content import ContentSlugHistory, Page, Post
+
+    model = Post if kind == "post" else Page
+    history_stmt = select(ContentSlugHistory.content_id).where(
+        ContentSlugHistory.content_kind == kind,
+        ContentSlugHistory.slug == slug,
+    )
+    if language is not None:
+        from arborpress.core.i18n import language_storage_values
+
+        from sqlalchemy.sql.elements import ColumnElement
+
+        language_filters: list[ColumnElement[bool]] = [
+            ContentSlugHistory.language.in_(language_storage_values(language))
+        ]
+        if language == _content_language(get_settings().web.default_lang):
+            language_filters.append(ContentSlugHistory.language == "")
+        history_stmt = history_stmt.where(or_(*language_filters))
+    history_ids = (await db.scalars(history_stmt)).all()
+    if history_ids:
+        candidates = []
+        for item_id in history_ids:
+            item = await db.get(model, item_id)
+            if item is not None:
+                candidates.append(item)
+        if language is not None:
+            return candidates[0] if candidates else None
+        default = _content_language(get_settings().web.default_lang)
+        preferred = [item for item in candidates if _content_language(item.lang) == default]
+        if preferred:
+            return preferred[0]
+        return candidates[0] if len(candidates) == 1 else None
+    slug_column = model.slug_old
+    from sqlalchemy.sql.elements import ColumnElement
+
+    filters: list[ColumnElement[bool]] = [slug_column == slug]
+    if language is not None:
+        filters.append(_language_content_filter(model.lang, language))
+    candidates = (await db.scalars(select(model).where(*filters))).all()
+    if language is not None:
+        return candidates[0] if candidates else None
+    default = _content_language(get_settings().web.default_lang)
+    preferred = [item for item in candidates if _content_language(item.lang) == default]
+    if preferred:
+        return preferred[0]
+    return candidates[0] if len(candidates) == 1 else None
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +259,13 @@ async def index():
         page = max(1, int(request.args.get("page", 1)))
     except ValueError:
         abort(400, "page must be a positive integer")
-    lang = request.args.get("lang")
+    if _prefix_mode() and not request.path.strip("/"):
+        default_lang = _content_language(get_settings().web.default_lang)
+        if default_lang:
+            return redirect(f"/{default_lang}/", 302)
+    lang = getattr(g, "lang", None) if _prefix_mode() else request.args.get("lang")
+    if _prefix_mode() and lang and request.path == f"/{lang}":
+        return redirect(f"/{lang}/", 301)
 
     from arborpress.models.content import Post, PostStatus
 
@@ -160,7 +282,12 @@ async def index():
                 .order_by(Post.published_at.desc())
             )
             if lang:
-                stmt = stmt.where(Post.lang == lang)
+                language_filter = (
+                    Post.lang == lang
+                    if not _prefix_mode()
+                    else _language_content_filter(Post.lang, lang)
+                )
+                stmt = stmt.where(language_filter)
 
             total_stmt = (
                 select(func.count())
@@ -171,7 +298,12 @@ async def index():
                 )
             )
             if lang:
-                total_stmt = total_stmt.where(Post.lang == lang)
+                language_filter = (
+                    Post.lang == lang
+                    if not _prefix_mode()
+                    else _language_content_filter(Post.lang, lang)
+                )
+                total_stmt = total_stmt.where(language_filter)
             total_result = await db.execute(total_stmt)
             total = total_result.scalar_one()
 
@@ -190,7 +322,13 @@ async def index():
                 prev_num=page - 1,
                 next_num=page + 1,
             )
-            return await _render("index.html", posts=posts, pagination=pagination, lang=lang)
+            return await _render(
+                "index.html",
+                posts=posts,
+                pagination=pagination,
+                lang=lang,
+                active_lang=lang or get_settings().web.default_lang,
+            )
     except Exception as exc:
         log.warning("Index-Abfrage fehlgeschlagen: %s", exc)
         return await _render("index.html", posts=[], pagination=None)
@@ -206,7 +344,14 @@ async def post_detail(slug: str):
     """Einzelner Post (§6)."""
     canonical = _canonical_slug(slug)
     if canonical != slug:
-        return redirect(url_for("public.post_detail", slug=canonical), 301)
+        return redirect(
+            _canonical_content_path(
+                "public.post_detail",
+                lang=(request.path.lstrip("/").split("/", 1)[0] if _prefix_mode() else None),
+                slug=canonical,
+            ),
+            301,
+        )
 
     from arborpress.comments import (
         REASON_CATALOG,
@@ -235,6 +380,14 @@ async def post_detail(slug: str):
 
     async for db in get_db_session():
         # Load post (status=published is sufficient; visibility is checked separately)
+        from arborpress.core.i18n import normalize_language
+
+        path_lang = (
+            normalize_language(request.path.lstrip("/").split("/", 1)[0])
+            if _prefix_mode()
+            else None
+        )
+        lookup_lang = path_lang
         stmt = (
             select(Post)
             .where(
@@ -243,17 +396,76 @@ async def post_detail(slug: str):
             )
             .options(selectinload(Post.author))
         )
+        if lookup_lang:
+            stmt = stmt.where(_language_content_filter(Post.lang, lookup_lang))
         result = await db.execute(stmt)
-        post = result.scalar_one_or_none()
+        matches = result.scalars().all()
+        post: Post | None = None
+        if len(matches) == 1:
+            post = matches[0]
+        else:
+            default_lang = _content_language(get_settings().web.default_lang)
+            preferred = [item for item in matches if _content_language(item.lang) == default_lang]
+            post = preferred[0] if len(preferred) == 1 else None
 
         if post is None:
             # Versuch: alter Slug → 301
-            old_stmt = select(Post).where(Post.slug_old == canonical)
-            old_result = await db.execute(old_stmt)
-            old_post = old_result.scalar_one_or_none()
-            if old_post:
-                return redirect(url_for("public.post_detail", slug=old_post.slug), 301)
+            old_post = await _old_content_slug(db, "post", canonical, lookup_lang)
+            if (
+                old_post
+                and old_post.status == PostStatus.PUBLISHED
+                and old_post.visibility == PostVisibility.PUBLIC
+            ):
+                return redirect(
+                    _canonical_content_path(
+                        "public.post_detail",
+                        lang=_content_language(old_post.lang),
+                        slug=old_post.slug,
+                    ),
+                    301,
+                )
             abort(404)
+
+        content_lang = _content_language(post.lang)
+        if _prefix_mode():
+            from arborpress.core.i18n import normalize_language
+
+            if path_lang is None:
+                return redirect(
+                    _canonical_content_path(
+                        "public.post_detail", lang=content_lang, slug=post.slug
+                    ),
+                    301,
+                )
+            if path_lang != content_lang:
+                abort(404)
+            expected_path = _canonical_content_path(
+                "public.post_detail", lang=content_lang, slug=post.slug
+            )
+            if request.path != expected_path:
+                return redirect(expected_path, 301)
+        translation_alternates: list[tuple[str, str]] = []
+        if (
+            post.translation_group_id
+            and not post.noindex
+            and post.visibility == PostVisibility.PUBLIC
+        ):
+            from arborpress.core.i18n import normalize_language
+
+            variant_rows = await db.execute(
+                select(Post.lang, Post.slug).where(
+                    Post.translation_group_id == post.translation_group_id,
+                    Post.id != post.id,
+                    Post.status == PostStatus.PUBLISHED,
+                    Post.visibility == PostVisibility.PUBLIC,
+                    Post.noindex.is_(False),
+                )
+            )
+            translation_alternates = [
+                (normalized, variant_slug)
+                for variant_lang, variant_slug in variant_rows.all()
+                if (normalized := normalize_language(variant_lang)) is not None
+            ]
 
         authors_by_post = await authors_for_posts(db, [str(post.id)])
         post_authors: list[Any] = authors_by_post.get(str(post.id), [])
@@ -532,6 +744,10 @@ async def post_detail(slug: str):
             comment_edit_target=edit_target,
             comment_reason_catalog=REASON_CATALOG,
             post_activitypub_actor_uri=post_activitypub_actor_uri,
+            active_lang=content_lang,
+            canonical_endpoint="public.post_detail",
+            canonical_values={"slug": post.slug},
+            translation_alternates=translation_alternates,
         ),
         mimetype="text/html",
     )
@@ -548,7 +764,7 @@ async def post_detail(slug: str):
 @public_bp.get("/o/<short_id>")
 async def shortlink(short_id: str):
     """ActivityPub / Kurz-Link → 301 zum kanonischen Slug (§6)."""
-    from arborpress.models.content import Post, PostVisibility
+    from arborpress.models.content import Post, PostStatus, PostVisibility
 
     async for db in get_db_session():
         stmt = select(Post).where(Post.short_id == short_id)
@@ -558,9 +774,14 @@ async def shortlink(short_id: str):
     if post is None:
         abort(404)
     # private posts are not reachable via short link either
-    if post.visibility == PostVisibility.PRIVATE:
+    if post.status != PostStatus.PUBLISHED or post.visibility != PostVisibility.PUBLIC:
         abort(404)
-    return redirect(url_for("public.post_detail", slug=post.slug), 301)
+    return redirect(
+        _canonical_content_path(
+            "public.post_detail", lang=_content_language(post.lang), slug=post.slug
+        ),
+        301,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -573,18 +794,100 @@ async def page_detail(slug: str):
     """Statische Seite – Impressum, Datenschutz, Regeln (§1, §6)."""
     canonical = _canonical_slug(slug)
     if canonical != slug:
-        return redirect(url_for("public.page_detail", slug=canonical), 301)
+        return redirect(
+            _canonical_content_path(
+                "public.page_detail",
+                lang=(request.path.lstrip("/").split("/", 1)[0] if _prefix_mode() else None),
+                slug=canonical,
+            ),
+            301,
+        )
 
     from arborpress.models.content import Page, PostVisibility
 
     async for db in get_db_session():
         # check is_published; handle visibility separately
+        from arborpress.core.i18n import normalize_language
+
+        path_lang = (
+            normalize_language(request.path.lstrip("/").split("/", 1)[0])
+            if _prefix_mode()
+            else None
+        )
+        lookup_lang = path_lang
         stmt = select(Page).where(
             Page.slug == canonical,
             Page.is_published == True,  # noqa: E712
         )
+        if lookup_lang:
+            stmt = stmt.where(_language_content_filter(Page.lang, lookup_lang))
         result = await db.execute(stmt)
-        page = result.scalar_one_or_none()
+        matches = result.scalars().all()
+        page: Page | None = None
+        if len(matches) == 1:
+            page = matches[0]
+        else:
+            default_lang = _content_language(get_settings().web.default_lang)
+            preferred = [item for item in matches if _content_language(item.lang) == default_lang]
+            page = preferred[0] if len(preferred) == 1 else None
+
+        if page is None:
+            old_page = await _old_content_slug(db, "page", canonical, lookup_lang)
+            if (
+                old_page is not None
+                and old_page.is_published
+                and old_page.visibility == PostVisibility.PUBLIC
+            ):
+                return redirect(
+                    _canonical_content_path(
+                        "public.page_detail",
+                        lang=_content_language(old_page.lang),
+                        slug=old_page.slug,
+                    ),
+                    301,
+                )
+
+        if page is not None and _prefix_mode():
+            from arborpress.core.i18n import normalize_language
+
+            page_lang = _content_language(page.lang)
+            path_lang = normalize_language(request.path.lstrip("/").split("/", 1)[0])
+            if path_lang is None:
+                return redirect(
+                    _canonical_content_path("public.page_detail", lang=page_lang, slug=page.slug),
+                    301,
+                )
+            if path_lang != page_lang:
+                abort(404)
+            expected_path = _canonical_content_path(
+                "public.page_detail", lang=page_lang, slug=page.slug
+            )
+            if request.path != expected_path:
+                return redirect(expected_path, 301)
+
+        translation_alternates: list[tuple[str, str]] = []
+        if (
+            page is not None
+            and page.translation_group_id
+            and page.noindex is False
+            and page.visibility == PostVisibility.PUBLIC
+        ):
+            from arborpress.core.i18n import normalize_language
+
+            variants = await db.execute(
+                select(Page.lang, Page.slug).where(
+                    Page.translation_group_id == page.translation_group_id,
+                    Page.id != page.id,
+                    Page.is_published.is_(True),
+                    Page.visibility == PostVisibility.PUBLIC,
+                    Page.noindex.is_(False),
+                )
+            )
+            translation_alternates = [
+                (normalized, variant_slug)
+                for variant_lang, variant_slug in variants.all()
+                if (normalized := normalize_language(variant_lang)) is not None
+            ]
 
     if page is None:
         abort(404)
@@ -594,7 +897,17 @@ async def page_detail(slug: str):
     # hidden: reachable but not linked in navigation/footer
     from arborpress.web.http_cache import conditional_response
 
-    response = Response(await _render("page.html", page=page), mimetype="text/html")
+    response = Response(
+        await _render(
+            "page.html",
+            page=page,
+            active_lang=_content_language(page.lang),
+            canonical_endpoint="public.page_detail",
+            canonical_values={"slug": page.slug},
+            translation_alternates=translation_alternates,
+        ),
+        mimetype="text/html",
+    )
     # Theme/template changes also affect the rendered representation; its ETag
     # is a more accurate validator than the Page row timestamp.
     return await conditional_response(response, private=True)
@@ -610,9 +923,27 @@ async def tag_archive(tag: str):
     """Posts eines Tags (§6)."""
     canonical = _canonical_slug(tag)
     if canonical != tag:
-        return redirect(url_for("public.tag_archive", tag=canonical), 301)
+        return redirect(
+            _canonical_content_path(
+                "public.tag_archive",
+                lang=(request.path.lstrip("/").split("/", 1)[0] if _prefix_mode() else None),
+                tag=canonical,
+            ),
+            301,
+        )
 
     from arborpress.models.content import Post, PostStatus, Tag
+
+    if _prefix_mode():
+        from arborpress.core.i18n import normalize_language
+
+        path_lang = normalize_language(request.path.lstrip("/").split("/", 1)[0])
+        if path_lang is None:
+            default_lang = _content_language(get_settings().web.default_lang)
+            return redirect(
+                _canonical_content_path("public.tag_archive", lang=default_lang, tag=canonical),
+                301,
+            )
 
     async for db in get_db_session():
         tag_stmt = select(Tag).where(Tag.slug == canonical)
@@ -633,10 +964,31 @@ async def tag_archive(tag: str):
             )
             .order_by(Post.published_at.desc())
         )
+        if _prefix_mode():
+            active_language = _content_language(getattr(g, "lang", None))
+            if active_language:
+                posts_stmt = posts_stmt.where(
+                    _language_content_filter(Post.lang, active_language)
+                )
         posts_result = await db.execute(posts_stmt)
         posts = posts_result.scalars().all()
 
-    return await _render("tag.html", tag=tag_obj.label, posts=posts)
+    if _prefix_mode() and not normalize_language(request.path.lstrip("/").split("/", 1)[0]):
+        return redirect(
+            _canonical_content_path(
+                "public.tag_archive",
+                lang=_content_language(get_settings().web.default_lang),
+                tag=canonical,
+            ),
+            301,
+        )
+    return await _render(
+        "tag.html",
+        tag=tag_obj.label,
+        tag_slug=canonical,
+        posts=posts,
+        active_lang=getattr(g, "lang", None),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -650,6 +1002,21 @@ async def search():
     q = request.args.get("q", "").strip()
     results = []
 
+    if _prefix_mode():
+        from arborpress.core.i18n import normalize_language
+
+        path_lang = normalize_language(request.path.lstrip("/").split("/", 1)[0])
+        if path_lang is None:
+            default_lang = _content_language(get_settings().web.default_lang)
+            from urllib.parse import urlencode
+
+            query = (
+                "?" + urlencode({"q": request.args.get("q", "")}) if request.args.get("q") else ""
+            )
+            return redirect(
+                _canonical_content_path("public.search", lang=default_lang) + query, 301
+            )
+
     if q:
         try:
             from arborpress.core.search import search_public_content
@@ -662,12 +1029,17 @@ async def search():
                     q,
                     per_page=50,
                     configured_provider=search_settings.get("provider", "auto"),
+                    language=getattr(g, "lang", None)
+                    if _prefix_mode()
+                    else request.args.get("lang"),
+                    default_language=get_settings().web.default_lang,
                 )
                 results = [
                     {
                         "title": item.title,
-                        "url": url_for(
+                        "url": _canonical_content_path(
                             "public.post_detail" if item.kind == "post" else "public.page_detail",
+                            lang=getattr(g, "lang", None) if _prefix_mode() else None,
                             slug=item.slug,
                         ),
                         "excerpt": item.excerpt,
@@ -682,7 +1054,10 @@ async def search():
 
     from arborpress.web.http_cache import conditional_response
 
-    response = Response(await _render("search.html", q=q, results=results), mimetype="text/html")
+    response = Response(
+        await _render("search.html", q=q, results=results, active_lang=getattr(g, "lang", None)),
+        mimetype="text/html",
+    )
     return await conditional_response(response, private=True)
 
 
@@ -786,6 +1161,21 @@ async def author_profile(handle: str):
     if user is None:
         abort(404)
 
+    active_lang = getattr(g, "lang", None) if _prefix_mode() else None
+    if _prefix_mode():
+        from arborpress.core.i18n import normalize_language
+
+        path_lang = normalize_language(request.path.lstrip("/").split("/", 1)[0])
+        if path_lang is None:
+            path_lang = _content_language(get_settings().web.default_lang)
+            return redirect(
+                _canonical_content_path(
+                    "public.author_profile", lang=path_lang, handle=user.username
+                ),
+                301,
+            )
+        active_lang = path_lang
+
     # Publicly published posts where the user is primary or coauthor.
     from arborpress.models.content import Post, PostAuthorRelation, PostStatus, PostVisibility
 
@@ -808,11 +1198,14 @@ async def author_profile(handle: str):
                 authored,
                 Post.status == PostStatus.PUBLISHED,
                 Post.visibility == PostVisibility.PUBLIC,
+                Post.noindex.is_(False),
             )
             .order_by(Post.published_at.desc())
             .offset((page - 1) * per_page)
             .limit(per_page + 1)
         )
+        if active_lang:
+            posts_stmt = posts_stmt.where(_language_content_filter(Post.lang, active_lang))
         posts_result = await db.execute(posts_stmt)
         rows = list(posts_result.scalars().all())
         has_next = len(rows) > per_page
@@ -826,6 +1219,7 @@ async def author_profile(handle: str):
         federation_active=federation_active,
         page=page,
         has_next=has_next,
+        active_lang=active_lang,
         noindex=False,
     )
 
@@ -835,9 +1229,17 @@ async def author_post(handle: str, slug: str):
     """Post eines bestimmten Autors /@{handle}/p/{slug} (§6)."""
     canonical = _canonical_slug(slug)
     if canonical != slug:
-        return redirect(url_for("public.author_post", handle=handle, slug=canonical), 301)
+        return redirect(
+            _canonical_content_path(
+                "public.author_post",
+                lang=(request.path.lstrip("/").split("/", 1)[0] if _prefix_mode() else None),
+                handle=handle,
+                slug=canonical,
+            ),
+            301,
+        )
 
-    from arborpress.models.content import Post, PostAuthorRelation, PostStatus
+    from arborpress.models.content import Post, PostAuthorRelation, PostStatus, PostVisibility
     from arborpress.models.user import AccountType, User
 
     async for db in get_db_session():
@@ -862,14 +1264,60 @@ async def author_post(handle: str, slug: str):
                 ),
             ),
         )
+        if _prefix_mode():
+            from arborpress.core.i18n import normalize_language
+
+            language = normalize_language(request.path.lstrip("/").split("/", 1)[0])
+            if language is not None:
+                post_stmt = post_stmt.where(Post.lang == language)
         post_result = await db.execute(post_stmt)
-        post = post_result.scalar_one_or_none()
+        matches = post_result.scalars().all()
+        post: Post | None = None
+        if len(matches) == 1:
+            post = matches[0]
+        else:
+            default_lang = _content_language(get_settings().web.default_lang)
+            preferred = [item for item in matches if _content_language(item.lang) == default_lang]
+            post = preferred[0] if len(preferred) == 1 else None
+
+        if post is None:
+            if _prefix_mode():
+                from arborpress.core.i18n import normalize_language
+
+                language = normalize_language(request.path.lstrip("/").split("/", 1)[0])
+                language = language or _content_language(get_settings().web.default_lang)
+            else:
+                language = None
+            historic = await _old_content_slug(db, "post", canonical, language)
+            if (
+                historic is not None
+                and historic.status == PostStatus.PUBLISHED
+                and historic.visibility == PostVisibility.PUBLIC
+                and (
+                    historic.author_id == author.id
+                    or (
+                        await db.execute(
+                            select(PostAuthorRelation.id).where(
+                                PostAuthorRelation.post_id == historic.id,
+                                PostAuthorRelation.user_id == author.id,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    is not None
+                )
+            ):
+                return redirect(
+                    _canonical_content_path(
+                        "public.post_detail",
+                        lang=_content_language(historic.lang),
+                        slug=historic.slug,
+                    ),
+                    301,
+                )
 
     if post is None:
         abort(404)
     # private: also blocked via author URL
-    from arborpress.models.content import PostVisibility
-
     if post.visibility == PostVisibility.PRIVATE:
         abort(404)
     return await post_detail(post.slug)
@@ -1342,7 +1790,9 @@ _ATOM_MIME = "application/atom+xml; charset=utf-8"
 
 def _post_url(base: str, post) -> str:
     """Absolute URL zu einem Post-Objekt."""
-    return base.rstrip("/") + url_for("public.post_detail", slug=post.slug)
+    from arborpress.web.public_urls import canonical_url
+
+    return canonical_url("public.post_detail", lang=post.lang, slug=post.slug)
 
 
 def _rfc3339(d: dt.datetime | None) -> str:
@@ -1378,6 +1828,7 @@ async def _feed_posts():
             .where(
                 Post.status == PostStatus.PUBLISHED,
                 Post.visibility == PostVisibility.PUBLIC,
+                Post.noindex.is_(False),
             )
             .order_by(Post.published_at.desc())
             .limit(_FEED_LIMIT)
