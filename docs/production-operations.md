@@ -71,6 +71,18 @@ keys and claim identity recovery. Restore the correct key material or keep
 the affected feature disabled and investigate. Never disable token/signature
 validation to work around an unavailable provider.
 
+OpenPGP mail uses the system GnuPG executable (`gpg`) and agent; the supplied
+Ubuntu and AlmaLinux container images include it. Install and verify GnuPG on
+classic venv/systemd deployments before enabling mail protection. The
+encrypted instance signing-key material is stored in the database using a
+key derived from `web.secret_key`; restore that exact application secret with
+the database. Losing it makes the stored signer unusable, and mail fails
+closed while signing is required. The instance signer cannot decrypt user
+mail. Users retain their own private decryption keys and must keep their own
+recovery copies; ArborPress stores only their public recipient keys. After
+restoring, run `doctor --production --json` and verify an encrypted test
+delivery before enabling an instance-wide encryption requirement.
+
 ## Updates, backup and rollback
 
 1. Record the running SHA, database head and artifact checksum.

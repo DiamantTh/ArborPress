@@ -76,3 +76,17 @@ schema, restore the fully verified pre-update database and filesystem backup
 with all writers stopped. Follow [the operational runbook](production-operations.md)
 for maintenance journals, uncertain commits and recovery; no global DB/filesystem
 atomicity is promised.
+
+`0022_openpgp_mail` adds the instance OpenPGP signing-key history, recipient-key
+status metadata, an opt-in bit per user, and stable account-ID association on
+queued messages plus a queue-time snapshot of whether encryption was required.
+Existing accounts remain opted out. Existing queued entries
+that now target a local account but lack a historical account binding fail
+closed rather than being attached based on a possibly reused email; unbound
+external-recipient entries can continue. A changed/disabled local account also
+fails closed. The revision does not create or
+import any key material. Downgrade removes these Phase 15 columns and the
+instance-key table, so make a verified backup and do not downgrade after
+instance keys have been registered unless they have first been securely
+recovered. The exact `web.secret_key` must be retained with a database backup
+to decrypt protected instance signing material after restore.

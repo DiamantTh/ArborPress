@@ -127,10 +127,16 @@ arborpress cache warm                Warm safe public cache entries
 arborpress content export --output transfer.zip
 arborpress content import transfer.zip --dry-run
 
-OpenPGP mail signing/encryption and OpenPGP private-key generation/import/
-rotation are not currently implemented. The matching `key generate/import/rotate`
-CLI commands fail explicitly and do not read or change key material. Federation
-and OIDC signing keys have separate, working lifecycle commands and UI.
+arborpress key generate <name>       Generate and activate the instance mail-signing key
+arborpress key import <file> --passphrase-prompt  Import a protected signing key
+arborpress key rotate <name>         Rotate instance mail signing identity
+
+OpenPGP mail protection uses the normal SMTP outbox. Administrators manage the
+instance signing key and encryption policy at `/admin/mail`; users manage only
+their public recipient key at `/auth/security`. Missing or invalid keys never
+cause plaintext fallback after encryption is required. See
+[OpenPGP email protection](docs/openpgp-email.md) for the policy and recovery
+contract.
 
 arborpress federation inbox-process  Process ActivityPub inbox (§5)
 arborpress federation status         Show federation configuration
@@ -248,7 +254,7 @@ For the per-instance path contract and relative-path rules, see
 | ORM            | SQLAlchemy 2.0 async + asyncpg / aiomysql        |
 | Auth           | webauthn ≥ 2, argon2-cffi, pyotp                 |
 | Federation     | httpx (ActivityPub HTTP-Sig), bleach             |
-| Mail           | aiosmtplib, cryptography (OpenPGP)               |
+| Mail           | aiosmtplib, cryptography (key-at-rest), system GnuPG (OpenPGP) |
 | CLI            | Typer ≥ 0.15                                    |
 | Frontend       | Svelte + TypeScript + Vite (browser bundles; Node build-time only) |
 | Config         | pydantic-settings v2, TOML                       |

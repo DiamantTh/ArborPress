@@ -2,7 +2,7 @@
 # In PREFIX/instance/config/config.toml ablegen oder mit --config explizit angeben.
 # und anpassen.  Geheimnisse NIE committen!
 #
-# Alle weiteren Einstellungen (Mail, Captcha, Kommentare, Federation,
+# Alle weiteren Einstellungen (Mail inkl. OpenPGP-Richtlinie, Captcha, Kommentare, Federation,
 # Suche, Theme) werden im Admin-Bereich unter /admin/settings verwaltet
 # und in der Datenbank gespeichert.
 #

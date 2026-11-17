@@ -281,3 +281,8 @@ results with the exact source SHA and backend. The production doctor intentional
 does not claim a backup was verified merely because its manifest exists.
 Encrypted full backups must retain the matching application secret and actor
 key-encryption secret alongside database ciphertext; test decryption after restore.
+The instance OpenPGP mail-signing key is stored in the database encrypted
+using a domain-separated key derived from `web.secret_key`; restore the exact
+matching `web.secret_key` with the database or signing fails closed. User
+OpenPGP keys are public-only. Portable content exports never include either
+instance key material or user key records. See `openpgp-email.md` for recovery.

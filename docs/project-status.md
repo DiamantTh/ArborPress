@@ -37,10 +37,10 @@ numbers or release tags.
 - Database and filesystem writes cannot share one atomic transaction. Import
   stages files and cleans up on ordinary failures; recovery after host crash
   follows the documented journal/maintenance procedures.
-- OpenPGP mail signing/encryption and OpenPGP private-key lifecycle are not
-  implemented. Legacy `arborpress key generate/import/rotate` commands fail
-  explicitly and do not access key material. Federation and OIDC signing keys
-  use separate implemented systems.
+- OpenPGP mail signing/encryption uses the normal SMTP outbox. The instance
+  signing key is sign-only and encrypted at rest; users store their own public
+  recipient key. Required encryption fails closed. GnuPG must be installed at
+  runtime and database restore must retain the matching `web.secret_key`.
 - PostgreSQL 16+ and MariaDB 11.4+ are supported production databases; SQLite
   is for development, tests and demos. External search/cache adapters are
   optional and do not replace authoritative database visibility checks.

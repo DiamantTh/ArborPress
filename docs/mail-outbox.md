@@ -116,3 +116,13 @@ Alembic revision `0006_smtp_profiles_mail_outbox` preserves existing
 `mail_queue` payloads, maps `FAILED` to `dead`, and assigns stable Message-IDs.
 Downgrade necessarily collapses `retry`/`leased` to the prior `PENDING` state
 and `dead` to `FAILED`; lease and DSN details are discarded by that downgrade.
+
+## OpenPGP message protection
+
+The same queue applies the configured OpenPGP policy before SMTP delivery.
+The instance identity is sign-only; account public recipient keys are linked
+through `users.id`. Required/opted-in encryption is fail-closed and no plugin,
+notification, retry, BCC or template path bypasses the outbox. The full
+policy, CLI/admin lifecycle, backup dependency on `web.secret_key`, PGP/MIME
+format and privacy limits are documented in
+[`openpgp-email.md`](openpgp-email.md).

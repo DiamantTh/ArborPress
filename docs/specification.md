@@ -560,18 +560,23 @@ External IdP/SSO is optional and must remain hidden unless configured.
 - optional provider APIs (only if configured)
 
 ### OpenPGP signing/encryption
-- **Not implemented in the current source.** Outbound mail signing and
-  per-user transactional encryption are not available. `UserPGPKey` currently
-  stores public-key metadata only; there is no corresponding private-key
-  storage or OpenPGP mail-processing service.
-- The legacy `arborpress key generate/import/rotate` command names are retained
-  for a clear migration error, but exit nonzero and do not claim success or
-  access private-key files. `arborpress key status` is read-only.
-- ActivityPub actor keys and OAuth/OIDC signing keys have separate key stores
-  and lifecycle operations. They are not OpenPGP keys and must not be used as
-  substitutes.
-- Implementing OpenPGP mail processing requires a separately reviewed key
-  storage, backup/recovery, generation/import, rotation, and delivery design.
+- The native SMTP outbox applies PGP/MIME immediately before delivery.
+- The instance has a sign-only OpenPGP identity; the private key and random
+  passphrase are encrypted at rest using a key derived from `web.secret_key`.
+  There is no instance recipient-decryption key.
+- Each user may store one public recipient key associated through `users.id`.
+  No private user key is requested or stored. The key User ID must contain the
+  current account email as a consistency check, not as proof of mailbox control.
+- Signing and mandatory encryption are instance policies; users may opt into
+  encryption. Required/opted-in encryption with a missing, expired, revoked,
+  mismatched or unusable key blocks delivery without plaintext fallback.
+  Instance-wide required encryption also blocks external recipients without
+  a local account/key mapping.
+- Key operations are available in the admin mail page and `arborpress key`
+  CLI. Federation actor keys and OAuth/OIDC signing keys remain separate.
+- PGP/MIME protects message bodies and attachments, not classic transport
+  metadata such as subject, sender, recipient or routing headers. See
+  `docs/openpgp-email.md` for the exact matrix, storage, recovery and limits.
 
 ### Queueing
 - outbound mails processed asynchronously (outbox queue)

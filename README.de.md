@@ -115,11 +115,16 @@ arborpress cache warm                Sichere öffentliche Caches aufwärmen
 arborpress content export --output transfer.zip
 arborpress content import transfer.zip --dry-run
 
-OpenPGP-Mail-Signatur/Verschlüsselung sowie OpenPGP-Private-Key-Erzeugung,
--Import und -Rotation sind derzeit nicht implementiert. Die entsprechenden
-`key generate/import/rotate`-Befehle brechen ausdrücklich ab und lesen oder
-ändern kein Schlüsselmaterial. Federation- und OIDC-Signaturschlüssel haben
-separate, implementierte Lifecycle-Befehle und Oberflächen.
+arborpress key generate <name>       Instanz-Mail-Signaturschlüssel erzeugen
+arborpress key import <datei> --passphrase-prompt  Geschützten Signaturschlüssel importieren
+arborpress key rotate <name>         Instanz-Mail-Signaturschlüssel rotieren
+
+OpenPGP-Mail-Schutz verwendet die normale SMTP-Outbox. Administratoren
+verwalten Instanz-Signaturschlüssel und Verschlüsselungsrichtlinie unter
+`/admin/mail`; Benutzer hinterlegen ausschließlich ihren öffentlichen
+Empfängerschlüssel unter `/auth/security`. Bei erforderlicher Verschlüsselung
+gibt es keinen Klartext-Fallback. Details und Recovery stehen in
+[OpenPGP-E-Mail-Schutz](docs/openpgp-email.md).
 
 arborpress federation inbox-process  ActivityPub-Inbox verarbeiten (§5)
 arborpress federation status         Federation-Konfiguration anzeigen
@@ -235,7 +240,7 @@ Der verbindliche Instanz-Pfadvertrag und die Regeln für relative Pfade stehen i
 | ORM            | SQLAlchemy 2.0 async + asyncpg / aiomysql        |
 | Auth           | webauthn ≥ 2, argon2-cffi, pyotp                 |
 | Federation     | httpx (ActivityPub-HTTP-Sig), bleach             |
-| Mail           | aiosmtplib, cryptography (OpenPGP)               |
+| Mail           | aiosmtplib, cryptography (Schlüssel im Ruhezustand), systemweites GnuPG (OpenPGP) |
 | CLI            | Typer ≥ 0.15                                     |
 | Frontend       | Svelte + TypeScript + Vite (Browser-Bundles; Node nur zur Build-Zeit) |
 | Config         | pydantic-settings v2, TOML                       |
