@@ -24,7 +24,7 @@ from arborpress.core.migrations import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pre_alembic_phase1_schema.sql"
-CURRENT_HEAD = "0021_content_slug_history"
+CURRENT_HEAD = "0022_openpgp_mail"
 
 
 @pytest.mark.asyncio
@@ -182,7 +182,7 @@ async def test_empty_database_upgrade_noop_and_repeated_install(tmp_path: Path) 
         assert status.is_current
         assert status.current_revisions == (CURRENT_HEAD,)
         before = await _schema_snapshot(engine)
-        assert len(before) == 67
+        assert len(before) == 68
         assert "oauth_idempotency_keys" in before
         assert "webauthn_credentials" in before
 
@@ -215,6 +215,46 @@ async def test_empty_database_upgrade_noop_and_repeated_install(tmp_path: Path) 
 
         assert (await upgrade_database(engine)).is_current
         assert await _schema_snapshot(engine) == before
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_openpgp_mail_migration_upgrades_from_0021_and_is_reversible(
+    tmp_path: Path,
+) -> None:
+    engine = _sqlite_engine(tmp_path / "openpgp-mail.db")
+    try:
+        await upgrade_database(engine)
+        await downgrade_database("0021_content_slug_history", engine)
+        async with engine.connect() as connection:
+            before = await connection.run_sync(
+                lambda sync: (
+                    sa.inspect(sync).has_table("instance_openpgp_keys"),
+                    {item["name"] for item in sa.inspect(sync).get_columns("users")},
+                    {item["name"] for item in sa.inspect(sync).get_columns("mail_queue")},
+                )
+            )
+        assert before[0] is False
+        assert "pgp_encryption_enabled" not in before[1]
+        assert "recipient_user_id" not in before[2]
+        await upgrade_database(engine)
+        async with engine.connect() as connection:
+            after = await connection.run_sync(
+                lambda sync: (
+                    sa.inspect(sync).has_table("instance_openpgp_keys"),
+                    {item["name"] for item in sa.inspect(sync).get_columns("users")},
+                    {item["name"] for item in sa.inspect(sync).get_columns("mail_queue")},
+                )
+            )
+        assert after[0] is True
+        assert "pgp_encryption_enabled" in after[1]
+        assert {
+            "recipient_user_id",
+            "recipient_encryption_required",
+            "recipient_identity_checked",
+            "attachments",
+        } <= after[2]
     finally:
         await engine.dispose()
 

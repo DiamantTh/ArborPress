@@ -60,6 +60,29 @@ class SMTPProfile(Base):
     )
 
 
+class InstanceOpenPGPKey(Base):
+    """Encrypted private instance signing key and retained public-key history."""
+
+    __tablename__ = "instance_openpgp_keys"
+    __table_args__ = (
+        UniqueConstraint("fingerprint", name="uq_instance_openpgp_fingerprint"),
+        Index("ix_instance_openpgp_current", "is_current", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    openpgp_user_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    algorithm: Mapped[str] = mapped_column(String(32), nullable=False)
+    public_key_armored: Mapped[str] = mapped_column(Text, nullable=False)
+    private_key_enc: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    passphrase_enc: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class MailQueue(Base):
     """Single-recipient delivery row in ArborPress' durable outbox.
 
@@ -77,12 +100,22 @@ class MailQueue(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     recipient: Mapped[str] = mapped_column(String(254), nullable=False)
+    # Stable account association resolved when queued; intentionally not a FK so
+    # deleting a user cannot turn an old private message into external plaintext.
+    recipient_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    recipient_identity_checked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    recipient_encryption_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     recipient_kind: Mapped[str] = mapped_column(String(8), nullable=False, default="to")
     visible_to: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     visible_cc: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     subject: Mapped[str] = mapped_column(String(512), nullable=False)
     body_text: Mapped[str] = mapped_column(Text, nullable=False)
     body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attachments: Mapped[list[dict[str, str]]] = mapped_column(JSON, nullable=False, default=list)
     headers: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
     profile_id: Mapped[str] = mapped_column(String(64), nullable=False, default="transactional")
     message_type: Mapped[str | None] = mapped_column(String(128), nullable=True)

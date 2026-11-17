@@ -116,6 +116,9 @@ class User(Base):
     pgp_keys: Mapped[list[UserPGPKey]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    pgp_encryption_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     # §5 Federation – keypair for HTTP signatures, max. 1 per user
     actor_keypair: Mapped[ActorKeypair | None] = relationship(
         back_populates="user", cascade="all, delete-orphan", uselist=False
@@ -323,19 +326,10 @@ class BackupCode(Base):
 
 
 class UserPGPKey(Base):
-    """OpenPGP key for a user (§13 – multiple keys possible).
+    """Public recipient key used only to encrypt mail sent to the account.
 
-    A user can register multiple OpenPGP keypairs, e.g.:
-      - private keypair (for personal mail)
-      - professional keypair (for press contact)
-
-    Roles (non-exclusive – one key can have both roles):
-      use_for_signing      → outgoing mails for this user are signed with it
-      use_for_encryption   → incoming mails to this user are encrypted with it
-
-    Primary signing key (is_primary_signing=True):
-      → There can always be only one; when setting a new primary, the old
-        one is automatically set to False (application-layer logic).
+    Legacy signing flags remain in the schema for compatibility. The
+    application never requests or stores a user's private key.
     """
 
     __tablename__ = "user_pgp_keys"
@@ -359,6 +353,9 @@ class UserPGPKey(Base):
     is_primary_signing: Mapped[bool] = mapped_column(Boolean, default=False)
     # Expiry date (read from the key – optional)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    openpgp_user_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

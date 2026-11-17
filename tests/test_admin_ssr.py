@@ -637,6 +637,8 @@ async def test_mail_admin_omits_credentials_recipient_localpart_and_body_and_req
     ):
         assert private_value not in html
     assert "example.test" in html
+    assert "normal OpenPGP policy" in html
+    assert "BEGIN PGP PRIVATE KEY BLOCK" not in html
     csrf_match = re.search(r'name="_csrf" value="([^"]+)"', html)
     assert csrf_match is not None
 
@@ -647,3 +649,8 @@ async def test_mail_admin_omits_credentials_recipient_localpart_and_body_and_req
         form={"_csrf": csrf_match.group(1)},
     )
     assert cancelled.status_code == 302
+    denied_without_stepup = await client.post(
+        "/admin/mail/openpgp",
+        form={"_csrf": csrf_match.group(1), "action": "policy"},
+    )
+    assert denied_without_stepup.status_code == 403

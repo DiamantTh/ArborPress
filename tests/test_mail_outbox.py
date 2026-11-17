@@ -164,6 +164,73 @@ async def test_concurrent_idempotent_enqueue_returns_one_delivery(test_engine):
         assert len(rows) == 1
 
 
+@pytest.mark.asyncio
+async def test_legacy_unbound_mail_is_not_attached_to_reused_local_email(test_engine, monkeypatch):
+    from sqlalchemy import update
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from arborpress.core import db as db_module
+    from arborpress.mail.profiles import save_profile
+    from arborpress.mail.queue import enqueue_mail, process_queue
+    from arborpress.mail.smtp import SMTPBackend
+    from arborpress.models.mail import MailQueue, MailStatus
+    from arborpress.models.user import User
+
+    factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    db_module._engine = test_engine
+    db_module._session_factory = factory
+    async with factory() as db:
+        await db.execute(
+            update(MailQueue)
+            .where(MailQueue.status.in_([MailStatus.PENDING, MailStatus.RETRY]))
+            .values(status=MailStatus.CANCELLED)
+        )
+        await save_profile(
+            db,
+            {
+                "id": "legacy-unbound-test",
+                "host": "smtp.example.test",
+                "port": 465,
+                "transport": "implicit_tls",
+                "from_address": "noreply@example.test",
+            },
+        )
+        user = User(
+            username="legacy-mail-recipient",
+            display_name="Current Owner",
+            email="reused@example.test",
+            is_active=True,
+        )
+        db.add(user)
+        await db.commit()
+    job_id = await enqueue_mail(
+        "reused@example.test",
+        "Legacy queued message",
+        "Must not be guessed to belong to the current account.",
+        profile_id="legacy-unbound-test",
+        idempotency_key="legacy-unbound-test",
+    )
+    async with factory() as db:
+        row = await db.get(MailQueue, job_id)
+        assert row is not None
+        row.recipient_user_id = None
+        row.recipient_identity_checked = False
+        await db.commit()
+    sent = []
+
+    async def fake_send(self, message, profile):
+        sent.append(message)
+
+    monkeypatch.setattr(SMTPBackend, "send", fake_send)
+    assert await process_queue(batch_size=1, worker_id="legacy-unbound-worker") == 0
+    assert sent == []
+    async with factory() as db:
+        row = await db.get(MailQueue, job_id)
+        assert row is not None
+        assert row.status == MailStatus.DEAD
+        assert row.last_error == "recipient_identity_unbound"
+
+
 def test_header_injection_and_bcc_are_handled_without_leaking_bcc():
     from arborpress.mail.smtp import MailMessage, SMTPBackend
 

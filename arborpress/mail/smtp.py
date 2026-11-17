@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import re
 import uuid
+from email import policy
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 from typing import Any
@@ -49,6 +51,7 @@ class MailMessage:
         envelope_sender: str | None = None,
         reply_to: str | None = None,
         dsn_envid: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> None:
         self.to = validate_address(to)
         self.subject = validate_header_value(subject, "subject")
@@ -65,12 +68,68 @@ class MailMessage:
         self.envelope_sender = validate_address(envelope_sender) if envelope_sender else None
         self.reply_to = validate_address(reply_to) if reply_to else None
         self.dsn_envid = dsn_envid or uuid.uuid4().hex
+        self.attachments = normalize_attachments(attachments or [])
+
+
+def normalize_attachments(values: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Validate bounded in-memory attachments and encode them for the outbox JSON field."""
+    if len(values) > 20:
+        raise ValueError("A message may contain at most 20 attachments.")
+    result: list[dict[str, str]] = []
+    total = 0
+    for item in values:
+        name = str(item.get("filename") or "attachment")
+        if any(ch in name for ch in "\r\n\0/\\") or name in {".", ".."}:
+            raise ValueError("Invalid mail attachment filename.")
+        name = name[:180]
+        content_type = str(item.get("content_type") or "application/octet-stream")
+        if not re.fullmatch(r"[A-Za-z0-9!#$&^_.+-]{1,80}/[A-Za-z0-9!#$&^_.+-]{1,80}", content_type):
+            raise ValueError("Invalid mail attachment content type.")
+        content = item.get("content")
+        if isinstance(content, str):
+            try:
+                raw = base64.b64decode(content, validate=True)
+            except ValueError as exc:
+                raise ValueError("Mail attachment is not valid base64.") from exc
+        elif isinstance(content, bytes):
+            raw = content
+        else:
+            raise ValueError("Mail attachment content must be bytes or base64.")
+        total += len(raw)
+        if total > 10 * 1024 * 1024:
+            raise ValueError("Combined mail attachments exceed the 10 MiB limit.")
+        result.append(
+            {
+                "filename": name,
+                "content_type": content_type.lower(),
+                "content": base64.b64encode(raw).decode("ascii"),
+            }
+        )
+    return result
+
+
+def compose_message_content(msg: MailMessage) -> EmailMessage:
+    """Create the complete MIME body (alternatives and attachments, no outer headers)."""
+    content = EmailMessage(policy=policy.SMTP)
+    content.set_content(msg.body_text)
+    if msg.body_html:
+        content.add_alternative(msg.body_html, subtype="html")
+    for attachment in msg.attachments:
+        raw = base64.b64decode(attachment["content"], validate=True)
+        maintype, subtype = attachment["content_type"].split("/", 1)
+        content.add_attachment(
+            raw,
+            maintype=maintype,
+            subtype=subtype,
+            filename=attachment["filename"],
+        )
+    return content
 
 
 class SMTPBackend:
     """Async SMTP with implicit TLS or mandatory STARTTLS and default CA validation."""
 
-    async def send(self, msg: MailMessage, profile: dict[str, Any]) -> None:
+    async def send(self, msg: MailMessage | EmailMessage, profile: dict[str, Any]) -> None:
         if not profile.get("enabled", True):
             raise SMTPConfigurationError("SMTP profile is disabled.")
         transport = profile.get("transport", "starttls")
@@ -103,17 +162,34 @@ class SMTPBackend:
                     raise SMTPConfigurationError("Both SMTP username and secret are required.")
                 await smtp.login(username, password, timeout=timeout)
 
-            message = self._build_message(msg, profile)
+            message = msg if isinstance(msg, EmailMessage) else self._build_message(msg, profile)
+            envelope_sender = (
+                msg.envelope_sender
+                if isinstance(msg, MailMessage)
+                else getattr(msg, "_arborpress_envelope_sender", None)
+            )
+            recipient = (
+                msg.to
+                if isinstance(msg, MailMessage)
+                else getattr(msg, "_arborpress_recipient", None)
+            )
+            dsn_envid = (
+                msg.dsn_envid
+                if isinstance(msg, MailMessage)
+                else getattr(msg, "_arborpress_dsn_envid", None)
+            )
+            if not recipient:
+                raise SMTPConfigurationError("Prepared mail has no SMTP recipient envelope.")
             mail_options: list[str] = []
             rcpt_options: list[str] = []
             extensions = {key.lower() for key in getattr(smtp, "esmtp_extensions", {})}
-            if "dsn" in extensions:
-                mail_options.extend(["RET=HDRS", f"ENVID={msg.dsn_envid}"])
+            if "dsn" in extensions and dsn_envid:
+                mail_options.extend(["RET=HDRS", f"ENVID={dsn_envid}"])
                 rcpt_options.append("NOTIFY=FAILURE,DELAY")
             await smtp.send_message(
                 message,
-                sender=msg.envelope_sender or profile["from_address"],
-                recipients=[msg.to],
+                sender=envelope_sender or profile["from_address"],
+                recipients=[recipient],
                 mail_options=mail_options,
                 rcpt_options=rcpt_options,
                 timeout=timeout,
@@ -170,6 +246,18 @@ class SMTPBackend:
         message.set_content(msg.body_text)
         if msg.body_html:
             message.add_alternative(msg.body_html, subtype="html")
+        for attachment in msg.attachments:
+            raw = base64.b64decode(attachment["content"], validate=True)
+            maintype, subtype = attachment["content_type"].split("/", 1)
+            message.add_attachment(
+                raw,
+                maintype=maintype,
+                subtype=subtype,
+                filename=attachment["filename"],
+            )
+        message._arborpress_envelope_sender = msg.envelope_sender  # type: ignore[attr-defined]
+        message._arborpress_recipient = msg.to  # type: ignore[attr-defined]
+        message._arborpress_dsn_envid = msg.dsn_envid  # type: ignore[attr-defined]
         return message
 
 

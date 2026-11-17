@@ -1880,6 +1880,11 @@ async def account_security_page():
         identities = (await db.execute(select(ExternalIdentity).where(
             ExternalIdentity.user_id == user_id
         ).order_by(ExternalIdentity.created_at))).scalars().all()
+        from arborpress.models.user import UserPGPKey
+        pgp_keys = (await db.execute(
+            select(UserPGPKey).where(UserPGPKey.user_id == user_id)
+            .order_by(UserPGPKey.created_at.desc())
+        )).scalars().all()
         identity_views = []
         for identity in identities:
             provider = provider_map.get(identity.provider_id)
@@ -1933,8 +1938,119 @@ async def account_security_page():
             recovery_baseline_totp_ids=recovery_baseline_totp_ids,
             external_identities=identity_views,
             linkable_providers=linkable_providers,
+            pgp_keys=pgp_keys,
+            pgp_encryption_enabled=bool(user.pgp_encryption_enabled),
             is_admin=user.role.value == "admin",
         )
+
+
+@auth_bp.post("/security/openpgp")
+async def account_openpgp_action() -> ResponseReturnValue:
+    """Store only the authenticated account's public recipient key."""
+    user_id = str(session.get("user_id") or "")
+    if not user_id or session.get("recovery_only"):
+        abort(403)
+    await validate_csrf()
+    try:
+        await assert_stepup(
+            cast(dict[str, Any], session), user_id, "manage_pgp_user_key", target=user_id
+        )
+    except PermissionError:
+        abort(403, "A recent security-key confirmation is required.")
+
+    from arborpress.mail.openpgp import OpenPGPError, inspect_public_key
+    from arborpress.models.user import User, UserPGPKey
+
+    form = await request.form
+    action = str(form.get("action") or "")
+    async for db in get_db_session():
+        user = await db.get(User, user_id, with_for_update=True)
+        if user is None or not user.is_active:
+            abort(403)
+        existing = (
+            (await db.execute(select(UserPGPKey).where(UserPGPKey.user_id == user_id)))
+            .scalars()
+            .all()
+        )
+        now = datetime.now(UTC).replace(tzinfo=None)
+        try:
+            if action == "save":
+                key_bytes = str(form.get("public_key") or "").strip().encode("utf-8")
+                uploads = await request.files
+                upload = uploads.get("public_key_file")
+                if upload is not None and upload.filename:
+                    if key_bytes:
+                        abort(
+                            400,
+                            "Provide either pasted key text or one uploaded key file, not both.",
+                        )
+                    key_bytes = upload.stream.read(128 * 1024 + 1)
+                if not key_bytes or len(key_bytes) > 128 * 1024:
+                    abort(400, "Provide one public key no larger than 128 KiB.")
+                details = await __import__("asyncio").to_thread(inspect_public_key, key_bytes)
+                if not user.email or user.email.casefold() not in details["emails"]:
+                    abort(
+                        400,
+                        "The key must contain the account's current email address in a User ID. "
+                        "This does not independently verify mailbox ownership.",
+                    )
+                for previous in existing:
+                    previous.use_for_encryption = False
+                    previous.status = "replaced"
+                fingerprint = details["fingerprint"]
+                row = next((item for item in existing if item.fingerprint == fingerprint), None)
+                if row is None:
+                    row = UserPGPKey(
+                        id=str(uuid.uuid4()),
+                        user_id=user_id,
+                        label="Mail encryption",
+                        public_key_armored=details["public_key_armored"],
+                        fingerprint=fingerprint,
+                        use_for_signing=False,
+                        use_for_encryption=True,
+                        is_primary_signing=False,
+                        expires_at=details["expires_at"],
+                        openpgp_user_id=details["openpgp_user_id"],
+                        status="active",
+                        created_at=now,
+                    )
+                    db.add(row)
+                else:
+                    row.public_key_armored = details["public_key_armored"]
+                    row.openpgp_user_id = details["openpgp_user_id"]
+                    row.expires_at = details["expires_at"]
+                    row.status = "active"
+                    row.revoked_at = None
+                    row.use_for_encryption = True
+                user.pgp_encryption_enabled = form.get("encryption_enabled") == "on"
+                if user.pgp_encryption_enabled:
+                    row.use_for_encryption = True
+                event = "user_openpgp_key_saved"
+                detail = (
+                    f"fingerprint={fingerprint};encryption_enabled={user.pgp_encryption_enabled}"
+                )
+                target = user_id
+            elif action == "remove":
+                for row in existing:
+                    await db.delete(row)
+                user.pgp_encryption_enabled = False
+                event = "user_openpgp_key_removed"
+                detail = f"key_count={len(existing)}"
+                target = user_id
+            else:
+                abort(400, "Unknown OpenPGP action.")
+        except OpenPGPError as exc:
+            abort(400, str(exc))
+        await write_audit_event(
+            event_type=event,
+            outcome="success",
+            actor_id=user_id,
+            target_id=target,
+            detail=detail,
+            db=db,
+        )
+        await db.commit()
+    return redirect(url_for("auth.account_security_page"))
 
 
 @auth_bp.get("/federation")

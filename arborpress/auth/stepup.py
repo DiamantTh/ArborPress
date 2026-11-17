@@ -53,6 +53,9 @@ STEPUP_POLICIES: dict[str, str] = {
     "rotate_oidc_client_secret": "instance",
     "manage_oauth_client": "instance",
     "rotate_oidc_signing_key": "instance",
+    "manage_openpgp_instance_key": "instance",
+    "manage_mail_transport": "instance",
+    "manage_pgp_user_key": "target",
 }
 STEPUP_REQUIRED_OPERATIONS = frozenset(STEPUP_POLICIES)
 

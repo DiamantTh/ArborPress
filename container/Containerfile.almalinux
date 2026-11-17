@@ -37,6 +37,7 @@ USER root
 # Build-Werkzeuge für CPython + C-Erweiterungen (pillow/cryptography/argon2)
 RUN dnf install -y \
         ca-certificates \
+        gnupg2 \
         gcc \
         make \
         wget \
@@ -119,6 +120,7 @@ USER root
 # Nur Laufzeit-Bibliotheken – keine Build-Werkzeuge im finalen Image
 RUN dnf install -y \
         ca-certificates \
+        gnupg2 \
         openssl-libs \
         libffi \
         zlib \

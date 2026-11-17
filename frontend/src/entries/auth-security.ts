@@ -51,6 +51,27 @@ function installSecurity(root: HTMLElement): void {
     }
   }
 
+  for (const form of root.querySelectorAll<HTMLFormElement>('form[data-stepup-action]')) {
+    form.addEventListener('submit', async (event) => {
+      if (form.dataset.stepupPassed === 'true') {
+        delete form.dataset.stepupPassed
+        return
+      }
+      event.preventDefault()
+      const submitter = event.submitter instanceof HTMLElement ? event.submitter : undefined
+      try {
+        const action = form.dataset.stepupAction
+        const target = form.dataset.stepupTarget
+        if (!action || !target) throw new Error('Die Sicherheitsaktion ist unvollständig konfiguriert.')
+        await authenticateFor(action, target)
+        form.dataset.stepupPassed = 'true'
+        form.requestSubmit(submitter)
+      } catch (caught: unknown) {
+        showFailure(caught, 'Die Sicherheitsbestätigung ist fehlgeschlagen.')
+      }
+    })
+  }
+
   for (const button of root.querySelectorAll<HTMLButtonElement>('.stepup-redirect')) {
     button.addEventListener('click', async (event) => {
       event.preventDefault()

@@ -66,6 +66,7 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "from_name": "ArborPress",
         "pgp_sign_enabled": False,
         "pgp_signing_key_id": "",
+        "pgp_require_encryption": False,
         "max_retries": 5,
         "retry_backoff_base": 60,
     },
@@ -364,6 +365,26 @@ async def get_section_uncached(section: str, db: Any) -> dict[str, Any]:
             section,
             exc,
         )
+    return merged
+
+
+async def get_section_authoritative(section: str, db: Any) -> dict[str, Any]:
+    """Read merged settings directly from the database without cache/fail-open.
+
+    Security-sensitive delivery policy uses this path so multi-worker cache
+    staleness or a database read error cannot silently select a weaker default.
+    """
+    from sqlalchemy import select
+
+    from arborpress.models.settings import SiteSetting
+
+    merged = dict(_DEFAULTS.get(section, {}))
+    row = await db.scalar(select(SiteSetting).where(SiteSetting.key == section))
+    if row is not None and row.value:
+        stored = json.loads(row.value)
+        if not isinstance(stored, dict):
+            raise ValueError(f"Settings section {section!r} is not an object.")
+        merged.update(stored)
     return merged
 
 

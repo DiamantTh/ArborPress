@@ -57,6 +57,41 @@
   </section>
 
   <section>
+    <h2>{{ _('OpenPGP für E-Mail') }}</h2>
+    <p>{{ _('Nur Ihr öffentlicher Schlüssel wird gespeichert. Ihr privater Schlüssel und seine Passphrase bleiben bei Ihnen. Die User-ID im Schlüssel ist selbst angegeben und bestätigt nicht unabhängig den Zugriff auf diese Mailbox. Geschützte E-Mails können ohne passenden privaten Schlüssel nicht gelesen werden.') }}</p>
+    <p>{{ _('Aktuelle Konto-Mailadresse') }}: <strong>{{ user.email or _('Nicht gesetzt') }}</strong></p>
+    {% for key in pgp_keys if key.status == 'active' and key.use_for_encryption %}
+    <article class="security-item">
+      <strong>{{ _('Aktiver öffentlicher Schlüssel') }}</strong>
+      <small>Fingerprint: <code>{{ key.fingerprint }}</code></small>
+      <small>{{ key.openpgp_user_id or _('User-ID nicht verfügbar') }} · {{ _('Ablauf') }}: {{ key.expires_at or _('Kein Ablauf eingetragen') }}</small>
+    </article>
+    {% else %}<p>{{ _('Kein aktiver Empfängerschlüssel hinterlegt.') }}</p>{% endfor %}
+    {% if not recovery_only %}
+    <form method="post" enctype="multipart/form-data" action="{{ url_for('auth.account_openpgp_action') }}"
+          data-stepup-action="manage_pgp_user_key" data-stepup-target="{{ user.id }}">
+      {{ csrf_input() }}
+      <input type="hidden" name="action" value="save">
+      <label for="openpgp-public-key">{{ _('Öffentlichen OpenPGP-Schlüssel einfügen') }}</label>
+      <textarea id="openpgp-public-key" name="public_key" rows="8" maxlength="131072"
+                autocomplete="off" spellcheck="false"></textarea>
+      <label for="openpgp-public-key-file">{{ _('Oder öffentlichen Schlüssel hochladen (max. 128 KiB)') }}</label>
+      <input id="openpgp-public-key-file" name="public_key_file" type="file" accept=".asc,.pgp,.gpg">
+      <label><input type="checkbox" name="encryption_enabled" {% if pgp_encryption_enabled %}checked{% endif %}>
+        {{ _('Meine ArborPress-E-Mails nach Möglichkeit OpenPGP-verschlüsseln') }}</label>
+      <button class="btn" type="submit">{{ _('Öffentlichen Schlüssel speichern') }}</button>
+    </form>
+    {% if pgp_keys %}
+    <form method="post" action="{{ url_for('auth.account_openpgp_action') }}"
+          data-stepup-action="manage_pgp_user_key" data-stepup-target="{{ user.id }}">
+      {{ csrf_input() }}<input type="hidden" name="action" value="remove">
+      <button class="btn btn--small" type="submit">{{ _('Schlüssel entfernen und Verschlüsselung deaktivieren') }}</button>
+    </form>
+    {% endif %}
+    {% endif %}
+  </section>
+
+  <section>
     <h2>{{ _('Fediverse / ActivityPub') }}</h2>
     <p>{{ _('Die Föderation ist eine getrennte öffentliche Identität und kann in Ihrem Konto verwaltet werden.') }}</p>
     <a class="btn" href="{{ url_for('auth.federation_account_page') }}">{{ _('Fediverse-Einstellungen') }}</a>

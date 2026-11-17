@@ -16,6 +16,45 @@
   </tr>{% endfor %}
   </tbody></table>
   {% else %}<p>No named SMTP profiles are configured.</p>{% endif %}
+  <h3>End-to-end test delivery</h3>
+  <p>This queues a harmless message through the configured transactional profile and the normal OpenPGP policy. It does not prove final mailbox delivery.</p>
+  <form method="post" action="{{ url_for('admin.mail_admin_test_send') }}" data-stepup-action="manage_mail_transport" data-stepup-target="instance" class="admin-form">
+    {{ csrf_input() }}
+    <label for="mail-test-recipient">Test recipient</label>
+    <input id="mail-test-recipient" type="email" name="recipient" autocomplete="email" required maxlength="254">
+    <button class="btn btn--small">Queue test message</button>
+  </form>
+
+  <h2>Instance OpenPGP identity</h2>
+  <p>The instance key signs messages only. It is not a decryption key for user mail. Private key material is encrypted with the configured application secret and is never displayed after storage.</p>
+  <form method="post" action="{{ url_for('admin.mail_admin_openpgp_action') }}" data-stepup-action="manage_openpgp_instance_key" data-stepup-target="instance" class="admin-form">
+    {{ csrf_input() }}<input type="hidden" name="action" value="policy">
+    <label><input type="checkbox" name="pgp_sign_enabled" {% if pgp_sign_enabled %}checked{% endif %}> Sign outgoing mail with the active instance key</label>
+    <label><input type="checkbox" name="pgp_require_encryption" {% if pgp_require_encryption %}checked{% endif %}> Require encryption for all outgoing mail (registered recipients need active keys; external recipients are blocked)</label>
+    <button class="btn btn--small">Save mail protection policy</button>
+  </form>
+  {% if pgp_keys %}
+  <table><thead><tr><th>Fingerprint</th><th>Identity</th><th>Algorithm</th><th>Status</th><th>Expires</th><th>Current</th><th>Action</th></tr></thead><tbody>
+  {% for key in pgp_keys %}<tr>
+    <td>
+      <code>{{ key.fingerprint }}</code>
+      <details><summary>Public key</summary><pre>{{ key.public_key_armored }}</pre></details>
+    </td><td>{{ key.openpgp_user_id }}</td><td>{{ key.algorithm }}</td>
+    <td>{{ key.status }}</td><td>{{ key.expires_at or 'No expiry' }}</td><td>{{ 'yes' if key.is_current else 'no' }}</td>
+    <td>{% if not key.is_current and key.status in ['retired', 'active'] %}<form method="post" action="{{ url_for('admin.mail_admin_openpgp_action') }}" data-stepup-action="manage_openpgp_instance_key" data-stepup-target="instance">{{ csrf_input() }}<input type="hidden" name="action" value="activate"><input type="hidden" name="key_id" value="{{ key.id }}"><button class="btn btn--small">Activate</button></form>{% endif %}</td>
+  </tr>{% endfor %}</tbody></table>
+  {% else %}<p>No instance OpenPGP signing key is configured.</p>{% endif %}
+  <form method="post" action="{{ url_for('admin.mail_admin_openpgp_action') }}" data-stepup-action="manage_openpgp_instance_key" data-stepup-target="instance" class="admin-form">
+    {{ csrf_input() }}<input type="hidden" name="action" value="generate">
+    <label>OpenPGP User ID <input name="user_id" value="ArborPress Mail &lt;mail@localhost&gt;" maxlength="512" required></label>
+    <button class="btn btn--small">Generate and activate signing key</button>
+  </form>
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('admin.mail_admin_openpgp_action') }}" data-stepup-action="manage_openpgp_instance_key" data-stepup-target="instance" class="admin-form">
+    {{ csrf_input() }}<input type="hidden" name="action" value="import">
+    <label>Protected private-key file <input type="file" name="private_key" accept=".asc,.pgp,.gpg" required></label>
+    <label>Key passphrase <input type="password" name="passphrase" autocomplete="new-password" maxlength="4096"></label>
+    <button class="btn btn--small">Import and activate private key</button>
+  </form>
 
   <h2>Outbox</h2>
   <form method="get" action="{{ url_for('admin.mail_admin_page') }}" class="admin-form">

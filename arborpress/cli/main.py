@@ -53,7 +53,7 @@ db_app = typer.Typer(help="Database operations (§12)", no_args_is_help=True)
 user_app = typer.Typer(help="User management (§14)", no_args_is_help=True)
 mfa_app = typer.Typer(help="MFA device management (§3)", no_args_is_help=True)
 key_app = typer.Typer(
-    help="Inspect available key state. OpenPGP key management is not implemented.",
+    help="Manage instance mail-signing, federation, and user OpenPGP key state.",
     no_args_is_help=True,
 )
 search_app = typer.Typer(help="Search index (§12 FTS)", no_args_is_help=True)
@@ -2246,39 +2246,145 @@ def mfa_rename(
 def key_generate(
     name: str = typer.Argument(..., help="Key ID / name"),
 ) -> None:
-    """Fail closed: OpenPGP key generation is not available yet."""
-    typer.echo(
-        "OpenPGP key generation is not implemented; no key was generated. "
-        "Federation and OIDC keys use their dedicated workflows.",
-        err=True,
-    )
-    raise typer.Exit(code=2)
+    """Generate and activate an encrypted instance OpenPGP signing key."""
+    import asyncio
+
+    async def _generate() -> str:
+        from arborpress.core.audit import write_audit_event
+        from arborpress.core.db import get_db_session
+        from arborpress.mail.openpgp import create_instance_key_material, save_instance_key
+
+        material = await asyncio.to_thread(
+            create_instance_key_material, f"ArborPress {name} <mail@localhost>"
+        )
+        async for db in get_db_session():
+            row = await save_instance_key(db, material)
+            await write_audit_event(
+                event_type="instance_openpgp_key_generated",
+                outcome="success",
+                actor_id="cli",
+                target_id=row.id,
+                detail=f"fingerprint={row.fingerprint};action=generate",
+                db=db,
+            )
+            await db.commit()
+            return row.fingerprint
+        raise RuntimeError("Database session unavailable")
+
+    try:
+        typer.echo(
+            f"OpenPGP instance signing key generated and activated: {asyncio.run(_generate())}"
+        )
+    except Exception as exc:
+        typer.echo(
+            f"OpenPGP key generation failed ({type(exc).__name__}); no key was activated.", err=True
+        )
+        raise typer.Exit(code=1) from exc
 
 
 @key_app.command("import")
 def key_import(
-    file: Path = typer.Argument(..., help="Path to key file (RSA >= 4096 or ECC)"),  # noqa: B008
+    file: Path = typer.Argument(..., help="Path to a protected OpenPGP private-key file"),  # noqa: B008
+    passphrase: bool = typer.Option(
+        False, "--passphrase-prompt", help="Prompt for the private-key passphrase"
+    ),
 ) -> None:
-    """Fail closed: OpenPGP key import is not available yet."""
-    typer.echo(
-        "OpenPGP key import is not implemented; no key was imported. "
-        "Private key files are not read or stored.",
-        err=True,
-    )
-    raise typer.Exit(code=2)
+    """Import, validate, encrypt at rest, and activate a private signing key."""
+    import asyncio
+    import getpass
+    import os
+    import stat
+
+    from arborpress.mail.openpgp import import_instance_key_material
+
+    try:
+        fd = os.open(file, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 2 * 1024 * 1024:
+            os.close(fd)
+            raise ValueError("key file must be a regular file no larger than 2 MiB")
+        with os.fdopen(fd, "rb") as stream:
+            raw = stream.read(2 * 1024 * 1024 + 1)
+        if len(raw) > 2 * 1024 * 1024:
+            raise ValueError("key file must be no larger than 2 MiB")
+        secret = getpass.getpass("Private-key passphrase: ") if passphrase else ""
+        material = import_instance_key_material(raw, secret)
+
+        async def _store() -> str:
+            from arborpress.core.audit import write_audit_event
+            from arborpress.core.db import get_db_session
+            from arborpress.mail.openpgp import save_instance_key
+
+            async for db in get_db_session():
+                row = await save_instance_key(db, material)
+                await write_audit_event(
+                    event_type="instance_openpgp_key_imported",
+                    outcome="success",
+                    actor_id="cli",
+                    target_id=row.id,
+                    detail=f"fingerprint={row.fingerprint};action=import",
+                    db=db,
+                )
+                await db.commit()
+                return row.fingerprint
+            raise RuntimeError("Database session unavailable")
+
+        typer.echo(f"OpenPGP private key imported and activated: {asyncio.run(_store())}")
+    except Exception as exc:
+        typer.echo(
+            f"OpenPGP key import failed ({type(exc).__name__}); no key was activated.", err=True
+        )
+        raise typer.Exit(code=1) from exc
 
 
 @key_app.command("rotate")
 def key_rotate(
     name: str = typer.Argument(..., help="Key ID / name"),
 ) -> None:
-    """Fail closed: OpenPGP key rotation is not available yet."""
-    typer.echo(
-        "OpenPGP key rotation is not implemented; no key was rotated. "
-        "Federation and OIDC signing-key rotation use their dedicated workflows.",
-        err=True,
-    )
-    raise typer.Exit(code=2)
+    """Generate and activate a new instance key while retaining old public keys."""
+    import asyncio
+
+    async def _rotate() -> tuple[str, str | None]:
+        from sqlalchemy import select
+
+        from arborpress.core.audit import write_audit_event
+        from arborpress.core.db import get_db_session
+        from arborpress.mail.openpgp import create_instance_key_material, save_instance_key
+        from arborpress.models.mail import InstanceOpenPGPKey
+
+        material = await asyncio.to_thread(
+            create_instance_key_material, f"ArborPress {name} <mail@localhost>"
+        )
+        async for db in get_db_session():
+            previous = await db.scalar(
+                select(InstanceOpenPGPKey).where(InstanceOpenPGPKey.is_current.is_(True))
+            )
+            previous_fingerprint = previous.fingerprint if previous else None
+            row = await save_instance_key(db, material)
+            await write_audit_event(
+                event_type="instance_openpgp_key_rotated",
+                outcome="success",
+                actor_id="cli",
+                target_id=row.id,
+                detail=(
+                    f"old_fingerprint={previous_fingerprint or 'none'};"
+                    f"new_fingerprint={row.fingerprint}"
+                ),
+                db=db,
+            )
+            await db.commit()
+            return row.fingerprint, previous_fingerprint
+        raise RuntimeError("Database session unavailable")
+
+    try:
+        new_fingerprint, old_fingerprint = asyncio.run(_rotate())
+        typer.echo(f"OpenPGP signing key rotated: {old_fingerprint or 'none'} -> {new_fingerprint}")
+    except Exception as exc:
+        typer.echo(
+            f"OpenPGP key rotation failed ({type(exc).__name__}); existing key remains active.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
 
 
 @key_app.command("status")
@@ -2297,6 +2403,7 @@ def key_status(
         from sqlalchemy import func, select
 
         from arborpress.core.db import get_db_session
+        from arborpress.models.mail import InstanceOpenPGPKey
         from arborpress.models.user import ActorKeypair, InstanceKeypair, User, UserPGPKey
 
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -2315,6 +2422,28 @@ def key_status(
                         typer.echo(f"  Rotated:   {inst.rotated_at.date()}")
                 else:
                     typer.echo("Instance key pair: NOT PRESENT – run: arborpress federation keygen")
+
+                openpgp_keys = (
+                    (
+                        await db.execute(
+                            select(InstanceOpenPGPKey).order_by(
+                                InstanceOpenPGPKey.created_at.desc()
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                typer.echo("\nInstance OpenPGP mail-signing keys:")
+                if openpgp_keys:
+                    for pgp_key in openpgp_keys:
+                        current = "current" if pgp_key.is_current else pgp_key.status
+                        typer.echo(
+                            f"  {pgp_key.fingerprint}  {current}  "
+                            f"{pgp_key.expires_at or 'no expiry'}"
+                        )
+                else:
+                    typer.echo("  NOT PRESENT – run: arborpress key generate <name>")
 
                 # ---- Actor keys (all accounts) ----
                 rows = (

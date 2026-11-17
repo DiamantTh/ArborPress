@@ -326,7 +326,13 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "translation_group_id",
         },
         "pages": {"translation_group_id"},
-        "users": {"comment_trusted", "locale", "webauthn_user_handle"},
+        "users": {
+            "comment_trusted",
+            "locale",
+            "webauthn_user_handle",
+            "pgp_encryption_enabled",
+        },
+        "user_pgp_keys": {"openpgp_user_id", "status", "revoked_at"},
         "mail_queue": {
             "recipient_kind",
             "visible_to",
@@ -348,6 +354,10 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "template_id",
             "template_locale",
             "template_revision",
+            "recipient_user_id",
+            "recipient_encryption_required",
+            "recipient_identity_checked",
+            "attachments",
         },
         "federation_inbox_activities": {"lease_owner", "lease_until"},
     }
@@ -396,6 +406,7 @@ def _is_supported_pre_comment_schema(connection: Connection) -> bool:
             "missing table portable_import_receipts",
             "missing table content_translation_groups",
             "missing table content_slug_history",
+            "missing table instance_openpgp_keys",
         }:
             continue
         if error == "unexpected column comments.confirmation_token":

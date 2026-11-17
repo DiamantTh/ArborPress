@@ -3651,8 +3651,9 @@ async def mail_admin_page() -> ResponseReturnValue:
     """SSR diagnostics for named SMTP profiles and durable outbox jobs."""
     _require_session()
     require_role("admin")
+    from arborpress.core.site_settings import get_section_authoritative
     from arborpress.mail.profiles import safe_profile_data
-    from arborpress.models.mail import MailQueue, SMTPProfile
+    from arborpress.models.mail import InstanceOpenPGPKey, MailQueue, SMTPProfile
 
     async for db in get_db_session():
         profile_rows = (
@@ -3663,13 +3664,154 @@ async def mail_admin_page() -> ResponseReturnValue:
         if status in {"pending", "leased", "retry", "sent", "dead", "cancelled"}:
             stmt = stmt.where(MailQueue.status == status)
         jobs = (await db.execute(stmt)).scalars().all()
+        pgp_keys = (
+            (
+                await db.execute(
+                    select(InstanceOpenPGPKey).order_by(InstanceOpenPGPKey.created_at.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        mail_settings = await get_section_authoritative("mail", db)
     return await render_template(
         "admin/mail.html",
         profiles=[safe_profile_data(row) for row in profile_rows],
         jobs=jobs,
         selected_status=status,
+        pgp_keys=pgp_keys,
+        pgp_sign_enabled=bool(mail_settings.get("pgp_sign_enabled", False)),
+        pgp_require_encryption=bool(mail_settings.get("pgp_require_encryption", False)),
         noindex=True,
     )
+
+
+@admin_bp.post("/mail/openpgp")
+async def mail_admin_openpgp_action() -> ResponseReturnValue:
+    """Manage the instance signing identity and strict mail policy."""
+    actor_id = await _oidc_admin_stepup("manage_openpgp_instance_key")
+    from arborpress.core.site_settings import get_section_authoritative, save_section
+    from arborpress.mail.openpgp import (
+        OpenPGPError,
+        create_instance_key_material,
+        import_instance_key_material,
+        make_current,
+        save_instance_key,
+        validate_stored_instance_key,
+    )
+    from arborpress.models.mail import InstanceOpenPGPKey
+
+    form = await request.form
+    action = str(form.get("action") or "")
+    async for db in get_db_session():
+        try:
+            if action in {"generate", "import", "activate"}:
+                if action == "generate":
+                    material = await __import__("asyncio").to_thread(
+                        create_instance_key_material,
+                        str(form.get("user_id") or "ArborPress <mail@localhost>"),
+                    )
+                    key = await save_instance_key(db, material)
+                    event = "instance_openpgp_key_generated"
+                elif action == "import":
+                    files = await request.files
+                    upload = files.get("private_key")
+                    if upload is None or not upload.filename:
+                        abort(400, "Select an OpenPGP private key file.")
+                    raw = upload.stream.read(2 * 1024 * 1024 + 1)
+                    if len(raw) > 2 * 1024 * 1024:
+                        abort(413, "OpenPGP private key exceeds the 2 MiB limit.")
+                    material = await __import__("asyncio").to_thread(
+                        import_instance_key_material, raw, str(form.get("passphrase") or "")
+                    )
+                    key = await save_instance_key(db, material)
+                    event = "instance_openpgp_key_imported"
+                else:
+                    key_id = str(form.get("key_id") or "")
+                    key = await make_current(db, key_id)
+                    event = "instance_openpgp_key_activated"
+                audit_detail = f"fingerprint={key.fingerprint};action={action}"
+                target_id = key.id
+            elif action == "policy":
+                settings = await get_section_authoritative("mail", db)
+                settings["pgp_sign_enabled"] = form.get("pgp_sign_enabled") == "on"
+                settings["pgp_require_encryption"] = form.get("pgp_require_encryption") == "on"
+                current = await db.scalar(
+                    select(InstanceOpenPGPKey).where(
+                        InstanceOpenPGPKey.is_current.is_(True),
+                        InstanceOpenPGPKey.status == "active",
+                    )
+                )
+                if settings["pgp_sign_enabled"]:
+                    if (
+                        current is None
+                        or (
+                            current.expires_at is not None
+                            and current.expires_at <= datetime.now(UTC).replace(tzinfo=None)
+                        )
+                    ):
+                        abort(409, "Generate or activate a valid instance key before signing.")
+                    try:
+                        await validate_stored_instance_key(current)
+                    except OpenPGPError:
+                        abort(409, "The active instance signing key cannot be verified.")
+                await save_section("mail", settings, db, updated_by=actor_id)
+                event = "instance_openpgp_mail_policy_changed"
+                audit_detail = (
+                    f"signing={settings['pgp_sign_enabled']};"
+                    f"encryption_required={settings['pgp_require_encryption']}"
+                )
+                target_id = None
+            else:
+                abort(400, "Unknown OpenPGP action.")
+        except OpenPGPError as exc:
+            abort(400, str(exc))
+        await write_audit_event(
+            event_type=event,
+            outcome="success",
+            actor_id=actor_id,
+            target_id=target_id,
+            detail=audit_detail,
+            db=db,
+        )
+        await db.commit()
+    return redirect(url_for("admin.mail_admin_page"))
+
+
+@admin_bp.post("/mail/test-send")
+async def mail_admin_test_send() -> ResponseReturnValue:
+    """Queue a harmless test message through the normal encryption policy."""
+    actor_id = await _oidc_admin_stepup("manage_mail_transport")
+    form = await request.form
+    from arborpress.mail.queue import enqueue_mail
+    from arborpress.mail.smtp import validate_address
+
+    recipient = str(form.get("recipient") or "").strip()
+    try:
+        recipient = validate_address(recipient)
+    except ValueError:
+        abort(400, "Enter a valid test recipient address.")
+    job_id = await enqueue_mail(
+        recipient,
+        "ArborPress mail transport test",
+        "This is a test message queued by an ArborPress administrator.",
+        purpose="admin_test",
+        idempotency_key=__import__("uuid").uuid4().hex,
+    )
+    await write_audit_event(
+        event_type="mail_test_message_queued",
+        outcome="success",
+        actor_id=actor_id,
+        target_id=job_id,
+        detail="harmless message queued through the normal mail/OpenPGP policy",
+    )
+    from quart import flash
+
+    await flash(
+        "Test message queued. SMTP acceptance is asynchronous; OpenPGP policy applies.",
+        "success",
+    )
+    return redirect(url_for("admin.mail_admin_page"))
 
 
 @admin_bp.post("/mail/queue/<job_id>/<action>")
@@ -3950,7 +4092,11 @@ async def site_settings_save():
     """Speichert eine einzelne Einstellungs-Sektion (via ?section=...)."""
     _require_session()
     require_role("admin")
-    from arborpress.core.site_settings import get_section, save_section
+    from arborpress.core.site_settings import (
+        get_section,
+        get_section_authoritative,
+        save_section,
+    )
 
     form = await request.form
     section = form.get("section", "")
@@ -3958,10 +4104,26 @@ async def site_settings_save():
         abort(400)
 
     user_id = session.get("user_id", "")
+    if section == "mail":
+        try:
+            await assert_stepup(
+                cast(dict[str, Any], session),
+                str(user_id),
+                "manage_mail_transport",
+                target="instance",
+            )
+        except PermissionError:
+            abort(403, "A recent security-key confirmation is required.")
 
     async for db in get_db_session():
         current = await (
-            _locked_theme_settings(db) if section == "theme" else get_section(section, db)
+            _locked_theme_settings(db)
+            if section == "theme"
+            else (
+                get_section_authoritative(section, db)
+                if section == "mail"
+                else get_section(section, db)
+            )
         )
 
         if section == "general":

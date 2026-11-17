@@ -10,13 +10,15 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import shutil
 import stat
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from arborpress import BUILD_SHA
 from arborpress.core.config import get_settings
@@ -190,9 +192,7 @@ async def collect_doctor_report(*, production: bool = False) -> dict[str, object
             if version_query:
                 async with engine.connect() as connection:
                     database_version = str(
-                        await asyncio.wait_for(
-                            connection.scalar(text(version_query)), timeout=2.0
-                        )
+                        await asyncio.wait_for(connection.scalar(text(version_query)), timeout=2.0)
                     )
         db_version_supported = False
         if database_kind == "postgresql" and database_version:
@@ -200,10 +200,7 @@ async def collect_doctor_report(*, production: bool = False) -> dict[str, object
             db_version_supported = bool(match and int(match.group(1)) >= 16)
         elif database_kind == "mysql" and database_version and "MariaDB" in database_version:
             match = re.search(r"(\d+)\.(\d+)\.\d+-MariaDB", database_version)
-            db_version_supported = bool(
-                match
-                and tuple(map(int, match.groups())) >= (11, 4)
-            )
+            db_version_supported = bool(match and tuple(map(int, match.groups())) >= (11, 4))
         _check(
             checks,
             "database_version",
@@ -364,9 +361,9 @@ async def collect_doctor_report(*, production: bool = False) -> dict[str, object
 
     if engine is not None and schema_state == "current":
         from arborpress.models.federation import FederationInstanceIdentity, LocalFederationActor
-        from arborpress.models.mail import SMTPProfile
+        from arborpress.models.mail import InstanceOpenPGPKey, SMTPProfile
         from arborpress.models.oidc import OIDCProvider, OIDCServerSettings, OIDCSigningKey
-        from arborpress.models.user import WebAuthnCredential
+        from arborpress.models.user import User, UserPGPKey, WebAuthnCredential
 
         try:
             from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -473,7 +470,9 @@ async def collect_doctor_report(*, production: bool = False) -> dict[str, object
                     production_blocker=True,
                 )
 
-                mail = site.get("mail", {})
+                from arborpress.core.site_settings import get_section_authoritative
+
+                mail = await get_section_authoritative("mail", db)
                 mail_enabled = str(mail.get("backend", "none")) not in {"none", "disabled", ""}
                 enabled_mail_profiles = int(
                     await db.scalar(
@@ -491,6 +490,106 @@ async def collect_doctor_report(*, production: bool = False) -> dict[str, object
                     else f"Mail delivery has {enabled_mail_profiles} enabled SMTP profile(s)."
                     if mail_ready
                     else "Mail is enabled but no SMTP profile is active.",
+                    production=production,
+                    production_blocker=True,
+                )
+
+                pgp_sign_enabled = bool(mail.get("pgp_sign_enabled", False))
+                pgp_required = bool(mail.get("pgp_require_encryption", False))
+                pgp_key_count = int(
+                    await db.scalar(
+                        select(func.count())
+                        .select_from(InstanceOpenPGPKey)
+                        .where(
+                            InstanceOpenPGPKey.is_current.is_(True),
+                            InstanceOpenPGPKey.status == "active",
+                            (InstanceOpenPGPKey.expires_at.is_(None))
+                            | (
+                                InstanceOpenPGPKey.expires_at
+                                > datetime.now(UTC).replace(tzinfo=None)
+                            ),
+                        )
+                    )
+                    or 0
+                )
+                current_pgp_key = await db.scalar(
+                    select(InstanceOpenPGPKey).where(
+                        InstanceOpenPGPKey.is_current.is_(True),
+                        InstanceOpenPGPKey.status == "active",
+                        (InstanceOpenPGPKey.expires_at.is_(None))
+                        | (
+                            InstanceOpenPGPKey.expires_at
+                            > datetime.now(UTC).replace(tzinfo=None)
+                        ),
+                    )
+                )
+                missing_user_keys_stmt = (
+                    select(func.count()).select_from(User).where(User.is_active.is_(True))
+                )
+                if not pgp_required:
+                    missing_user_keys_stmt = missing_user_keys_stmt.where(
+                        User.pgp_encryption_enabled.is_(True)
+                    )
+                eligible_key_exists = (
+                    select(UserPGPKey.id)
+                    .where(
+                        UserPGPKey.user_id == User.id,
+                        UserPGPKey.status == "active",
+                        UserPGPKey.revoked_at.is_(None),
+                        UserPGPKey.use_for_encryption.is_(True),
+                        or_(
+                            UserPGPKey.expires_at.is_(None),
+                            UserPGPKey.expires_at > datetime.now(UTC).replace(tzinfo=None),
+                        ),
+                    )
+                    .exists()
+                )
+                missing_user_keys = int(
+                    await db.scalar(missing_user_keys_stmt.where(~eligible_key_exists)) or 0
+                )
+                opted_in_accounts = int(
+                    await db.scalar(
+                        select(func.count())
+                        .select_from(User)
+                        .where(
+                            User.is_active.is_(True),
+                            User.pgp_encryption_enabled.is_(True),
+                        )
+                    )
+                    or 0
+                )
+                gpg_available = shutil.which("gpg") is not None
+                pgp_enabled = pgp_sign_enabled or pgp_required or opted_in_accounts > 0
+                signer_material_valid = not pgp_sign_enabled
+                if pgp_sign_enabled and current_pgp_key is not None and gpg_available:
+                    try:
+                        from arborpress.mail.openpgp import validate_stored_instance_key
+
+                        await validate_stored_instance_key(current_pgp_key)
+                        signer_material_valid = True
+                    except Exception:
+                        signer_material_valid = False
+                pgp_required_ready = (
+                    (not pgp_enabled or gpg_available)
+                    and (not pgp_sign_enabled or (pgp_key_count > 0 and signer_material_valid))
+                    and (not (pgp_required or opted_in_accounts > 0) or missing_user_keys == 0)
+                )
+                pgp_message = (
+                    "OpenPGP mail protection is disabled."
+                    if not pgp_enabled
+                    else (
+                        f"OpenPGP runtime available; active instance signer count={pgp_key_count}; "
+                        f"accounts without an eligible key={missing_user_keys}; "
+                        f"signer material valid={signer_material_valid}."
+                    )
+                    if gpg_available
+                    else "OpenPGP mail protection is enabled but the GnuPG runtime is unavailable."
+                )
+                _check(
+                    checks,
+                    "openpgp_mail",
+                    pgp_required_ready,
+                    pgp_message,
                     production=production,
                     production_blocker=True,
                 )

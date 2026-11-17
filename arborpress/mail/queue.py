@@ -12,6 +12,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from email.message import EmailMessage
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -70,12 +71,13 @@ async def enqueue_mail(
     template_id: str | None = None,
     template_locale: str | None = None,
     template_revision: str | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> str:
     """Persist one envelope delivery. Passing ``session`` makes it transactional
     with the producer's domain write; otherwise the function owns its transaction.
     """
     from arborpress.core.db import get_session_factory
-    from arborpress.mail.smtp import validate_address, validate_header_value
+    from arborpress.mail.smtp import normalize_attachments, validate_address, validate_header_value
     from arborpress.models.mail import MailQueue, MailStatus
 
     recipient = validate_address(to)
@@ -116,15 +118,16 @@ async def enqueue_mail(
                 raise ValueError("Invalid email header name.")
             validate_header_value(value, name)
     key = _scoped_key(idempotency_key, purpose, recipient)
+    stored_attachments = normalize_attachments(attachments or [])
     owns_session = session is None
     if owns_session:
         factory = get_session_factory()
         session = factory()
     try:
-        if profile_id is None:
-            from arborpress.core.site_settings import get_section
+        from arborpress.core.site_settings import get_section_authoritative
 
-            mail_settings = await get_section("mail", session)
+        mail_settings = await get_section_authoritative("mail", session)
+        if profile_id is None:
             configured = (
                 mail_settings.get("bulk_profile")
                 if purpose == "bulk"
@@ -136,11 +139,32 @@ async def enqueue_mail(
         ).scalar_one_or_none()
         if existing:
             return str(existing.id)
+        from sqlalchemy import func
+
+        from arborpress.models.user import User
+
+        account_matches = (
+            await session.execute(
+                select(User.id, User.pgp_encryption_enabled)
+                .where(func.lower(User.email) == recipient.casefold())
+                .with_for_update()
+                .limit(2)
+            )
+        ).all()
+        if len(account_matches) > 1:
+            raise ValueError("Recipient email maps ambiguously to multiple local accounts.")
+        recipient_user_id = str(account_matches[0][0]) if account_matches else None
+        recipient_encryption_required = bool(
+            mail_settings.get("pgp_require_encryption", False)
+        ) or (bool(account_matches[0][1]) if account_matches else False)
         row_id = str(uuid.uuid4())
         entry = MailQueue(
             id=row_id,
             idempotency_key=key,
             recipient=recipient,
+            recipient_user_id=recipient_user_id,
+            recipient_identity_checked=True,
+            recipient_encryption_required=recipient_encryption_required,
             recipient_kind=recipient_kind,
             visible_to=(
                 visible_to
@@ -155,6 +179,7 @@ async def enqueue_mail(
             subject=subject,
             body_text=body_text,
             body_html=body_html,
+            attachments=stored_attachments,
             headers=headers or {},
             profile_id=profile_id,
             message_type=purpose,
@@ -279,6 +304,9 @@ def _is_transient(exc: Exception) -> bool:
 
 def _safe_error(exc: Exception) -> str:
     code = getattr(exc, "code", None)
+    if isinstance(code, str) and code.isidentifier():
+        return code[:120]
+    code = getattr(exc, "code", None)
     if isinstance(code, int):
         return f"smtp_{code}"
     name = type(exc).__name__.lower()
@@ -370,10 +398,14 @@ async def _process_queue_locked(batch_size: int, *, worker_id: str | None = None
             payload = {
                 "id": row.id,
                 "recipient": row.recipient,
+                "recipient_user_id": row.recipient_user_id,
+                "recipient_identity_checked": row.recipient_identity_checked,
+                "recipient_encryption_required": row.recipient_encryption_required,
                 "recipient_kind": row.recipient_kind,
                 "subject": row.subject,
                 "body_text": row.body_text,
                 "body_html": row.body_html,
+                "attachments": row.attachments or [],
                 "visible_to": row.visible_to or [],
                 "visible_cc": row.visible_cc or [],
                 "headers": row.headers or {},
@@ -389,6 +421,142 @@ async def _process_queue_locked(batch_size: int, *, worker_id: str | None = None
                 profile = await _profile_data(session, payload["profile_id"])
             if not profile or not profile.get("enabled"):
                 raise SMTPProfileUnavailable("smtp_profile_unavailable")
+            from arborpress.core.site_settings import get_section_authoritative
+            from arborpress.mail.openpgp import (
+                build_for_user,
+                build_pgp_message,
+                current_instance_key,
+            )
+            from arborpress.models.user import User
+
+            async with factory() as session:
+                row = await session.get(MailQueue, payload["id"])
+                if row is None or row.lease_owner != worker_id:
+                    continue
+                user_id = row.recipient_user_id
+                if not row.recipient_identity_checked:
+                    from sqlalchemy import func
+
+                    from arborpress.mail.openpgp import OpenPGPError
+
+                    matches = (
+                        (
+                            await session.execute(
+                                select(User.id)
+                                .where(func.lower(User.email) == row.recipient.casefold())
+                                .limit(2)
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    if len(matches) > 1:
+                        raise OpenPGPError(
+                            "recipient_identity_ambiguous",
+                            "The queued recipient matches more than one local account.",
+                        )
+                    if matches:
+                        # Pre-Phase-15 rows lack a durable account reference. A
+                        # current email match cannot prove which account owned
+                        # that address when the message was queued.
+                        raise OpenPGPError(
+                            "recipient_identity_unbound",
+                            "A legacy queued message targets a local account but has no stable "
+                            "account association; create a new message through its producer.",
+                        )
+                    row.recipient_identity_checked = True
+                    await session.commit()
+                settings = await get_section_authoritative("mail", session)
+                require_encryption = bool(settings.get("pgp_require_encryption", False)) or bool(
+                    row.recipient_encryption_required
+                )
+                signing_enabled = bool(settings.get("pgp_sign_enabled", False))
+                if user_id:
+                    row_user = await session.get(User, user_id)
+                    if row_user is None or not row_user.is_active or row_user.email is None:
+                        from arborpress.mail.openpgp import OpenPGPError
+
+                        raise OpenPGPError(
+                            "recipient_account_unavailable",
+                            "The registered mail recipient is unavailable.",
+                        )
+                    if row_user.email.casefold() != payload["recipient"].casefold():
+                        from arborpress.mail.openpgp import OpenPGPError
+
+                        raise OpenPGPError(
+                            "recipient_address_changed",
+                            "The account email changed after this message was queued.",
+                        )
+                    mail_message = MailMessage(
+                        payload["recipient"],
+                        payload["subject"],
+                        payload["body_text"],
+                        payload["body_html"],
+                        message_id=payload["message_id"],
+                        recipient_kind=payload["recipient_kind"],
+                        visible_to=payload["visible_to"],
+                        visible_cc=payload["visible_cc"],
+                        headers=payload["headers"],
+                        envelope_sender=payload["envelope_sender"],
+                        dsn_envid=payload["dsn_envid"],
+                        attachments=payload["attachments"],
+                    )
+                    prepared_message, encrypted = await build_for_user(
+                        mail_message,
+                        profile,
+                        db=session,
+                        user_id=user_id,
+                        user_email=row_user.email,
+                        encryption_required=require_encryption,
+                        signing_enabled=signing_enabled,
+                    )
+                else:
+                    if require_encryption:
+                        from arborpress.mail.openpgp import OpenPGPError
+
+                        raise OpenPGPError(
+                            "external_recipient_encryption_unavailable",
+                            "Instance policy requires encryption, but external recipients "
+                            "have no local key.",
+                        )
+                    msg = MailMessage(
+                        payload["recipient"],
+                        payload["subject"],
+                        payload["body_text"],
+                        payload["body_html"],
+                        message_id=payload["message_id"],
+                        recipient_kind=payload["recipient_kind"],
+                        visible_to=payload["visible_to"],
+                        visible_cc=payload["visible_cc"],
+                        headers=payload["headers"],
+                        envelope_sender=payload["envelope_sender"],
+                        dsn_envid=payload["dsn_envid"],
+                        attachments=payload["attachments"],
+                    )
+                    current_key = await current_instance_key(session) if signing_enabled else None
+                    if signing_enabled and current_key is None:
+                        from arborpress.mail.openpgp import OpenPGPError
+
+                        raise OpenPGPError(
+                            "instance_signing_key_missing",
+                            "Mail signing is enabled but no usable instance key exists.",
+                        )
+                    prepared_message = (
+                        await asyncio.to_thread(
+                            build_pgp_message,
+                            msg,
+                            profile,
+                            recipient_public_key=None,
+                            recipient_fingerprint=None,
+                            instance_key=current_key,
+                            sign=signing_enabled,
+                        )
+                        if signing_enabled
+                        else msg
+                    )
+                    encrypted = False
+                row.pgp_encrypted = encrypted
+                await session.commit()
             envelope_sender = payload["envelope_sender"]
             if not envelope_sender and profile.get("envelope_domain"):
                 from arborpress.mail.delivery import new_verp_token, verp_address
@@ -401,20 +569,12 @@ async def _process_queue_locked(batch_size: int, *, worker_id: str | None = None
                         envelope_sender = verp_address(row.verp_token, profile["envelope_domain"])
                         row.envelope_sender = envelope_sender
                         await session.commit()
+            if isinstance(prepared_message, EmailMessage):
+                object.__setattr__(prepared_message, "_arborpress_envelope_sender", envelope_sender)
+                object.__setattr__(prepared_message, "_arborpress_recipient", payload["recipient"])
+                object.__setattr__(prepared_message, "_arborpress_dsn_envid", payload["dsn_envid"])
             await backend.send(
-                MailMessage(
-                    payload["recipient"],
-                    payload["subject"],
-                    payload["body_text"],
-                    payload["body_html"],
-                    message_id=payload["message_id"],
-                    recipient_kind=payload["recipient_kind"],
-                    visible_to=payload["visible_to"],
-                    visible_cc=payload["visible_cc"],
-                    headers=payload["headers"],
-                    envelope_sender=envelope_sender,
-                    dsn_envid=payload["dsn_envid"],
-                ),
+                prepared_message,
                 profile,
             )
             async with factory() as session:

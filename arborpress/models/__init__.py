@@ -37,6 +37,7 @@ from arborpress.models.federation import (  # noqa: F401
     RemoteActorKey,
 )
 from arborpress.models.mail import (  # noqa: F401
+    InstanceOpenPGPKey,
     MailQueue,
     MailStatus,
     MailTemplateOverride,

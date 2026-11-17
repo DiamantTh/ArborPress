@@ -62,6 +62,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
+        gnupg \
         build-essential \
         wget \
         xz-utils \
@@ -150,6 +151,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
+        gnupg \
         libbz2-1.0 \
         libexpat1 \
         libffi8 \
