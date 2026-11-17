@@ -113,10 +113,9 @@ arborpress user disable <name>       Disable user
 arborpress user roles <name> <role>  Change role (step-up)
 arborpress user auth-policy          Show auth policy
 
-arborpress key generate <id>         Create Ed25519 key pair
-arborpress key import <file>         Import key (RSA ≥ 4096)
-arborpress key rotate <id>           Rotate key (step-up)
-arborpress key status                Show key status
+arborpress key status                Show instance, actor and OpenPGP key metadata
+arborpress federation keygen         Create the ActivityPub instance key
+arborpress federation status         Show federation key status
 
 arborpress search status             Show effective provider and health
 arborpress search reindex            Verify the active search path
@@ -127,6 +126,11 @@ arborpress cache warm                Warm safe public cache entries
 
 arborpress content export --output transfer.zip
 arborpress content import transfer.zip --dry-run
+
+OpenPGP mail signing/encryption and OpenPGP private-key generation/import/
+rotation are not currently implemented. The matching `key generate/import/rotate`
+CLI commands fail explicitly and do not read or change key material. Federation
+and OIDC signing keys have separate, working lifecycle commands and UI.
 
 arborpress federation inbox-process  Process ActivityPub inbox (§5)
 arborpress federation status         Show federation configuration
@@ -145,6 +149,10 @@ See [SMTP profiles and the mail outbox](docs/mail-outbox.md) for transport,
 TLS, queue, DNS/DSN, and operational details.
 
 ## API Overview (§8)
+
+See [product status and verification map](docs/project-status.md) for the
+implemented feature overview, deliberate limits, and operational evidence
+requirements.
 
 | Method | Path                          | Description                    |
 |--------|-------------------------------|--------------------------------|

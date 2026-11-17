@@ -101,10 +101,9 @@ arborpress user disable <name>       Benutzer deaktivieren
 arborpress user roles <name> <role>  Rolle ändern (Step-up)
 arborpress user auth-policy          Auth-Policy anzeigen
 
-arborpress key generate <id>         Ed25519-Schlüsselpaar erstellen
-arborpress key import <file>         Schlüssel importieren (RSA ≥ 4096)
-arborpress key rotate <id>           Schlüssel rotieren (Step-up)
-arborpress key status                Schlüsselstatus anzeigen
+arborpress key status                Instanz-, Actor- und OpenPGP-Keymetadaten
+arborpress federation keygen         ActivityPub-Instanzschlüssel erstellen
+arborpress federation status         Federationstatus anzeigen
 
 arborpress search status             Effektiven Provider und Health anzeigen
 arborpress search reindex            Aktiven Suchpfad prüfen
@@ -115,6 +114,12 @@ arborpress cache warm                Sichere öffentliche Caches aufwärmen
 
 arborpress content export --output transfer.zip
 arborpress content import transfer.zip --dry-run
+
+OpenPGP-Mail-Signatur/Verschlüsselung sowie OpenPGP-Private-Key-Erzeugung,
+-Import und -Rotation sind derzeit nicht implementiert. Die entsprechenden
+`key generate/import/rotate`-Befehle brechen ausdrücklich ab und lesen oder
+ändern kein Schlüsselmaterial. Federation- und OIDC-Signaturschlüssel haben
+separate, implementierte Lifecycle-Befehle und Oberflächen.
 
 arborpress federation inbox-process  ActivityPub-Inbox verarbeiten (§5)
 arborpress federation status         Federation-Konfiguration anzeigen
@@ -162,6 +167,10 @@ arborpress plugin list
 ```
 
 ## Authentifizierung (§2 / §3)
+
+Die [Produktübersicht und Prüflandkarte](docs/project-status.md) fasst den
+implementierten Funktionsumfang, bewusste Grenzen und Betriebsnachweise
+zusammen.
 
 | Methode              | Beschreibung                          |
 |----------------------|---------------------------------------|

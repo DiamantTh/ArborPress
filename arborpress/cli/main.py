@@ -52,7 +52,10 @@ app = typer.Typer(
 db_app = typer.Typer(help="Database operations (§12)", no_args_is_help=True)
 user_app = typer.Typer(help="User management (§14)", no_args_is_help=True)
 mfa_app = typer.Typer(help="MFA device management (§3)", no_args_is_help=True)
-key_app = typer.Typer(help="Key management (§13 OpenPGP, §14)", no_args_is_help=True)
+key_app = typer.Typer(
+    help="Inspect available key state. OpenPGP key management is not implemented.",
+    no_args_is_help=True,
+)
 search_app = typer.Typer(help="Search index (§12 FTS)", no_args_is_help=True)
 cache_app = typer.Typer(help="Cache management", no_args_is_help=True)
 federation_app = typer.Typer(help="Federation / ActivityPub (§5, §14)", no_args_is_help=True)
@@ -2243,26 +2246,39 @@ def mfa_rename(
 def key_generate(
     name: str = typer.Argument(..., help="Key ID / name"),
 ) -> None:
-    """Generates a new ECC/Ed25519 key pair (§13, §14)."""
-    typer.echo(f"Generating Ed25519 key for {name!r} (TODO).")
-    typer.echo("NOTE: Private keys are stored encrypted (§13).")
+    """Fail closed: OpenPGP key generation is not available yet."""
+    typer.echo(
+        "OpenPGP key generation is not implemented; no key was generated. "
+        "Federation and OIDC keys use their dedicated workflows.",
+        err=True,
+    )
+    raise typer.Exit(code=2)
 
 
 @key_app.command("import")
 def key_import(
     file: Path = typer.Argument(..., help="Path to key file (RSA >= 4096 or ECC)"),  # noqa: B008
 ) -> None:
-    """Imports an existing key (§13 RSA import)."""
-    typer.echo(f"Importing key from {file} (TODO).")
+    """Fail closed: OpenPGP key import is not available yet."""
+    typer.echo(
+        "OpenPGP key import is not implemented; no key was imported. "
+        "Private key files are not read or stored.",
+        err=True,
+    )
+    raise typer.Exit(code=2)
 
 
 @key_app.command("rotate")
 def key_rotate(
     name: str = typer.Argument(..., help="Key ID / name"),
 ) -> None:
-    """Rotates a key – step-up operation (§2, §14 key rotation)."""
-    typer.echo("NOTE: 'rotate_key' requires step-up (via web admin).")
-    typer.echo(f"Rotating {name!r} (TODO).")
+    """Fail closed: OpenPGP key rotation is not available yet."""
+    typer.echo(
+        "OpenPGP key rotation is not implemented; no key was rotated. "
+        "Federation and OIDC signing-key rotation use their dedicated workflows.",
+        err=True,
+    )
+    raise typer.Exit(code=2)
 
 
 @key_app.command("status")

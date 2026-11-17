@@ -560,16 +560,18 @@ External IdP/SSO is optional and must remain hidden unless configured.
 - optional provider APIs (only if configured)
 
 ### OpenPGP signing/encryption
-- outbound mails should support OpenPGP signing (instance key)
-- transactional mails can be encrypted per user if:
-  - user enabled encryption
-  - user provided a verified public key
-
-### Key policy
-- in-app key generation: modern ECC/Ed first (Ed25519/X25519 recommended)
-- RSA supported import-only (RSA >= 4096 if imported)
-- key management via admin UI and CLI
-- private keys encrypted at rest; never logged
+- **Not implemented in the current source.** Outbound mail signing and
+  per-user transactional encryption are not available. `UserPGPKey` currently
+  stores public-key metadata only; there is no corresponding private-key
+  storage or OpenPGP mail-processing service.
+- The legacy `arborpress key generate/import/rotate` command names are retained
+  for a clear migration error, but exit nonzero and do not claim success or
+  access private-key files. `arborpress key status` is read-only.
+- ActivityPub actor keys and OAuth/OIDC signing keys have separate key stores
+  and lifecycle operations. They are not OpenPGP keys and must not be used as
+  substitutes.
+- Implementing OpenPGP mail processing requires a separately reviewed key
+  storage, backup/recovery, generation/import, rotation, and delivery design.
 
 ### Queueing
 - outbound mails processed asynchronously (outbox queue)
