@@ -1,6 +1,7 @@
 """CLI-Erweiterung des example_importer-Plugins (Spec §15 – CLI design rules)."""
 
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
@@ -9,7 +10,7 @@ plugin_app = typer.Typer(help="CSV-Importer Plugin")
 
 @plugin_app.command("run")
 def run_import(
-    file: Path = typer.Argument(..., help="Pfad zur CSV-Datei"),
+    file: Annotated[Path, typer.Argument(help="Pfad zur CSV-Datei")],
     dry_run: bool = typer.Option(False, "--dry-run", help="Nur anzeigen, nicht speichern"),
 ) -> None:
     """Importiert Nutzer aus einer CSV-Datei."""

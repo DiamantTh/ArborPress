@@ -195,6 +195,11 @@ jobs:
           ARBORPRESS_TEST_CORE_URL: ${{ env.ARBORPRESS_TEST_DATABASE_URL }}
         run: poetry run pytest tests/test_auth.py tests/test_content.py tests/test_api.py tests/test_oauth_server.py tests/test_oidc.py tests/test_oidc_lifecycle.py -v
 
+      - name: Federation, portability and I18N backend regression
+        env:
+          ARBORPRESS_TEST_CORE_URL: ${{ env.ARBORPRESS_TEST_DATABASE_URL }}
+        run: poetry run pytest tests/test_federation_core.py tests/test_content_portability.py tests/test_i18n_seo.py -v
+
       - name: Production doctor on an isolated wheel reference installation
         env:
           ARBORPRESS_WEB__BASE_URL: https://reference.example.test
@@ -222,12 +227,35 @@ jobs:
           /tmp/arborpress-reference-wheel/bin/arborpress --prefix /tmp/arborpress-reference doctor --production --json
 
   containers:
-    name: Container ${{ matrix.base }}
+    name: Container ${{ matrix.base }} with ${{ matrix.backend }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         base: [ubuntu, almalinux]
+        backend: [postgresql, mariadb]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: disposable
+          POSTGRES_DB: arborpress
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: disposable
+          MARIADB_DATABASE: arborpress
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      ARBORPRESS_DB__URL: ${{ matrix.backend == 'postgresql' && 'postgresql+asyncpg://postgres:disposable@127.0.0.1:5432/arborpress' || 'mysql+aiomysql://root:disposable@127.0.0.1:3306/arborpress' }}
+      ARBORPRESS_CONTAINER_DB_URL: ${{ matrix.backend == 'postgresql' && 'postgresql+asyncpg://postgres:disposable@host.docker.internal:5432/arborpress' || 'mysql+aiomysql://root:disposable@host.docker.internal:3306/arborpress' }}
     steps:
       - uses: actions/checkout@v7
       - name: Build Python-only image
@@ -237,10 +265,10 @@ jobs:
         run: |
           ap_secret=$(openssl rand -hex 48)
           docker volume create arborpress-smoke-state
-          docker run -d --name arborpress-smoke -p 127.0.0.1:8066:8066 \
+          docker run -d --name arborpress-smoke --add-host=host.docker.internal:host-gateway -p 127.0.0.1:8066:8066 \
             -v arborpress-smoke-state:/home/arborpress/instance \
             -e ARBORPRESS_WEB__SECRET_KEY="$ap_secret" \
-            -e ARBORPRESS_DB__URL=sqlite+aiosqlite:////home/arborpress/instance/data/smoke.db \
+            -e ARBORPRESS_DB__URL="$ARBORPRESS_CONTAINER_DB_URL" \
             arborpress-smoke
           for ap_attempt in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:8066/_health; then break; fi
@@ -248,7 +276,6 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8066/_health
           test "$(docker exec arborpress-smoke id -u)" = 1001
-          docker exec arborpress-smoke test -s /home/arborpress/instance/data/smoke.db
           docker exec arborpress-smoke touch /home/arborpress/instance/config/.installed
           curl -fsS http://127.0.0.1:8066/_ready
           docker stop --time 30 arborpress-smoke

@@ -24,6 +24,14 @@ batches and stages media in a private temporary directory before atomically
 replacing the output file. Import verifies the whole archive before mutation,
 including member paths, file types, sizes, compression ratios, record limits,
 references and hashes. Import does not extract arbitrary archive paths.
+The package is limited to 512 MiB total compressed and uncompressed data and
+250,000 structured records across all entity types; individual structured
+members, records, content fields, media files and extension payloads have
+smaller limits enforced by the importer. Export streams DB records, while the
+current full relational preflight retains bounded record data in memory. For
+transfers approaching these limits, split the editorial transfer into smaller
+packages and review each dry-run before import; do not raise limits without
+revalidating worker memory headroom and archive protections.
 
 Explicit post/page translation groups are represented by stable, bundle-local
 group references. Import maps those references to new target-local group IDs;

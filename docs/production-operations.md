@@ -130,14 +130,20 @@ against the actual topology rather than copying trust settings unchanged.
 
 ## Safe-to-deploy checklist
 
-- [ ] Record exact SHA and matching successful mandatory CI evidence.
-- [ ] Use a supported production DB and canonical HTTPS origin.
+- [ ] Record the exact full Git commit SHA; verify the build SHA matches it.
+- [ ] Confirm the exact commit has green Python 3.14 and 3.15 CI runs.
+- [ ] Confirm PostgreSQL and MariaDB migration, regression and restore drills passed.
+- [ ] Confirm Ubuntu and AlmaLinux runtime jobs passed with both server databases.
+- [ ] Use a supported production database and canonical HTTPS `base_url`.
 - [ ] Set independent secure secrets and private instance permissions.
-- [ ] Confirm the expected Alembic head.
+- [ ] Confirm the database is at the expected Alembic head and upgrade path passed.
 - [ ] Test two independent administrator login/recovery methods.
-- [ ] Create encrypted backup, pass full cryptographic verify and restore dry run.
-- [ ] Secure application secret and OIDC/OAuth/federation recovery material separately.
-- [ ] Enable mail/federation only with validated configurations.
-- [ ] Run production doctor without blockers and review every warning.
-- [ ] Confirm liveness/readiness and exact installed BUILD_SHA.
-- [ ] Record rollback/restore procedure and artifact checksums/SBOM.
+- [ ] Create an encrypted full backup; pass cryptographic verification and an
+  isolated restore dry run on the same database backend.
+- [ ] Secure `web.secret_key` and OIDC/OAuth/federation key material separately.
+- [ ] Enable mail and federation only after validating their configuration.
+- [ ] Run `arborpress doctor --production --json` without blockers and review
+  each warning; confirm liveness and readiness.
+- [ ] Confirm the installed artifact's `BUILD_SHA` matches the approved commit.
+- [ ] Record rollback/restore steps, artifact SHA-256 checksums and CycloneDX SBOM.
+- [ ] Inspect the portable-export scope separately from encrypted instance backup.

@@ -28,9 +28,11 @@ extensions, or replace a deployment-specific recovery plan.
 
 ## Mandatory CI and deployment decision
 
-The CI matrix retains Python 3.14/3.15 and Node 24, enforces global Ruff and a
-committed mypy regression baseline, and adds disposable PostgreSQL/MariaDB
-migration/recovery jobs and Ubuntu/AlmaLinux container smoke jobs. Artifact
+The CI matrix retains Python 3.14/3.15 and Node 24, enforces repository-wide
+Ruff and a committed mypy regression baseline, and runs disposable PostgreSQL
+and MariaDB migration/recovery plus authentication, content, API, OAuth/OIDC,
+federation, portability and I18N regressions. Ubuntu 24.04 and AlmaLinux 10
+container runtime jobs each exercise both PostgreSQL and MariaDB. Artifact
 publication depends on those jobs, a locked dependency audit, CycloneDX SBOM,
 artifact inspection and checksums. A job definition is not passing evidence.
 

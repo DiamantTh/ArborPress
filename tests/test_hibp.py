@@ -12,7 +12,7 @@ from arborpress.auth.password_tools import validate_password_policy
 
 
 def _sha1(value: str) -> str:
-    return hashlib.sha1(value.encode("utf-8")).hexdigest().upper()
+    return hashlib.sha1(value.encode("utf-8"), usedforsecurity=False).hexdigest().upper()
 
 
 def _range_response_for(password: str, count: int) -> str:
@@ -49,12 +49,12 @@ def _patch_httpx_client(monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTr
 
 class TestCheckPwned:
     def test_returns_count_when_present(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        password = "hunter2-leaked-example"
+        password = "hunter2-leaked-example"  # noqa: S105 - synthetic HIBP test fixture
         _patch_httpx_client(monkeypatch, _make_mock_transport(password, 42))
         assert hibp.check_pwned(password) == 42
 
     def test_returns_zero_when_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        password = "untouched-passphrase-xyz"
+        password = "untouched-passphrase-xyz"  # noqa: S105 - synthetic HIBP test fixture
 
         def handler(_request: httpx.Request) -> httpx.Response:
             # Suffix not in body -> count = 0
@@ -77,13 +77,13 @@ class TestCheckPwned:
 
 class TestEnforcePolicy:
     def test_rejects_breached_password(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        password = "leaked-passphrase-9999"
+        password = "leaked-passphrase-9999"  # noqa: S105 - synthetic HIBP test fixture
         _patch_httpx_client(monkeypatch, _make_mock_transport(password, 5))
         with pytest.raises(ValueError, match="data breaches"):
             hibp.enforce_hibp_policy(password)
 
     def test_accepts_when_below_threshold(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        password = "tolerated-passphrase-0001"
+        password = "tolerated-passphrase-0001"  # noqa: S105 - synthetic HIBP test fixture
         _patch_httpx_client(monkeypatch, _make_mock_transport(password, 3))
         assert hibp.enforce_hibp_policy(password, max_count=3) == 3
 
@@ -105,7 +105,7 @@ class TestEnforcePolicy:
 
 class TestPolicyIntegration:
     def test_validate_password_policy_runs_hibp(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        password = "correct horse battery staple extra"
+        password = "correct horse battery staple extra"  # noqa: S105 - synthetic HIBP test fixture
         _patch_httpx_client(monkeypatch, _make_mock_transport(password, 99))
         with pytest.raises(ValueError, match="data breaches"):
             validate_password_policy(

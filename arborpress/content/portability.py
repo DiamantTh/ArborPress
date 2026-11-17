@@ -50,7 +50,7 @@ from arborpress.models.settings import PortableImportReceipt, SiteSetting
 FORMAT_ID = "arborpress.portable-content"
 FORMAT_LEVEL = 1
 MANIFEST = "manifest.json"
-MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_ENTRY_BYTES = 100 * 1024 * 1024
 MAX_MEDIA_BYTES = 20 * 1024 * 1024
 MAX_RECORD_BYTES = 10 * 1024 * 1024
@@ -183,9 +183,9 @@ async def export_portable(
                 size = 0
                 with archive.open(name, "w", force_zip64=True) as member:
                     async for row in rows:
-                        if counts[entity] >= MAX_RECORDS:
+                        if sum(counts[key] for key in _ENTITY_FILES) >= MAX_RECORDS:
                             raise PortabilityError(
-                                f"The exported {entity} collection exceeds the record limit."
+                                "The exported package exceeds the total record limit."
                             )
                         encoded = _json_bytes(row) + b"\n"
                         if len(encoded) > MAX_RECORD_BYTES:
@@ -424,7 +424,7 @@ async def export_portable(
                             if size > MAX_MEDIA_BYTES:
                                 staged_path.unlink(missing_ok=True)
                                 continue
-                            if counts["media"] >= MAX_RECORDS:
+                            if sum(counts[key] for key in _ENTITY_FILES) >= MAX_RECORDS:
                                 staged_path.unlink(missing_ok=True)
                                 raise PortabilityError(
                                     "The exported media collection is too large."
@@ -724,14 +724,18 @@ def _read_manifest(archive: zipfile.ZipFile) -> dict[str, Any]:
 
 
 def _records(
-    archive: zipfile.ZipFile, member_name: str, *, max_record: int = MAX_RECORD_BYTES
+    archive: zipfile.ZipFile,
+    member_name: str,
+    *,
+    max_record: int = MAX_RECORD_BYTES,
+    max_records: int = MAX_RECORDS,
 ) -> list[dict[str, Any]]:
     if member_name not in archive.namelist():
         return []
     result: list[dict[str, Any]] = []
     with archive.open(member_name) as source:
         while line := source.readline(max_record + 1):
-            if len(line) > max_record or len(result) >= MAX_RECORDS:
+            if len(line) > max_record or len(result) >= max_records:
                 raise PortabilityError("Portable data exceeds a record or count limit.")
             try:
                 value = _json_loads(line)
@@ -753,7 +757,12 @@ def _validate_archive_structure(
     archive: zipfile.ZipFile,
 ) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
     manifest = _read_manifest(archive)
-    entities = {key: _records(archive, name) for key, name in _ENTITY_FILES.items()}
+    entities: dict[str, list[dict[str, Any]]] = {}
+    remaining_records = MAX_RECORDS
+    for key, filename in _ENTITY_FILES.items():
+        rows = _records(archive, filename, max_records=remaining_records)
+        entities[key] = rows
+        remaining_records -= len(rows)
     for key, filename in _ENTITY_FILES.items():
         if filename not in manifest["files"]:
             raise PortabilityError(f"Required portable data file is missing: {filename}.")

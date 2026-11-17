@@ -216,6 +216,11 @@ async def test_export_import_roundtrip_is_safe_and_repeatable(tmp_path: Path, mo
     async with source_factory() as db:
         result = await export_portable(db, package, include_comments=True)
     assert result["counts"]["posts"] == 1
+    monkeypatch.setattr("arborpress.content.portability.MAX_RECORDS", 1)
+    async with source_factory() as db:
+        with pytest.raises(PortabilityError, match="record or count limit"):
+            await inspect_portable(db, package)
+    monkeypatch.setattr("arborpress.content.portability.MAX_RECORDS", 250_000)
     with zipfile.ZipFile(package) as archive:
         payload = b"".join(archive.read(name) for name in archive.namelist())
     assert b"must-not-export@example.invalid" not in payload
@@ -419,6 +424,7 @@ async def test_preflight_rejects_hash_tampering_and_unsafe_archive_names(tmp_pat
     from arborpress.content.portability import (
         PortabilityError,
         _json_bytes,
+        _records,
         export_portable,
         inspect_portable,
     )
@@ -462,6 +468,29 @@ async def test_preflight_rejects_hash_tampering_and_unsafe_archive_names(tmp_pat
             archive.writestr("../outside", b"x")
         with pytest.raises(PortabilityError):
             await inspect_portable(db, traversal)
+
+        symlink = tmp_path / "symlink.zip"
+        with zipfile.ZipFile(symlink, "w") as archive:
+            archive.writestr("manifest.json", b"{}")
+            link = zipfile.ZipInfo("data/link")
+            link.create_system = 3
+            link.external_attr = (0o120777 << 16) | 0xA000
+            archive.writestr(link, b"../../outside")
+        with pytest.raises(PortabilityError, match="symlink"):
+            await inspect_portable(db, symlink)
+
+        records_archive = tmp_path / "record-limit.zip"
+        with zipfile.ZipFile(records_archive, "w") as archive:
+            archive.writestr("data/records.jsonl", b'{"id":1}\n{"id":2}\n')
+        with zipfile.ZipFile(records_archive) as archive, pytest.raises(
+            PortabilityError, match="count limit"
+        ):
+            _records(archive, "data/records.jsonl", max_records=1)
+
+        from arborpress.content.portability import _json_loads
+
+        with pytest.raises(ValueError, match="duplicate JSON"):
+            _json_loads('{"key":1,"key":2}')
 
         unknown_level = tmp_path / "unknown-level.zip"
         with zipfile.ZipFile(package) as source:

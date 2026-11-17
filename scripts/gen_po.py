@@ -187,20 +187,38 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "pl_PL": "U\u017cytkownik {username!r} wy\u0142\u0105czony.",
     },
     "User {username!r} unlocked (lock removed, failed_login_count reset).": {
-        "de_DE": "Benutzer {username!r} entsperrt (Sperre aufgehoben, Fehlversuchsz\u00e4hler zur\u00fcckgesetzt).",
-        "fr_FR": "Utilisateur {username!r} d\u00e9verrouill\u00e9 (verrou supprim\u00e9, compteur r\u00e9initialis\u00e9).",
+        "de_DE": (
+            "Benutzer {username!r} entsperrt (Sperre aufgehoben, "
+            "Fehlversuchsz\u00e4hler zur\u00fcckgesetzt)."
+        ),
+        "fr_FR": (
+            "Utilisateur {username!r} d\u00e9verrouill\u00e9 (verrou supprim\u00e9, "
+            "compteur r\u00e9initialis\u00e9)."
+        ),
         "es_ES": "Usuario {username!r} desbloqueado (bloqueo eliminado, contador restablecido).",
         "it_IT": "Utente {username!r} sbloccato (blocco rimosso, contatore azzerato).",
         "nl_NL": "Gebruiker {username!r} ontgrendeld (vergrendeling verwijderd, teller gereset).",
-        "pl_PL": "U\u017cytkownik {username!r} odblokowany (blokada usuni\u0119ta, licznik zresetowany).",
+        "pl_PL": (
+            "U\u017cytkownik {username!r} odblokowany "
+            "(blokada usuni\u0119ta, licznik zresetowany)."
+        ),
     },
     "User {username!r}: no active lock, failed_login_count reset to 0.": {
-        "de_DE": "Benutzer {username!r}: keine aktive Sperre, Fehlversuchsz\u00e4hler auf 0 zur\u00fcckgesetzt.",
-        "fr_FR": "Utilisateur {username!r}\u00a0: pas de verrou actif, compteur r\u00e9initialis\u00e9 \u00e0 0.",
+        "de_DE": (
+            "Benutzer {username!r}: keine aktive Sperre, "
+            "Fehlversuchsz\u00e4hler auf 0 zur\u00fcckgesetzt."
+        ),
+        "fr_FR": (
+            "Utilisateur {username!r}\u00a0: pas de verrou actif, "
+            "compteur r\u00e9initialis\u00e9 \u00e0 0."
+        ),
         "es_ES": "Usuario {username!r}: sin bloqueo activo, contador restablecido a 0.",
         "it_IT": "Utente {username!r}: nessun blocco attivo, contatore azzerato a 0.",
         "nl_NL": "Gebruiker {username!r}: geen actieve vergrendeling, teller gereset naar 0.",
-        "pl_PL": "U\u017cytkownik {username!r}: brak aktywnej blokady, licznik zresetowany do 0.",
+        "pl_PL": (
+            "U\u017cytkownik {username!r}: brak aktywnej blokady, "
+            "licznik zresetowany do 0."
+        ),
     },
     "Role: {old} \u2192 {new} for {username!r}": {
         "de_DE": "Rolle: {old} \u2192 {new} f\u00fcr {username!r}",

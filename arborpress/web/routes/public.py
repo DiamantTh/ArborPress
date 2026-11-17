@@ -125,9 +125,9 @@ async def _old_content_slug(db: Any, kind: str, slug: str, language: str | None)
         ContentSlugHistory.slug == slug,
     )
     if language is not None:
-        from arborpress.core.i18n import language_storage_values
-
         from sqlalchemy.sql.elements import ColumnElement
+
+        from arborpress.core.i18n import language_storage_values
 
         language_filters: list[ColumnElement[bool]] = [
             ContentSlugHistory.language.in_(language_storage_values(language))
